@@ -1,9 +1,10 @@
 import { Worker } from "bullmq";
 import { closeDb } from "@socialyar/db";
 import { executeRun } from "@socialyar/workflow";
+import { executePublication } from "./publisher";
 import { connection } from "./queue";
 
-const worker = new Worker(
+const workflowWorker = new Worker(
   "workflow-runs",
   async (job) => {
     const data = job.data as {
@@ -20,16 +21,48 @@ const worker = new Worker(
   },
 );
 
-worker.on("completed", (job) => {
+const publicationWorker = new Worker(
+  "publication-jobs",
+  async (job) => {
+    const data = job.data as { publicationId: string };
+    const maxAttempts = Number(job.opts.attempts ?? 1);
+
+    return executePublication({
+      publicationId: data.publicationId,
+      attempt: job.attemptsMade + 1,
+      maxAttempts,
+    });
+  },
+  {
+    connection,
+    concurrency: Number(process.env.PUBLISHER_CONCURRENCY ?? 2),
+  },
+);
+
+workflowWorker.on("completed", (job) => {
   console.log(`Run job ${job.id} completed`);
 });
 
-worker.on("failed", (job, error) => {
+workflowWorker.on("failed", (job, error) => {
   console.error(`Run job ${job?.id ?? "unknown"} failed`, error);
 });
 
+publicationWorker.on("completed", (job) => {
+  console.log(`Publication job ${job.id} completed`);
+});
+
+publicationWorker.on("failed", (job, error) => {
+  console.error(
+    `Publication job ${job?.id ?? "unknown"} failed after attempt ${job?.attemptsMade ?? 0}`,
+    error,
+  );
+});
+
 const shutdown = async () => {
-  await worker.close();
+  await Promise.all([
+    workflowWorker.close(),
+    publicationWorker.close(),
+  ]);
   await connection.quit();
   await closeDb();
 };
@@ -37,4 +70,4 @@ const shutdown = async () => {
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
 
-console.log("SocialYar workflow worker is ready");
+console.log("SocialYar workflow + publisher workers are ready");
