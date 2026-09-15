@@ -4,6 +4,7 @@ import { ZodError } from "zod";
 import { closeDb } from "@socialyar/db";
 import { workflowRoutes } from "./routes/workflows";
 import { runRoutes } from "./routes/runs";
+import { contentRoutes } from "./routes/content";
 import { closeQueue } from "./queue";
 
 const app = Fastify({ logger: true });
@@ -36,6 +37,7 @@ app.get("/health", async () => ({
 
 await app.register(workflowRoutes);
 await app.register(runRoutes);
+await app.register(contentRoutes);
 
 const port = Number(process.env.PORT ?? 4000);
 
