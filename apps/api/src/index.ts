@@ -6,6 +6,7 @@ import { workflowRoutes } from "./routes/workflows";
 import { runRoutes } from "./routes/runs";
 import { contentRoutes } from "./routes/content";
 import { approvalRoutes } from "./routes/approvals";
+import { accountRoutes } from "./routes/accounts";
 import { closeQueue } from "./queue";
 
 const app = Fastify({ logger: true });
@@ -40,6 +41,7 @@ await app.register(workflowRoutes);
 await app.register(runRoutes);
 await app.register(contentRoutes);
 await app.register(approvalRoutes);
+await app.register(accountRoutes);
 
 const port = Number(process.env.PORT ?? 4000);
 
