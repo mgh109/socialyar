@@ -9,6 +9,7 @@ import {
   publications,
   schedules,
 } from "@socialyar/db";
+import { publicationQueue } from "../queue";
 
 const resolveApprovalSchema = z.object({
   action: z.enum(["approve", "reject", "changes_requested"]),
@@ -22,6 +23,26 @@ const scheduleSchema = z.object({
   socialAccountId: z.string().uuid().nullable().optional(),
   smartSchedule: z.boolean().default(false),
 });
+
+async function enqueuePublication(
+  publicationId: string,
+  scheduledAt: Date,
+) {
+  const delay = Math.max(0, scheduledAt.getTime() - Date.now());
+
+  await publicationQueue.add(
+    "publish-content",
+    { publicationId },
+    {
+      jobId: `publication-${publicationId}`,
+      delay,
+      attempts: 3,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: 1000,
+      removeOnFail: 1000,
+    },
+  );
+}
 
 export async function approvalRoutes(app: FastifyInstance) {
   const db = getDb();
@@ -151,27 +172,75 @@ export async function approvalRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "content_not_found" });
     }
 
-    const [schedule] = await db
-      .insert(schedules)
-      .values({
-        workspaceId: content.workspaceId,
-        contentVariantId: variant.id,
-        socialAccountId: input.socialAccountId ?? null,
-        scheduledAt: new Date(input.scheduledAt),
-        timezone: input.timezone,
-        smartSchedule: input.smartSchedule,
-      })
-      .returning();
+    const scheduledAt = new Date(input.scheduledAt);
 
-    await db
-      .update(contentVariants)
-      .set({
-        status: "scheduled",
-        updatedAt: new Date(),
-      })
-      .where(eq(contentVariants.id, variant.id));
+    const result = await db.transaction(async (tx) => {
+      const [schedule] = await tx
+        .insert(schedules)
+        .values({
+          workspaceId: content.workspaceId,
+          contentVariantId: variant.id,
+          socialAccountId: input.socialAccountId ?? null,
+          scheduledAt,
+          timezone: input.timezone,
+          smartSchedule: input.smartSchedule,
+        })
+        .returning();
 
-    return reply.code(201).send(schedule);
+      const [publication] = await tx
+        .insert(publications)
+        .values({
+          workspaceId: content.workspaceId,
+          contentVariantId: variant.id,
+          scheduleId: schedule.id,
+          socialAccountId: input.socialAccountId ?? null,
+          status: "queued",
+        })
+        .returning();
+
+      await tx
+        .update(contentVariants)
+        .set({
+          status: "scheduled",
+          updatedAt: new Date(),
+        })
+        .where(eq(contentVariants.id, variant.id));
+
+      return { schedule, publication };
+    });
+
+    try {
+      await enqueuePublication(result.publication.id, scheduledAt);
+    } catch (error) {
+      await db.transaction(async (tx) => {
+        await tx
+          .update(publications)
+          .set({
+            status: "failed",
+            error: {
+              message:
+                error instanceof Error ? error.message : "Queue unavailable",
+            },
+            updatedAt: new Date(),
+          })
+          .where(eq(publications.id, result.publication.id));
+
+        await tx
+          .update(schedules)
+          .set({
+            status: "failed",
+            updatedAt: new Date(),
+          })
+          .where(eq(schedules.id, result.schedule.id));
+      });
+
+      return reply.code(503).send({
+        error: "publication_queue_unavailable",
+        scheduleId: result.schedule.id,
+      });
+    }
+
+    return reply.code(201).send(result);
   });
 
   app.get("/calendar", async (request) => {
@@ -213,16 +282,54 @@ export async function approvalRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "schedule_not_found" });
     }
 
-    const [publication] = await db
-      .insert(publications)
-      .values({
-        workspaceId: schedule.workspaceId,
-        contentVariantId: schedule.contentVariantId,
-        scheduleId: schedule.id,
-        socialAccountId: schedule.socialAccountId,
+    let [publication] = await db
+      .select()
+      .from(publications)
+      .where(eq(publications.scheduleId, schedule.id))
+      .orderBy(desc(publications.createdAt))
+      .limit(1);
+
+    if (!publication) {
+      [publication] = await db
+        .insert(publications)
+        .values({
+          workspaceId: schedule.workspaceId,
+          contentVariantId: schedule.contentVariantId,
+          scheduleId: schedule.id,
+          socialAccountId: schedule.socialAccountId,
+          status: "queued",
+        })
+        .returning();
+    }
+
+    const existingJob = await publicationQueue.getJob(
+      `publication-${publication.id}`,
+    );
+
+    if (existingJob) {
+      await existingJob.remove();
+    }
+
+    await publicationQueue.add(
+      "publish-content",
+      { publicationId: publication.id },
+      {
+        jobId: `publication-${publication.id}`,
+        attempts: 3,
+        backoff: { type: "exponential", delay: 5000 },
+        removeOnComplete: 1000,
+        removeOnFail: 1000,
+      },
+    );
+
+    await db
+      .update(publications)
+      .set({
         status: "queued",
+        error: null,
+        updatedAt: new Date(),
       })
-      .returning();
+      .where(eq(publications.id, publication.id));
 
     await db
       .update(schedules)
