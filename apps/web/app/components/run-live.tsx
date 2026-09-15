@@ -56,7 +56,11 @@ export function RunLive({ runId }: { runId: string }) {
           current.some((item) => item.id === data.id) ? current : [...current, data],
         );
 
-        if (eventName === "run_completed" || eventName === "run_failed") {
+        if (
+          eventName === "run_completed" ||
+          eventName === "run_failed" ||
+          eventName === "approval_requested"
+        ) {
           void fetch(`${apiUrl}/runs/${runId}`)
             .then((response) => response.json())
             .then(setRun);
@@ -68,7 +72,9 @@ export function RunLive({ runId }: { runId: string }) {
     });
 
     return () => {
-      handlers.forEach(([eventName, handler]) => source.removeEventListener(eventName, handler));
+      handlers.forEach(([eventName, handler]) =>
+        source.removeEventListener(eventName, handler),
+      );
       source.close();
     };
   }, [apiUrl, runId]);
@@ -77,6 +83,9 @@ export function RunLive({ runId }: { runId: string }) {
     () => events.filter((event) => event.type === "step_completed").length,
     [events],
   );
+
+  const canOpenStudio =
+    run?.status === "completed" || run?.status === "waiting_approval";
 
   return (
     <main className="workflow-page">
@@ -87,8 +96,12 @@ export function RunLive({ runId }: { runId: string }) {
         </div>
         <div className="header-actions">
           <span className={connected ? "live-dot online" : "live-dot"} />
-          <span className="save-status">{connected ? "Live" : "در حال اتصال..."}</span>
-          <Link className="ghost-link" href="/workflows/new">← بازگشت به جریان</Link>
+          <span className="save-status">
+            {connected ? "Live" : "در حال اتصال..."}
+          </span>
+          <Link className="ghost-link" href="/workflows/new">
+            ← بازگشت به جریان
+          </Link>
         </div>
       </header>
 
@@ -97,25 +110,56 @@ export function RunLive({ runId }: { runId: string }) {
           <div className="canvas-title">
             <div>
               <h1>اجرای جاری</h1>
-              <p>Run #{runId.slice(0, 8)} · وضعیت: {run?.status ?? "..."}</p>
+              <p>
+                Run #{runId.slice(0, 8)} · وضعیت: {run?.status ?? "..."}
+              </p>
             </div>
             <span className="status-pill">{progress} / 6 مرحله</span>
           </div>
 
           <div className="execution-strip">
-            {["پایش منابع", "اعتبارسنجی", "بازنویسی محتوا", "بررسی حساسیت", "تأیید انسانی", "انتشار"].map(
-              (name, index) => {
-                const completed = index < progress;
-                const active = index === progress && run?.status === "running";
-                return (
-                  <article className={`execution-node ${completed ? "done" : ""} ${active ? "active" : ""}`} key={name}>
-                    <h3>{name}</h3>
-                    <span>{completed ? "✓ انجام شد" : active ? "↻ در حال اجرا" : "○ منتظر"}</span>
-                  </article>
-                );
-              },
-            )}
+            {[
+              "پایش منابع",
+              "اعتبارسنجی",
+              "بازنویسی محتوا",
+              "بررسی حساسیت",
+              "تأیید انسانی",
+              "انتشار",
+            ].map((name, index) => {
+              const completed = index < progress;
+              const active = index === progress && run?.status === "running";
+              return (
+                <article
+                  className={`execution-node ${completed ? "done" : ""} ${active ? "active" : ""}`}
+                  key={name}
+                >
+                  <h3>{name}</h3>
+                  <span>
+                    {completed
+                      ? "✓ انجام شد"
+                      : active
+                        ? "↻ در حال اجرا"
+                        : "○ منتظر"}
+                  </span>
+                </article>
+              );
+            })}
           </div>
+
+          {canOpenStudio ? (
+            <div className="run-output-ready">
+              <div>
+                <strong>✓ خروجی «تولید محتوا» آماده و قابل ویرایش است</strong>
+                <span>Run #{runId.slice(0, 8)} · Content Studio</span>
+              </div>
+              <Link
+                className="primary-link"
+                href={`/content-studio/${runId}`}
+              >
+                باز کردن در استودیوی محتوا
+              </Link>
+            </div>
+          ) : null}
 
           <div className="current-detail">
             <div>
@@ -149,7 +193,9 @@ export function RunLive({ runId }: { runId: string }) {
                   <div>
                     <div className="event-title">
                       <strong>{labels[event.type] ?? event.type}</strong>
-                      <time>{new Date(event.createdAt).toLocaleTimeString("fa-IR")}</time>
+                      <time>
+                        {new Date(event.createdAt).toLocaleTimeString("fa-IR")}
+                      </time>
                     </div>
                     <p>{event.message ?? "بدون توضیح"}</p>
                   </div>
