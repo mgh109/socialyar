@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { closeDb } from "@socialyar/db";
 import { workflowRoutes } from "./routes/workflows";
 import { runRoutes } from "./routes/runs";
+import { closeQueue } from "./queue";
 
 const app = Fastify({ logger: true });
 
@@ -22,6 +23,7 @@ app.get("/health", async () => ({
   ok: true,
   service: "socialyar-api",
   database: Boolean(process.env.DATABASE_URL),
+  redis: Boolean(process.env.REDIS_URL),
 }));
 
 await app.register(workflowRoutes);
@@ -31,6 +33,7 @@ const port = Number(process.env.PORT ?? 4000);
 
 const shutdown = async () => {
   await app.close();
+  await closeQueue();
   await closeDb();
 };
 
