@@ -1,1 +1,13 @@
-{"name":"@socialyar/workflow","private":true,"version":"0.0.0","exports":{".":"./src/index.ts"},"dependencies":{"@socialyar/shared":"workspace:*"}}
+{
+  "name": "@socialyar/workflow",
+  "private": true,
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@socialyar/db": "workspace:*",
+    "@socialyar/shared": "workspace:*",
+    "drizzle-orm": "^0.38.0"
+  }
+}
