@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { publishToChannel } from "@socialyar/channels";
 import {
   contentVariants,
@@ -43,11 +43,23 @@ export async function executePublication(input: {
           .where(eq(socialAccounts.id, publication.socialAccountId))
           .limit(1)
       )[0]
-    : null;
+    : (
+        await db
+          .select()
+          .from(socialAccounts)
+          .where(
+            and(
+              eq(socialAccounts.workspaceId, publication.workspaceId),
+              eq(socialAccounts.channel, variant.channel),
+              eq(socialAccounts.isActive, true),
+            ),
+          )
+          .limit(1)
+      )[0];
 
   if (!account) {
     throw new Error(
-      `No social account configured for ${variant.channel}`,
+      `No active social account configured for ${variant.channel}`,
     );
   }
 
@@ -57,6 +69,7 @@ export async function executePublication(input: {
       status: "publishing",
       attempt: input.attempt,
       error: null,
+      socialAccountId: account.id,
       updatedAt: new Date(),
     })
     .where(eq(publications.id, publication.id));
