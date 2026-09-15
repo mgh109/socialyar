@@ -7,6 +7,7 @@ import { runRoutes } from "./routes/runs";
 import { contentRoutes } from "./routes/content";
 import { approvalRoutes } from "./routes/approvals";
 import { accountRoutes } from "./routes/accounts";
+import { analyticsRoutes } from "./routes/analytics";
 import { closeQueue } from "./queue";
 
 const app = Fastify({ logger: true });
@@ -42,6 +43,7 @@ await app.register(runRoutes);
 await app.register(contentRoutes);
 await app.register(approvalRoutes);
 await app.register(accountRoutes);
+await app.register(analyticsRoutes);
 
 const port = Number(process.env.PORT ?? 4000);
 
