@@ -7,9 +7,11 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@socialyar/channels": "workspace:*",
     "@socialyar/db": "workspace:*",
     "@socialyar/workflow": "workspace:*",
     "bullmq": "^5.34.0",
+    "drizzle-orm": "^0.38.0",
     "ioredis": "^5.4.0"
   },
   "devDependencies": {
