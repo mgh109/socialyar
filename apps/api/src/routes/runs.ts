@@ -8,6 +8,7 @@ import {
   workflowVersions,
   workflows,
 } from "@socialyar/db";
+import { workflowQueue } from "../queue";
 
 const createRunSchema = z.object({
   trigger: z.string().min(1).default("manual"),
@@ -69,6 +70,52 @@ export async function runRoutes(app: FastifyInstance) {
 
       return created;
     });
+
+    try {
+      await workflowQueue.add(
+        "execute-workflow",
+        {
+          runId: run.id,
+          workflowId,
+          workflowVersionId: version.id,
+        },
+        {
+          jobId: run.id,
+          attempts: 3,
+          backoff: { type: "exponential", delay: 2000 },
+          removeOnComplete: 1000,
+          removeOnFail: 1000,
+        },
+      );
+    } catch (error) {
+      await db
+        .update(runs)
+        .set({
+          status: "failed",
+          output: {
+            error: {
+              message:
+                error instanceof Error ? error.message : "Failed to queue run",
+            },
+          },
+          finishedAt: new Date(),
+        })
+        .where(eq(runs.id, run.id));
+
+      await db.insert(runEvents).values({
+        runId: run.id,
+        type: "run_failed",
+        message: "Run could not be queued",
+        payload: {
+          error: error instanceof Error ? error.message : "Unknown queue error",
+        },
+      });
+
+      return reply.code(503).send({
+        error: "queue_unavailable",
+        runId: run.id,
+      });
+    }
 
     return reply.code(201).send(run);
   });
