@@ -7,8 +7,12 @@ const connection = new IORedis(
 );
 
 export const workflowQueue = new Queue("workflow-runs", { connection });
+export const publicationQueue = new Queue("publication-jobs", { connection });
 
 export async function closeQueue() {
-  await workflowQueue.close();
+  await Promise.all([
+    workflowQueue.close(),
+    publicationQueue.close(),
+  ]);
   await connection.quit();
 }
