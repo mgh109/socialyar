@@ -1,3 +1,4 @@
+import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { ZodError } from "zod";
 import { closeDb } from "@socialyar/db";
@@ -6,6 +7,13 @@ import { runRoutes } from "./routes/runs";
 import { closeQueue } from "./queue";
 
 const app = Fastify({ logger: true });
+
+await app.register(cors, {
+  origin: process.env.WEB_ORIGIN
+    ? process.env.WEB_ORIGIN.split(",").map((origin) => origin.trim())
+    : true,
+  credentials: true,
+});
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) {
