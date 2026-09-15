@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @socialyar/db db:generate",
+    "db:migrate": "pnpm --filter @socialyar/db db:migrate",
+    "db:studio": "pnpm --filter @socialyar/db db:studio"
   }
 }

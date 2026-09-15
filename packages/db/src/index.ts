@@ -1,21 +1,2 @@
-export const schemaPlan = [
-  "users",
-  "workspaces",
-  "social_accounts",
-  "workflows",
-  "workflow_versions",
-  "workflow_steps",
-  "workflow_connections",
-  "runs",
-  "run_steps",
-  "run_events",
-  "content_items",
-  "content_variants",
-  "approvals",
-  "schedules",
-  "publications",
-  "sources",
-  "ai_usage",
-  "analytics_events",
-  "reports",
-] as const;
+export { getDb, getPool, closeDb } from "./client";
+export * from "./schema";

@@ -1,1 +1,24 @@
-{"name":"@socialyar/db","private":true,"version":"0.0.0","exports":{".":"./src/index.ts"},"dependencies":{"drizzle-orm":"^0.38.0","pg":"^8.13.0"}}
+{
+  "name": "@socialyar/db",
+  "private": true,
+  "version": "0.0.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.38.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "drizzle-kit": "^0.30.0",
+    "typescript": "^5.7.0"
+  }
+}

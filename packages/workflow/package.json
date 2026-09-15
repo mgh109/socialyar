@@ -1,1 +1,0 @@
-{"name":"@socialyar/workflow","private":true,"version":"0.0.0","exports":{".":"./src/index.ts"},"dependencies":{"@socialyar/shared":"workspace:*"}}
