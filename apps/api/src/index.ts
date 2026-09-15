@@ -1,18 +1,42 @@
 import Fastify from "fastify";
-import { z } from "zod";
-import { createRun } from "@socialyar/workflow";
+import { ZodError } from "zod";
+import { closeDb } from "@socialyar/db";
+import { workflowRoutes } from "./routes/workflows";
+import { runRoutes } from "./routes/runs";
 
 const app = Fastify({ logger: true });
 
-app.get("/health", async () => ({ ok: true, service: "socialyar-api" }));
+app.setErrorHandler((error, _request, reply) => {
+  if (error instanceof ZodError) {
+    return reply.code(400).send({
+      error: "validation_error",
+      issues: error.issues,
+    });
+  }
 
-app.post("/workflows/:workflowId/runs", async (request, reply) => {
-  const params = z.object({ workflowId: z.string().min(1) }).parse(request.params);
-  const run = createRun(params.workflowId);
-  return reply.code(201).send(run);
+  app.log.error(error);
+  return reply.code(500).send({ error: "internal_error" });
 });
 
+app.get("/health", async () => ({
+  ok: true,
+  service: "socialyar-api",
+  database: Boolean(process.env.DATABASE_URL),
+}));
+
+await app.register(workflowRoutes);
+await app.register(runRoutes);
+
 const port = Number(process.env.PORT ?? 4000);
+
+const shutdown = async () => {
+  await app.close();
+  await closeDb();
+};
+
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
+
 app.listen({ port, host: "0.0.0.0" }).catch((error) => {
   app.log.error(error);
   process.exit(1);
