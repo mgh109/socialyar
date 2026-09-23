@@ -1,0 +1,46 @@
+.api-rules: &api_rules
+  rules:
+    - changes:
+        - apps/api/**/*
+        - .gitlab-ci.yml
+
+.web-rules: &web_rules
+  rules:
+    - changes:
+        - apps/web/**/*
+        - .gitlab-ci.yml
+
+.worker-rules: &worker_rules
+  rules:
+    - changes:
+        - apps/worker/**/*
+        - .gitlab-ci.yml
+
+include:
+  - component: git.kubit.dev/eitala/common/ci-cd/stages@main
+
+  - component: git.kubit.dev/eitala/common/ci-cd/rules@main
+
+  - component: git.kubit.dev/eitala/common/ci-cd/build-deploy-v2@main
+    inputs:
+      environment: api-prod
+      build_context: .
+      dockerfile: ./apps/api/Dockerfile
+      condition: .only_main
+    <<: *api_rules
+
+  - component: git.kubit.dev/eitala/common/ci-cd/build-deploy-v2@main
+    inputs:
+      environment: web-prod
+      build_context: .
+      dockerfile: ./apps/web/Dockerfile
+      condition: .only_main
+    <<: *web_rules
+
+  - component: git.kubit.dev/eitala/common/ci-cd/build-deploy-v2@main
+    inputs:
+      environment: worker-prod
+      build_context: .
+      dockerfile: ./apps/worker/Dockerfile
+      condition: .only_main
+    <<: *worker_rules
