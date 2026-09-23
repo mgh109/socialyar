@@ -1,4 +1,6 @@
 import cors from "@fastify/cors";
+import swagger from "@fastify/swagger";
+import swaggerUi from "@fastify/swagger-ui";
 import Fastify from "fastify";
 import { ZodError } from "zod";
 import { closeDb } from "@socialyar/db";
@@ -21,6 +23,39 @@ await app.register(cors, {
   credentials: true,
 });
 
+await app.register(swagger, {
+  openapi: {
+    info: {
+      title: "HoorPluse API",
+      description: "API documentation for HoorPluse / SocialYar",
+      version: "1.0.0",
+    },
+    servers: [
+      {
+        url: process.env.API_PUBLIC_URL ?? "https://api.hoorpluse.ir",
+      },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+        },
+      },
+    },
+  },
+});
+
+await app.register(swaggerUi, {
+  routePrefix: "/docs",
+  uiConfig: {
+    docExpansion: "list",
+    deepLinking: true,
+  },
+  staticCSP: true,
+});
+
 await authPlugin(app);
 
 app.setErrorHandler((error, _request, reply) => {
@@ -35,12 +70,32 @@ app.setErrorHandler((error, _request, reply) => {
   return reply.code(500).send({ error: "internal_error" });
 });
 
-app.get("/health", async () => ({
-  ok: true,
-  service: "socialyar-api",
-  database: Boolean(process.env.DATABASE_URL),
-  redis: Boolean(process.env.REDIS_URL),
-}));
+app.get(
+  "/health",
+  {
+    schema: {
+      tags: ["System"],
+      summary: "Health check",
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            ok: { type: "boolean" },
+            service: { type: "string" },
+            database: { type: "boolean" },
+            redis: { type: "boolean" },
+          },
+        },
+      },
+    },
+  },
+  async () => ({
+    ok: true,
+    service: "socialyar-api",
+    database: Boolean(process.env.DATABASE_URL),
+    redis: Boolean(process.env.REDIS_URL),
+  }),
+);
 
 await app.register(authRoutes);
 await app.register(workflowRoutes);

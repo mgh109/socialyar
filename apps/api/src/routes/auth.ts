@@ -1,4 +1,4 @@
-import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -12,23 +12,10 @@ import {
 
 const scrypt = promisify(scryptCallback);
 
-const registerSchema = z.object({
-  name: z.string().min(2).max(100),
-  email: z.string().email(),
-  password: z.string().min(8).max(128),
-  workspaceName: z.string().min(2).max(120).optional(),
-});
-
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
-
-async function hashPassword(password: string) {
-  const salt = randomBytes(16).toString("hex");
-  const key = (await scrypt(password, salt, 64)) as Buffer;
-  return `scrypt$${salt}$${key.toString("hex")}`;
-}
 
 async function verifyPassword(password: string, stored: string) {
   const [algorithm, salt, hash] = stored.split("$");
@@ -43,142 +30,138 @@ async function verifyPassword(password: string, stored: string) {
   );
 }
 
-function slugify(value: string) {
-  const base = value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\u0600-\u06ff]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48);
-
-  return `${base || "workspace"}-${randomBytes(3).toString("hex")}`;
-}
-
 export async function authRoutes(app: FastifyInstance) {
   const db = getDb();
 
-  app.post("/auth/register", async (request, reply) => {
-    const input = registerSchema.parse(request.body);
-    const email = input.email.toLowerCase().trim();
+  app.post(
+    "/auth/login",
+    {
+      schema: {
+        tags: ["Auth"],
+        summary: "Login",
+        description: "Authenticate an existing user and return a JWT access token.",
+        body: {
+          type: "object",
+          required: ["email", "password"],
+          properties: {
+            email: { type: "string", format: "email" },
+            password: { type: "string", format: "password" },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              accessToken: { type: "string" },
+              user: {
+                type: "object",
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                  email: { type: "string" },
+                  name: { type: ["string", "null"] },
+                },
+              },
+              workspace: {
+                type: "object",
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                  name: { type: "string" },
+                  slug: { type: "string" },
+                },
+              },
+            },
+          },
+          401: {
+            type: "object",
+            properties: {
+              error: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const input = loginSchema.parse(request.body);
+      const email = input.email.toLowerCase().trim();
 
-    const [existing] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.email, email))
-      .limit(1);
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, email))
+        .limit(1);
 
-    if (existing) {
-      return reply.code(409).send({ error: "email_already_exists" });
-    }
+      if (!user?.passwordHash) {
+        return reply.code(401).send({ error: "invalid_credentials" });
+      }
 
-    const passwordHash = await hashPassword(input.password);
+      const valid = await verifyPassword(input.password, user.passwordHash);
+      if (!valid) {
+        return reply.code(401).send({ error: "invalid_credentials" });
+      }
 
-    const result = await db.transaction(async (tx) => {
-      const [user] = await tx
-        .insert(users)
-        .values({
-          email,
-          name: input.name,
-          passwordHash,
+      const [membership] = await db
+        .select({
+          workspaceId: workspaceMembers.workspaceId,
+          workspaceName: workspaces.name,
+          workspaceSlug: workspaces.slug,
         })
-        .returning();
+        .from(workspaceMembers)
+        .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+        .where(eq(workspaceMembers.userId, user.id))
+        .limit(1);
 
-      const workspaceName =
-        input.workspaceName?.trim() || `فضای کاری ${input.name}`;
+      if (!membership) {
+        return reply.code(409).send({ error: "workspace_not_found" });
+      }
 
-      const [workspace] = await tx
-        .insert(workspaces)
-        .values({
-          name: workspaceName,
-          slug: slugify(workspaceName),
-          ownerId: user.id,
-        })
-        .returning();
-
-      await tx.insert(workspaceMembers).values({
-        workspaceId: workspace.id,
-        userId: user.id,
-        role: "owner",
+      const accessToken = app.signAccessToken({
+        sub: user.id,
+        email: user.email,
+        workspaceId: membership.workspaceId,
       });
 
-      return { user, workspace };
-    });
-
-    const accessToken = app.signAccessToken({
-      sub: result.user.id,
-      email: result.user.email,
-      workspaceId: result.workspace.id,
-    });
-
-    return reply.code(201).send({
-      accessToken,
-      user: {
-        id: result.user.id,
-        email: result.user.email,
-        name: result.user.name,
-      },
-      workspace: {
-        id: result.workspace.id,
-        name: result.workspace.name,
-        slug: result.workspace.slug,
-      },
-    });
-  });
-
-  app.post("/auth/login", async (request, reply) => {
-    const input = loginSchema.parse(request.body);
-    const email = input.email.toLowerCase().trim();
-
-    const [user] = await db
-      .select()
-      .from(users)
-      .where(eq(users.email, email))
-      .limit(1);
-
-    if (!user?.passwordHash) {
-      return reply.code(401).send({ error: "invalid_credentials" });
-    }
-
-    const valid = await verifyPassword(input.password, user.passwordHash);
-    if (!valid) {
-      return reply.code(401).send({ error: "invalid_credentials" });
-    }
-
-    const [membership] = await db
-      .select({
-        workspaceId: workspaceMembers.workspaceId,
-        workspaceName: workspaces.name,
-        workspaceSlug: workspaces.slug,
-      })
-      .from(workspaceMembers)
-      .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
-      .where(eq(workspaceMembers.userId, user.id))
-      .limit(1);
-
-    if (!membership) {
-      return reply.code(409).send({ error: "workspace_not_found" });
-    }
-
-    const accessToken = app.signAccessToken({
-      sub: user.id,
-      email: user.email,
-      workspaceId: membership.workspaceId,
-    });
-
-    return {
-      accessToken,
-      user: { id: user.id, email: user.email, name: user.name },
-      workspace: {
-        id: membership.workspaceId,
-        name: membership.workspaceName,
-        slug: membership.workspaceSlug,
-      },
-    };
-  });
+      return {
+        accessToken,
+        user: { id: user.id, email: user.email, name: user.name },
+        workspace: {
+          id: membership.workspaceId,
+          name: membership.workspaceName,
+          slug: membership.workspaceSlug,
+        },
+      };
+    },
+  );
 
   app.get(
     "/auth/me",
-    { onRequest: [app.authenticate] },
+    {
+      onRequest: [app.authenticate],
+      schema: {
+        tags: ["Auth"],
+        summary: "Current user",
+        security: [{ bearerAuth: [] }],
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              user: {
+                type: "object",
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                  email: { type: "string" },
+                },
+              },
+              workspace: {
+                type: "object",
+                properties: {
+                  id: { type: "string", format: "uuid" },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     async (request) => ({
       user: {
         id: request.auth.userId,
