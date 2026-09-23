@@ -21,7 +21,7 @@ await app.register(cors, {
   credentials: true,
 });
 
-await app.register(authPlugin);
+await authPlugin(app);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) {
