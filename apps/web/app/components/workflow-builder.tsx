@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { apiFetch } from "../lib/session";
 
 type Step = {
   key: string;
@@ -30,8 +31,6 @@ export function WorkflowBuilder() {
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-  const workspaceId = process.env.NEXT_PUBLIC_WORKSPACE_ID ?? "";
 
   const connections = useMemo(
     () =>
@@ -43,17 +42,11 @@ export function WorkflowBuilder() {
   );
 
   const save = async () => {
-    if (!workspaceId) {
-      setMessage("NEXT_PUBLIC_WORKSPACE_ID تنظیم نشده");
-      return null;
-    }
-
     setBusy(true);
     setMessage("در حال ذخیره...");
 
     try {
       const body = {
-        workspaceId,
         name: "خبرهای AI",
         description: "کشف، اعتبارسنجی، تولید و انتشار خبرهای AI",
         autonomyMode: "assisted",
@@ -72,14 +65,14 @@ export function WorkflowBuilder() {
         connections,
       };
 
-      const response = await fetch(`${apiUrl}/workflows`, {
+      const response = await apiFetch("/workflows", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
 
       if (!response.ok) {
-        throw new Error(`Save failed (${response.status})`);
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.error ?? `Save failed (${response.status})`);
       }
 
       const data = await response.json();
@@ -102,9 +95,8 @@ export function WorkflowBuilder() {
       const id = workflowId ?? (await save());
       if (!id) return;
 
-      const response = await fetch(`${apiUrl}/workflows/${id}/runs`, {
+      const response = await apiFetch(`/workflows/${id}/runs`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trigger: "manual", input: { prompt } }),
       });
 
