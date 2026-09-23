@@ -1,5 +1,6 @@
-import { getWorkspaceId } from "../lib/session";
 "use client";
+
+import { getWorkspaceId } from "../lib/session";
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
