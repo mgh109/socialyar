@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",
+    "@fastify/jwt": "^9.1.0",
     "@socialyar/db": "workspace:*",
     "@socialyar/shared": "workspace:*",
     "@socialyar/workflow": "workspace:*",
