@@ -1,0 +1,88 @@
+# SocialYar — local stack mirroring the K8s topology.
+#
+#   docker compose up --build        # build images + start everything
+#   docker compose up postgres redis # infra only (for local pnpm dev)
+#
+# Dependency graph:
+#   web    -> api (HTTP, NEXT_PUBLIC_API_URL baked at build time)
+#   api    -> postgres (DATABASE_URL), redis (REDIS_URL / BullMQ queues)
+#   worker -> postgres (DATABASE_URL), redis (REDIS_URL / BullMQ workers)
+#   worker also needs OPENAI_API_KEY for AI workflow steps.
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: socialyar
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d socialyar"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      PORT: "4000"
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/socialyar
+      REDIS_URL: redis://redis:6379
+      WEB_ORIGIN: http://localhost:3000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/socialyar
+      REDIS_URL: redis://redis:6379
+      WORKER_CONCURRENCY: "4"
+      PUBLISHER_CONCURRENCY: "2"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Inlined into the client bundle at build time — must be the
+        # browser-visible API URL, not the internal compose hostname.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+        NEXT_PUBLIC_WORKSPACE_ID: ${NEXT_PUBLIC_WORKSPACE_ID:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
