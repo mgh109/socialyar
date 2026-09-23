@@ -33,9 +33,14 @@ async function hashPassword(password: string) {
 async function verifyPassword(password: string, stored: string) {
   const [algorithm, salt, hash] = stored.split("$");
   if (algorithm !== "scrypt" || !salt || !hash) return false;
+
   const expected = Buffer.from(hash, "hex");
   const actual = (await scrypt(password, salt, expected.length)) as Buffer;
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+
+  return (
+    actual.length === expected.length &&
+    timingSafeEqual(actual, expected)
+  );
 }
 
 function slugify(value: string) {
@@ -99,14 +104,11 @@ export async function authRoutes(app: FastifyInstance) {
       return { user, workspace };
     });
 
-    const accessToken = app.jwt.sign(
-      {
-        sub: result.user.id,
-        email: result.user.email,
-        workspaceId: result.workspace.id,
-      },
-      { expiresIn: "7d" },
-    );
+    const accessToken = app.signAccessToken({
+      sub: result.user.id,
+      email: result.user.email,
+      workspaceId: result.workspace.id,
+    });
 
     return reply.code(201).send({
       accessToken,
@@ -157,14 +159,11 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: "workspace_not_found" });
     }
 
-    const accessToken = app.jwt.sign(
-      {
-        sub: user.id,
-        email: user.email,
-        workspaceId: membership.workspaceId,
-      },
-      { expiresIn: "7d" },
-    );
+    const accessToken = app.signAccessToken({
+      sub: user.id,
+      email: user.email,
+      workspaceId: membership.workspaceId,
+    });
 
     return {
       accessToken,
@@ -177,10 +176,10 @@ export async function authRoutes(app: FastifyInstance) {
     };
   });
 
-  app.get("/auth/me", {
-    onRequest: [app.authenticate],
-  }, async (request) => {
-    return {
+  app.get(
+    "/auth/me",
+    { onRequest: [app.authenticate] },
+    async (request) => ({
       user: {
         id: request.auth.userId,
         email: request.auth.email,
@@ -188,6 +187,6 @@ export async function authRoutes(app: FastifyInstance) {
       workspace: {
         id: request.auth.workspaceId,
       },
-    };
-  });
+    }),
+  );
 }
