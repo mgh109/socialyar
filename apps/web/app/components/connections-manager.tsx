@@ -1,3 +1,4 @@
+import { getWorkspaceId } from "../lib/session";
 "use client";
 
 import Link from "next/link";
