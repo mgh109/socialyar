@@ -8,6 +8,8 @@ import { contentRoutes } from "./routes/content";
 import { approvalRoutes } from "./routes/approvals";
 import { accountRoutes } from "./routes/accounts";
 import { analyticsRoutes } from "./routes/analytics";
+import { authRoutes } from "./routes/auth";
+import { authPlugin } from "./auth";
 import { closeQueue } from "./queue";
 
 const app = Fastify({ logger: true });
@@ -18,6 +20,8 @@ await app.register(cors, {
     : true,
   credentials: true,
 });
+
+await app.register(authPlugin);
 
 app.setErrorHandler((error, _request, reply) => {
   if (error instanceof ZodError) {
@@ -38,6 +42,7 @@ app.get("/health", async () => ({
   redis: Boolean(process.env.REDIS_URL),
 }));
 
+await app.register(authRoutes);
 await app.register(workflowRoutes);
 await app.register(runRoutes);
 await app.register(contentRoutes);
