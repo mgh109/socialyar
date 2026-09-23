@@ -1,4 +1,4 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -25,12 +25,10 @@ const connectionSchema = z.object({
 });
 
 const createWorkflowSchema = z.object({
-  workspaceId: z.string().uuid(),
   name: z.string().min(1),
   description: z.string().nullable().optional(),
   autonomyMode: z.enum(["manual", "assisted", "semi_auto", "full_auto"]).default("assisted"),
   prompt: z.string().nullable().optional(),
-  createdBy: z.string().uuid().nullable().optional(),
   steps: z.array(stepSchema).default([]),
   connections: z.array(connectionSchema).default([]),
 });
@@ -41,7 +39,6 @@ const updateWorkflowSchema = z.object({
   autonomyMode: z.enum(["manual", "assisted", "semi_auto", "full_auto"]).optional(),
   status: z.enum(["draft", "active", "paused", "archived"]).optional(),
   prompt: z.string().nullable().optional(),
-  createdBy: z.string().uuid().nullable().optional(),
   steps: z.array(stepSchema),
   connections: z.array(connectionSchema).default([]),
 });
@@ -96,6 +93,7 @@ async function insertGraph(
 
 export async function workflowRoutes(app: FastifyInstance) {
   const db = getDb();
+  app.addHook("onRequest", app.authenticate);
 
   app.post("/workflows", async (request, reply) => {
     const input = createWorkflowSchema.parse(request.body);
@@ -104,11 +102,11 @@ export async function workflowRoutes(app: FastifyInstance) {
       const [workflow] = await tx
         .insert(workflows)
         .values({
-          workspaceId: input.workspaceId,
+          workspaceId: request.auth.workspaceId,
           name: input.name,
           description: input.description ?? null,
           autonomyMode: input.autonomyMode,
-          createdBy: input.createdBy ?? null,
+          createdBy: request.auth.userId,
           currentVersion: 1,
         })
         .returning();
@@ -124,11 +122,16 @@ export async function workflowRoutes(app: FastifyInstance) {
             stepCount: input.steps.length,
             connectionCount: input.connections.length,
           },
-          createdBy: input.createdBy ?? null,
+          createdBy: request.auth.userId,
         })
         .returning();
 
-      await insertGraph(tx as ReturnType<typeof getDb>, version.id, input.steps, input.connections);
+      await insertGraph(
+        tx as ReturnType<typeof getDb>,
+        version.id,
+        input.steps,
+        input.connections,
+      );
 
       return { workflow, version };
     });
@@ -137,14 +140,10 @@ export async function workflowRoutes(app: FastifyInstance) {
   });
 
   app.get("/workflows", async (request) => {
-    const query = z
-      .object({ workspaceId: z.string().uuid() })
-      .parse(request.query);
-
     return db
       .select()
       .from(workflows)
-      .where(eq(workflows.workspaceId, query.workspaceId))
+      .where(eq(workflows.workspaceId, request.auth.workspaceId))
       .orderBy(desc(workflows.updatedAt));
   });
 
@@ -156,7 +155,12 @@ export async function workflowRoutes(app: FastifyInstance) {
     const [workflow] = await db
       .select()
       .from(workflows)
-      .where(eq(workflows.id, workflowId))
+      .where(
+        and(
+          eq(workflows.id, workflowId),
+          eq(workflows.workspaceId, request.auth.workspaceId),
+        ),
+      )
       .limit(1);
 
     if (!workflow) {
@@ -197,7 +201,12 @@ export async function workflowRoutes(app: FastifyInstance) {
     const [existing] = await db
       .select()
       .from(workflows)
-      .where(eq(workflows.id, workflowId))
+      .where(
+        and(
+          eq(workflows.id, workflowId),
+          eq(workflows.workspaceId, request.auth.workspaceId),
+        ),
+      )
       .limit(1);
 
     if (!existing) {
@@ -232,11 +241,16 @@ export async function workflowRoutes(app: FastifyInstance) {
             stepCount: input.steps.length,
             connectionCount: input.connections.length,
           },
-          createdBy: input.createdBy ?? null,
+          createdBy: request.auth.userId,
         })
         .returning();
 
-      await insertGraph(tx as ReturnType<typeof getDb>, version.id, input.steps, input.connections);
+      await insertGraph(
+        tx as ReturnType<typeof getDb>,
+        version.id,
+        input.steps,
+        input.connections,
+      );
 
       return { workflow, version };
     });
