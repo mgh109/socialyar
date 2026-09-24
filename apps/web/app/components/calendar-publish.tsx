@@ -165,7 +165,7 @@ export function CalendarPublish() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>SocialYar</strong>
+          <strong>هور+</strong>
           <span>Calendar & Publish</span>
         </div>
         <div className="header-actions">

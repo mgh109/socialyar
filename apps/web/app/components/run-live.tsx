@@ -91,7 +91,7 @@ export function RunLive({ runId }: { runId: string }) {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>SocialYar</strong>
+          <strong>هور+</strong>
           <span>اجرای جریان · خبرهای AI</span>
         </div>
         <div className="header-actions">

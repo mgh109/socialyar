@@ -239,7 +239,7 @@ export function ContentStudio({ runId }: { runId: string }) {
       <main className="workflow-page">
         <header className="app-header">
           <div className="brand-lockup">
-            <strong>SocialYar</strong>
+            <strong>هور+</strong>
             <span>استودیوی محتوا · خروجی Workflow</span>
           </div>
         </header>
@@ -252,7 +252,7 @@ export function ContentStudio({ runId }: { runId: string }) {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>SocialYar</strong>
+          <strong>هور+</strong>
           <span>استودیوی محتوا · خروجی Workflow</span>
         </div>
         <div className="header-actions">
