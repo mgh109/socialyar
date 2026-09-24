@@ -38,7 +38,8 @@ html[data-theme="dark"] {
 }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-estedad), Tahoma, sans-serif; }
+html { font-family: var(--font-estedad), Tahoma, sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: inherit; }
 button, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; text-decoration: none; }
@@ -958,7 +959,7 @@ a { color: inherit; text-decoration: none; }
 
 /* Hoor+ design system: light is the default; all working views share the same surfaces. */
 body { font-size: 16px; line-height: 1.7; }
-button, input, textarea, select { font-family: inherit; }
+button, input, textarea, select, option, optgroup, input::file-selector-button, code, pre, kbd, samp { font-family: var(--font-estedad), Tahoma, sans-serif; }
 .topbar, .app-header { background: var(--panel); min-height: 68px; height: auto; padding-block: 10px; }
 .brand-lockup strong, .topbar strong { font-size: 19px; font-weight: 800; letter-spacing: -.025em; }
 .brand-lockup span, .topbar span, .save-status { color: var(--muted); }

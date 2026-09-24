@@ -5,9 +5,14 @@ import "./styles.css";
 import { ThemeToggle } from "./components/theme-toggle";
 
 const estedad = localFont({
-  src: "../public/fonts/Estedad/Estedad-VF.woff2",
+  src: [
+    { path: "../public/fonts/Estedad/Estedad-Thin.woff2", weight: "100", style: "normal" },
+    { path: "../public/fonts/Estedad/Estedad-Light.woff2", weight: "300", style: "normal" },
+    { path: "../public/fonts/Estedad/Estedad-Medium.woff2", weight: "500", style: "normal" },
+    { path: "../public/fonts/Estedad/Estedad-Bold.woff2", weight: "700", style: "normal" },
+    { path: "../public/fonts/Estedad/Estedad-Black.woff2", weight: "900", style: "normal" },
+  ],
   variable: "--font-estedad",
-  weight: "100 900",
   style: "normal",
   display: "swap",
 });
