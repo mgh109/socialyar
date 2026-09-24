@@ -4,11 +4,12 @@ export interface AIProvider {
   generate(input: { system?: string; prompt: string }): Promise<{ text: string; usage: AIUsage }>;
 }
 
-export type AIConnection = { provider: "openai" | "openrouter"; model: string; token: string };
+export type AIConnection = { provider: "openai" | "openrouter" | "gapgpt"; model: string; token: string };
 
 export async function generateNewsDraft(connection: AIConnection, article: { title: string; text: string; url?: string }) {
   const endpoint = connection.provider === "openrouter"
     ? "https://openrouter.ai/api/v1/chat/completions"
+    : connection.provider === "gapgpt" ? "https://api.gapgpt.app/v1/chat/completions"
     : "https://api.openai.com/v1/chat/completions";
   const response = await fetch(endpoint, {
     method: "POST",

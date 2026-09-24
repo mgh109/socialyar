@@ -5,7 +5,7 @@ import { generateNewsDraft, type AIConnection } from "@socialyar/ai";
 import { aiSettings, decryptSecret, encryptSecret, getDb } from "@socialyar/db";
 
 const settingsSchema = z.object({
-  provider: z.enum(["openai", "openrouter"]),
+  provider: z.enum(["openai", "openrouter", "gapgpt"]),
   model: z.string().min(1).max(120),
   token: z.string().min(8).optional(),
 });
@@ -24,7 +24,7 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
     const input = settingsSchema.parse(request.body);
     const [existing] = await db.select().from(aiSettings)
       .where(eq(aiSettings.workspaceId, request.auth.workspaceId)).limit(1);
-    if (!existing && !input.token) return reply.code(400).send({ error: "token_required" });
+    if ((!existing || existing.provider !== input.provider) && !input.token) return reply.code(400).send({ error: "token_required_for_provider" });
     const encryptedToken = input.token ? encryptSecret(input.token) : existing!.encryptedToken;
     await db.insert(aiSettings).values({
       workspaceId: request.auth.workspaceId, provider: input.provider,
