@@ -18,6 +18,7 @@ await app.register(cors, {
   origin: process.env.WEB_ORIGIN
     ? process.env.WEB_ORIGIN.split(",").map((origin) => origin.trim())
     : true,
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   credentials: true,
 });
 
