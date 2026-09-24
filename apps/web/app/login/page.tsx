@@ -46,7 +46,7 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <section className="auth-brand">
-        <span className="eyebrow">SocialYar</span>
+        <span className="eyebrow">هور+</span>
         <h1>مدیریت محتوا، از ایده تا انتشار</h1>
         <p>
           وارد فضای کاری خودت شو و Workflowها، محتوا، تأیید، انتشار و تحلیل را یکجا مدیریت کن.
@@ -61,7 +61,7 @@ export default function LoginPage() {
 
       <section className="auth-card">
         <div className="auth-heading">
-          <h2>ورود به SocialYar</h2>
+          <h2>ورود به هور+</h2>
           <p>برای ادامه وارد حساب خودت شو.</p>
         </div>
 
@@ -95,7 +95,7 @@ export default function LoginPage() {
           {message ? <div className="auth-error">{message}</div> : null}
 
           <button className="primary-button wide auth-submit" disabled={busy}>
-            {busy ? "در حال ورود..." : "ورود به SocialYar"}
+            {busy ? "در حال ورود..." : "ورود به هور+"}
           </button>
         </form>
       </section>

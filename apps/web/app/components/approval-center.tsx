@@ -125,7 +125,7 @@ export function ApprovalCenter() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>SocialYar</strong>
+          <strong>هور+</strong>
           <span>Approval Center</span>
         </div>
         <div className="header-actions">
