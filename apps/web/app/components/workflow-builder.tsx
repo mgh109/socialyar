@@ -115,7 +115,7 @@ export function WorkflowBuilder() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>SocialYar</strong>
+          <strong>هور+</strong>
           <span>ساخت جریان با هوش مصنوعی</span>
         </div>
         <div className="header-actions">

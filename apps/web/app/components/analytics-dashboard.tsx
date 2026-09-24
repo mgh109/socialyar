@@ -102,7 +102,7 @@ export function AnalyticsDashboard() {
       <main className="workflow-page">
         <header className="app-header">
           <div className="brand-lockup">
-            <strong>SocialYar</strong>
+            <strong>هور+</strong>
             <span>Analytics</span>
           </div>
         </header>
@@ -115,7 +115,7 @@ export function AnalyticsDashboard() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>SocialYar</strong>
+          <strong>هور+</strong>
           <span>Analytics & Publication History</span>
         </div>
         <div className="header-actions">

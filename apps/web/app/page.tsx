@@ -13,7 +13,7 @@ export default function HomePage() {
   return (
     <main className="shell">
       <header className="topbar">
-        <strong>SocialYar</strong>
+        <strong>هور+</strong>
         <span>AI-native Social Automation</span>
       </header>
 

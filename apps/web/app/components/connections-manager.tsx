@@ -212,7 +212,7 @@ export function ConnectionsManager() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>SocialYar</strong>
+          <strong>هور+</strong>
           <span>Connections</span>
         </div>
         <div className="header-actions">
@@ -326,7 +326,7 @@ export function ConnectionsManager() {
               <input
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="مثلاً کانال اصلی SocialYar"
+                placeholder="مثلاً کانال اصلی هور+"
               />
             </label>
 
