@@ -3,6 +3,7 @@ import type { Channel } from "@socialyar/shared";
 export type ChannelCredentials = Record<string, unknown>;
 
 export type PublishRequest = {
+  publicationId?: string;
   channel: Channel;
   title?: string | null;
   content: string;
@@ -97,12 +98,14 @@ async function publishWebsite(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...(request.publicationId ? { "Idempotency-Key": request.publicationId } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify({
       title: request.title ?? null,
       content: request.content,
       source: "socialyar",
+      publicationId: request.publicationId ?? null,
     }),
   });
 
@@ -118,16 +121,15 @@ async function publishWebsite(
   try {
     payload = JSON.parse(text) as Record<string, unknown>;
   } catch {
-    payload = {};
+    throw new Error("Website webhook must return JSON with a published content id");
+  }
+
+  if (typeof payload.id !== "string" && typeof payload.id !== "number") {
+    throw new Error("Website webhook did not confirm a published content id");
   }
 
   return {
-    externalId:
-      typeof payload.id === "string"
-        ? payload.id
-        : typeof payload.id === "number"
-          ? String(payload.id)
-          : crypto.randomUUID(),
+    externalId: String(payload.id),
     externalUrl:
       typeof payload.url === "string" ? payload.url : undefined,
     publishedAt: new Date().toISOString(),
@@ -145,13 +147,14 @@ async function publishFallbackWebhook(
 
   const response = await fetch(fallbackWebhookUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(request.publicationId ? { "Idempotency-Key": request.publicationId } : {}) },
     body: JSON.stringify({
       channel: request.channel,
       title: request.title ?? null,
       content: request.content,
       externalAccountId: request.externalAccountId ?? null,
       source: "socialyar-fallback",
+      publicationId: request.publicationId ?? null,
     }),
   });
 
@@ -166,9 +169,12 @@ async function publishFallbackWebhook(
     unknown
   >;
 
+  if (typeof body.id !== "string" && typeof body.id !== "number") {
+    throw new Error("Fallback webhook did not confirm a published content id");
+  }
+
   return {
-    externalId:
-      typeof body.id === "string" ? body.id : crypto.randomUUID(),
+    externalId: String(body.id),
     externalUrl:
       typeof body.url === "string" ? body.url : undefined,
     publishedAt: new Date().toISOString(),

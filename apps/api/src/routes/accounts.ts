@@ -123,10 +123,6 @@ export async function accountRoutes(app: FastifyInstance) {
   app.addHook("onRequest", app.authenticate);
 
   app.get("/social-accounts", async (request) => {
-    const { workspaceId } = z
-      .object({ workspaceId: z.string().uuid() })
-      .parse(request.query);
-
     const accounts = await db
       .select()
       .from(socialAccounts)

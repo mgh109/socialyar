@@ -39,7 +39,9 @@ type CalendarRow = {
     id: string;
     title: string | null;
   };
+  publication: { status: string; externalUrl: string | null; error: { message?: string } | null; attempt: number } | null;
 };
+type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 
 const channelLabels: Record<string, string> = {
   instagram: "Instagram",
@@ -51,17 +53,18 @@ const channelLabels: Record<string, string> = {
 
 function defaultScheduleTime() {
   const date = new Date(Date.now() + 60 * 60 * 1000);
-  return date.toISOString().slice(0, 16);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
 export function CalendarPublish() {
   const workspaceId = getWorkspaceId();
   const [approved, setApproved] = useState<ApprovalRow[]>([]);
   const [calendar, setCalendar] = useState<CalendarRow[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectedVariantId, setSelectedVariantId] = useState("");
   const [scheduledAt, setScheduledAt] = useState(defaultScheduleTime());
-  const [timezone, setTimezone] = useState("UTC");
-  const [smartSchedule, setSmartSchedule] = useState(true);
+  const [timezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [message, setMessage] = useState("در حال بارگذاری...");
   const [busy, setBusy] = useState(false);
 
@@ -71,19 +74,21 @@ export function CalendarPublish() {
       return;
     }
 
-    const [approvedResponse, calendarResponse] = await Promise.all([
+    const [approvedResponse, calendarResponse, accountsResponse] = await Promise.all([
       apiFetch(
         `/approvals?workspaceId=${workspaceId}&status=approved`,
       ),
       apiFetch(`/calendar?workspaceId=${workspaceId}`),
+      apiFetch("/social-accounts"),
     ]);
 
-    if (!approvedResponse.ok || !calendarResponse.ok) {
+    if (!approvedResponse.ok || !calendarResponse.ok || !accountsResponse.ok) {
       throw new Error("Calendar data could not be loaded");
     }
 
     const approvedRows = (await approvedResponse.json()) as ApprovalRow[];
     const calendarRows = (await calendarResponse.json()) as CalendarRow[];
+    setAccounts((await accountsResponse.json()) as Account[]);
 
     const unscheduled = approvedRows.filter(
       (row) => row.variant.status === "approved",
@@ -99,15 +104,20 @@ export function CalendarPublish() {
     void load().catch((error) =>
       setMessage(error instanceof Error ? error.message : "خطا در Calendar"),
     );
+    const poll = window.setInterval(() => void load().catch(() => {}), 10000);
+    return () => window.clearInterval(poll);
   }, [workspaceId]);
 
   const selected = useMemo(
     () => approved.find((row) => row.variant.id === selectedVariantId) ?? null,
     [approved, selectedVariantId],
   );
+  const availableAccounts = accounts.filter((account) => account.isActive && account.channel === selected?.variant.channel);
+  const accountId = availableAccounts.some((account) => account.id === selectedAccountId)
+    ? selectedAccountId : availableAccounts[0]?.id ?? "";
 
   const scheduleVariant = async () => {
-    if (!selected) return;
+    if (!selected || !accountId) return;
     setBusy(true);
     setMessage("در حال زمان‌بندی...");
 
@@ -120,7 +130,8 @@ export function CalendarPublish() {
           body: JSON.stringify({
             scheduledAt: new Date(scheduledAt).toISOString(),
             timezone,
-            smartSchedule,
+            smartSchedule: false,
+            socialAccountId: accountId,
           }),
         },
       );
@@ -212,11 +223,13 @@ export function CalendarPublish() {
                   </div>
 
                   <div className="calendar-status">
-                    <span>{row.schedule.status}</span>
+                    <span>{row.publication?.status ?? row.schedule.status}</span>
+                    {row.publication?.externalUrl ? <a href={row.publication.externalUrl} target="_blank" rel="noreferrer">مشاهده خروجی</a> : null}
+                    {row.publication?.error?.message ? <small role="alert">{row.publication.error.message}</small> : null}
                     <button
                       className="ghost-button"
                       onClick={() => publishNow(row.schedule.id)}
-                      disabled={busy || row.schedule.status !== "scheduled"}
+                      disabled={busy || !["scheduled", "failed"].includes(row.schedule.status)}
                     >
                       انتشار همین حالا
                     </button>
@@ -267,26 +280,17 @@ export function CalendarPublish() {
                 </label>
 
                 <label className="publish-field">
-                  <span>Timezone</span>
-                  <input
-                    value={timezone}
-                    onChange={(event) => setTimezone(event.target.value)}
-                  />
-                </label>
-
-                <label className="publish-check">
-                  <input
-                    type="checkbox"
-                    checked={smartSchedule}
-                    onChange={(event) => setSmartSchedule(event.target.checked)}
-                  />
-                  <span>Smart Schedule فعال باشد</span>
+                  <span>حساب مقصد · {timezone}</span>
+                  <select value={accountId} onChange={(event) => setSelectedAccountId(event.target.value)}>
+                    {availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}
+                  </select>
+                  {!availableAccounts.length ? <small>ابتدا یک حساب فعال برای این کانال در بخش اتصال‌ها اضافه کن.</small> : null}
                 </label>
 
                 <button
                   className="success-button wide"
                   onClick={scheduleVariant}
-                  disabled={busy || !selected}
+                  disabled={busy || !selected || !accountId || !scheduledAt}
                 >
                   ✓ زمان‌بندی
                 </button>
@@ -295,10 +299,10 @@ export function CalendarPublish() {
           </div>
 
           <div className="publish-guard">
-            <span className="micro-label">Agent Publish Guard</span>
+            <span className="micro-label">بررسی پیش از انتشار</span>
             <strong>محتوای تأییدنشده منتشر نمی‌شود.</strong>
             <p>
-              در خطای API: Retry → Queue → Republish انجام می‌شود و وضعیت انتشار ثبت خواهد شد.
+              وضعیت انتشار و خطای کانال در همین صفحه نمایش داده می‌شود.
             </p>
           </div>
         </aside>

@@ -71,6 +71,7 @@ export async function executePublication(input: {
   try {
     if (!account) throw new Error(`No active social account configured for ${variant.channel}`);
     const result = await publishToChannel({
+      publicationId: publication.id,
       channel: variant.channel,
       title: variant.title,
       content: variant.body,

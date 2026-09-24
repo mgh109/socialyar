@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -236,11 +236,11 @@ export async function contentRoutes(app: FastifyInstance) {
         ...input,
         updatedAt: new Date(),
       })
-      .where(eq(contentVariants.id, variantId))
+      .where(and(eq(contentVariants.id, variantId), inArray(contentVariants.status, ["draft", "generated", "rejected"])))
       .returning();
 
     if (!updated) {
-      return reply.code(404).send({ error: "variant_not_found" });
+      return reply.code(409).send({ error: "variant_locked_for_review_or_publication" });
     }
 
     return updated;
@@ -276,6 +276,9 @@ export async function contentRoutes(app: FastifyInstance) {
 
     if (!content || content.workspaceId !== request.auth.workspaceId) {
       return reply.code(404).send({ error: "content_not_found" });
+    }
+    if (!["draft", "generated", "rejected"].includes(variant.status)) {
+      return reply.code(409).send({ error: "variant_already_submitted" });
     }
 
     const [existing] = await db

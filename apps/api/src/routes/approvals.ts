@@ -15,13 +15,12 @@ import { publicationQueue } from "../queue";
 const resolveApprovalSchema = z.object({
   action: z.enum(["approve", "reject", "changes_requested"]),
   note: z.string().nullable().optional(),
-  resolvedBy: z.string().uuid().nullable().optional(),
 });
 
 const scheduleSchema = z.object({
   scheduledAt: z.string().datetime(),
   timezone: z.string().min(1).default("UTC"),
-  socialAccountId: z.string().uuid().nullable().optional(),
+  socialAccountId: z.string().uuid(),
   smartSchedule: z.boolean().default(false),
 });
 
@@ -124,12 +123,13 @@ export async function approvalRoutes(app: FastifyInstance) {
         .update(approvals)
         .set({
           status: nextApprovalStatus,
-          resolvedBy: input.resolvedBy ?? null,
+          resolvedBy: request.auth.userId,
           resolutionNote: input.note ?? null,
           resolvedAt: new Date(),
         })
         .where(and(eq(approvals.id, approvalId), eq(approvals.status, "pending")))
         .returning();
+      if (!approval) return null;
 
       const [variant] = await tx
         .update(contentVariants)
@@ -142,6 +142,7 @@ export async function approvalRoutes(app: FastifyInstance) {
 
       return { approval, variant };
     });
+    if (!result) return reply.code(409).send({ error: "approval_already_resolved" });
 
     return result;
   });
@@ -183,14 +184,20 @@ export async function approvalRoutes(app: FastifyInstance) {
     }
 
     const scheduledAt = new Date(input.scheduledAt);
+    if (scheduledAt.getTime() <= Date.now()) return reply.code(400).send({ error: "schedule_must_be_in_future" });
 
     const result = await db.transaction(async (tx) => {
+      const [claimed] = await tx.update(contentVariants)
+        .set({ status: "scheduled", updatedAt: new Date() })
+        .where(and(eq(contentVariants.id, variant.id), eq(contentVariants.status, "approved")))
+        .returning({ id: contentVariants.id });
+      if (!claimed) return null;
       const [schedule] = await tx
         .insert(schedules)
         .values({
           workspaceId: content.workspaceId,
           contentVariantId: variant.id,
-          socialAccountId: input.socialAccountId ?? null,
+          socialAccountId: input.socialAccountId,
           scheduledAt,
           timezone: input.timezone,
           smartSchedule: input.smartSchedule,
@@ -203,21 +210,14 @@ export async function approvalRoutes(app: FastifyInstance) {
           workspaceId: content.workspaceId,
           contentVariantId: variant.id,
           scheduleId: schedule.id,
-          socialAccountId: input.socialAccountId ?? null,
+          socialAccountId: input.socialAccountId,
           status: "queued",
         })
         .returning();
 
-      await tx
-        .update(contentVariants)
-        .set({
-          status: "scheduled",
-          updatedAt: new Date(),
-        })
-        .where(eq(contentVariants.id, variant.id));
-
       return { schedule, publication };
     });
+    if (!result) return reply.code(409).send({ error: "variant_already_scheduled" });
 
     try {
       await enqueuePublication(result.publication.id, scheduledAt);
@@ -263,6 +263,7 @@ export async function approvalRoutes(app: FastifyInstance) {
         schedule: schedules,
         variant: contentVariants,
         content: contentItems,
+        publication: publications,
       })
       .from(schedules)
       .innerJoin(
@@ -273,6 +274,7 @@ export async function approvalRoutes(app: FastifyInstance) {
         contentItems,
         eq(contentVariants.contentItemId, contentItems.id),
       )
+      .leftJoin(publications, eq(publications.scheduleId, schedules.id))
       .where(eq(schedules.workspaceId, request.auth.workspaceId))
       .orderBy(asc(schedules.scheduledAt));
   });
@@ -312,6 +314,9 @@ export async function approvalRoutes(app: FastifyInstance) {
           status: "queued",
         })
         .returning();
+    }
+    if (publication.status === "published" || publication.status === "publishing") {
+      return reply.code(409).send({ error: "publication_already_in_progress_or_published" });
     }
 
     const existingJob = await publicationQueue.getJob(

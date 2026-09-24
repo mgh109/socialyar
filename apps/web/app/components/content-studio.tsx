@@ -68,6 +68,7 @@ export function ContentStudio({ runId }: { runId: string }) {
     () => data?.variants.find((variant) => variant.id === activeId) ?? null,
     [activeId, data],
   );
+  const canEditActive = Boolean(active && ["draft", "generated", "rejected"].includes(active.status));
 
   const updateCanonical = (
     field: "title" | "body",
@@ -127,24 +128,27 @@ export function ContentStudio({ runId }: { runId: string }) {
     }
   };
 
-  const saveVariant = async () => {
-    if (!active) return;
-    setBusy(true);
-    setMessage("در حال ذخیره نسخه کانال...");
-
-    try {
-      const response = await apiFetch(`/content-variants/${active.id}`, {
+  const persistVariant = async (variant: Variant) => {
+      const response = await apiFetch(`/content-variants/${variant.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: active.title,
-          body: active.body,
-          hashtags: active.hashtags,
-          settings: active.settings,
+          title: variant.title,
+          body: variant.body,
+          hashtags: variant.hashtags,
+          settings: variant.settings,
         }),
       });
 
       if (!response.ok) throw new Error(`Save failed (${response.status})`);
+  };
+
+  const saveVariant = async () => {
+    if (!active) return;
+    setBusy(true);
+    setMessage("در حال ذخیره نسخه کانال...");
+    try {
+      await persistVariant(active);
       setMessage(`✓ نسخه ${channelLabels[active.channel]} ذخیره شد`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "ذخیره نسخه ناموفق بود");
@@ -159,7 +163,7 @@ export function ContentStudio({ runId }: { runId: string }) {
     setMessage("در حال ارسال برای تأیید...");
 
     try {
-      await saveVariant();
+      await persistVariant(active);
 
       const response = await apiFetch(
         `/content-variants/${active.id}/approval`,
@@ -261,7 +265,7 @@ export function ContentStudio({ runId }: { runId: string }) {
           <button className="ghost-button" onClick={saveCanonical} disabled={busy}>
             ذخیره پیش‌نویس
           </button>
-          <button className="success-button" onClick={sendForApproval} disabled={busy || !active}>
+          <button className="success-button" onClick={sendForApproval} disabled={busy || !canEditActive}>
             ارسال برای تأیید
           </button>
         </div>
@@ -281,12 +285,7 @@ export function ContentStudio({ runId }: { runId: string }) {
 
       <section className="studio-layout">
         <div className="studio-main">
-          <div className="studio-tabs">
-            <button className="studio-tab active">نسخه نهایی</button>
-            <button className="studio-tab">منبع اصلی</button>
-            <button className="studio-tab">تصاویر</button>
-            <button className="studio-tab">AI Actions</button>
-          </div>
+          <div className="studio-tabs"><span className="studio-tab active">پیش‌نویس و نسخه‌های کانال</span></div>
 
           <div className="content-editor-card">
             <input
@@ -308,12 +307,12 @@ export function ContentStudio({ runId }: { runId: string }) {
           </div>
 
           <div className="ai-actions-card">
-            <h3>ویرایش سریع با AI</h3>
+            <h3>ویرایش سریع متن</h3>
             <div className="quick-actions">
-              <button onClick={() => quickAction("shorter")}>کوتاه‌تر</button>
-              <button onClick={() => quickAction("formal")}>لحن رسمی‌تر</button>
-              <button onClick={() => quickAction("headline")}>تیتر بهتر</button>
-              <button onClick={saveVariant}>ذخیره نسخه فعال</button>
+              <button disabled={!canEditActive} onClick={() => quickAction("shorter")}>کوتاه‌تر</button>
+              <button disabled={!canEditActive} onClick={() => quickAction("formal")}>لحن رسمی‌تر</button>
+              <button disabled={!canEditActive} onClick={() => quickAction("headline")}>تیتر بهتر</button>
+              <button disabled={!canEditActive || busy} onClick={saveVariant}>ذخیره نسخه فعال</button>
             </div>
             <p>هر تغییر روی همان Run و نسخه محتوای فعال ثبت می‌شود.</p>
           </div>
@@ -368,11 +367,13 @@ export function ContentStudio({ runId }: { runId: string }) {
                 <input
                   value={active.title ?? ""}
                   onChange={(event) => updateVariant("title", event.target.value)}
+                  disabled={!canEditActive}
                   placeholder="عنوان نسخه"
                 />
                 <textarea
                   value={active.body}
                   onChange={(event) => updateVariant("body", event.target.value)}
+                  disabled={!canEditActive}
                 />
                 <input
                   value={active.hashtags.join(" ")}
@@ -395,6 +396,7 @@ export function ContentStudio({ runId }: { runId: string }) {
                         : current,
                     );
                   }}
+                  disabled={!canEditActive}
                   placeholder="#hashtag"
                 />
               </div>

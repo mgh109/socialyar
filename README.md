@@ -1,6 +1,6 @@
-# SocialYar
+# هور+
 
-AI-native social/content workflow platform.
+سامانه ساخت جریان، تأیید محتوا و انتشار در کانال‌های متصل.
 
 ## Architecture
 
@@ -14,14 +14,12 @@ AI-native social/content workflow platform.
 - `packages/shared` — shared schemas/types
 - `packages/ui` — design tokens/UI primitives
 
-## MVP flow
+## مسیر قابل اجرا
 
-Workflow → Run → Content Studio → Channel Variants → Approval → Calendar/Publish → Analytics/Reports
+ورود → جریان با متن دستی → اجرای ورودی → تأیید انسانی → پیش‌نویس → ویرایش نسخه کانال → تأیید انتشار → انتخاب حساب مقصد و زمان‌بندی → وضعیت انتشار در تقویم و گزارش.
 
-## Next implementation slice
+برای آزمون محلی، Postgres و Redis را با `docker compose up -d postgres redis` راه بیندازید، مهاجرت‌های دیتابیس را اجرا کنید و API، worker و web را با تنظیمات `.env` شروع کنید. برای ورود، حساب کاربری موجود در دیتابیس لازم است. تنظیمات نمونه و دسترسی کانال آزمایشی باید پیش از آزمون انتشار فراهم شوند.
 
-1. Add Drizzle schema + migrations for workflows/runs/content/approvals/publications.
-2. Implement persisted workflow CRUD.
-3. Add run event stream over SSE.
-4. Implement first AI content generation step.
-5. Build Content Studio from the approved Figma prototype.
+انتشار تلگرام با Bot API انجام می‌شود. اتصال وب‌سایت یک webhook می‌خواهد که پس از ثبت موفق، JSON شامل `id` و در صورت امکان `url` برگرداند. درخواست شامل `publicationId` و هدر `Idempotency-Key` است؛ webhook باید با این شناسه جلوی ثبت تکراری در تلاش‌های مجدد را بگیرد.
+
+پایش خودکار منابع، تولید متن با مدل AI، شاخه‌های شرطی و اتصال بومی اینستاگرام، X و لینکدین هنوز پیاده‌سازی نشده‌اند. اجرای مرحله پشتیبانی‌نشده با خطای مشخص متوقف می‌شود.
