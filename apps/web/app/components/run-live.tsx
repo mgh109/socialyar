@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { apiFetch } from "../lib/session";
 
 type RunData = {
   id: string;
@@ -33,51 +34,39 @@ const labels: Record<string, string> = {
 };
 
 export function RunLive({ runId }: { runId: string }) {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
   const [run, setRun] = useState<RunData | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    void fetch(`${apiUrl}/runs/${runId}`)
-      .then((response) => response.json())
-      .then(setRun);
-
-    const source = new EventSource(`${apiUrl}/runs/${runId}/events/stream`);
-
-    source.onopen = () => setConnected(true);
-    source.onerror = () => setConnected(false);
-
-    const eventNames = Object.keys(labels);
-    const handlers = eventNames.map((eventName) => {
-      const handler = (event: MessageEvent) => {
-        const data = JSON.parse(event.data) as RunEvent;
-        setEvents((current) =>
-          current.some((item) => item.id === data.id) ? current : [...current, data],
-        );
-
-        if (
-          eventName === "run_completed" ||
-          eventName === "run_failed" ||
-          eventName === "approval_requested"
-        ) {
-          void fetch(`${apiUrl}/runs/${runId}`)
-            .then((response) => response.json())
-            .then(setRun);
+    let active = true;
+    const refresh = async () => {
+      try {
+        const [runResponse, eventResponse] = await Promise.all([
+          apiFetch(`/runs/${runId}`),
+          apiFetch(`/runs/${runId}/events`),
+        ]);
+        if (!runResponse.ok || !eventResponse.ok) throw new Error("دریافت وضعیت اجرا ناموفق بود");
+        const [nextRun, nextEvents] = await Promise.all([
+          runResponse.json() as Promise<RunData>,
+          eventResponse.json() as Promise<RunEvent[]>,
+        ]);
+        if (active) {
+          setRun(nextRun);
+          setEvents(nextEvents);
+          setConnected(true);
         }
-      };
-
-      source.addEventListener(eventName, handler);
-      return [eventName, handler] as const;
-    });
-
-    return () => {
-      handlers.forEach(([eventName, handler]) =>
-        source.removeEventListener(eventName, handler),
-      );
-      source.close();
+      } catch {
+        if (active) setConnected(false);
+      }
     };
-  }, [apiUrl, runId]);
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 2000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, [runId]);
 
   const progress = useMemo(
     () => events.filter((event) => event.type === "step_completed").length,

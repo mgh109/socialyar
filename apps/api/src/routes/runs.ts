@@ -1,4 +1,4 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -17,6 +17,7 @@ const createRunSchema = z.object({
 
 export async function runRoutes(app: FastifyInstance) {
   const db = getDb();
+  app.addHook("onRequest", app.authenticate);
 
   app.post("/workflows/:workflowId/runs", async (request, reply) => {
     const { workflowId } = z
@@ -27,7 +28,7 @@ export async function runRoutes(app: FastifyInstance) {
     const [workflow] = await db
       .select()
       .from(workflows)
-      .where(eq(workflows.id, workflowId))
+      .where(and(eq(workflows.id, workflowId), eq(workflows.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
     if (!workflow) {
@@ -125,17 +126,18 @@ export async function runRoutes(app: FastifyInstance) {
       .object({ runId: z.string().uuid() })
       .parse(request.params);
 
-    const [run] = await db
-      .select()
+    const [row] = await db
+      .select({ run: runs })
       .from(runs)
-      .where(eq(runs.id, runId))
+      .innerJoin(workflows, eq(runs.workflowId, workflows.id))
+      .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
-    if (!run) {
+    if (!row) {
       return reply.code(404).send({ error: "run_not_found" });
     }
 
-    return run;
+    return row.run;
   });
 
   app.get("/runs/:runId/events", async (request, reply) => {
@@ -146,7 +148,8 @@ export async function runRoutes(app: FastifyInstance) {
     const [run] = await db
       .select({ id: runs.id })
       .from(runs)
-      .where(eq(runs.id, runId))
+      .innerJoin(workflows, eq(runs.workflowId, workflows.id))
+      .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
     if (!run) {
@@ -168,7 +171,8 @@ export async function runRoutes(app: FastifyInstance) {
     const [run] = await db
       .select({ id: runs.id })
       .from(runs)
-      .where(eq(runs.id, runId))
+      .innerJoin(workflows, eq(runs.workflowId, workflows.id))
+      .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
     if (!run) {
