@@ -46,6 +46,7 @@ type Account = { id: string; channel: string; displayName: string | null; extern
 const channelLabels: Record<string, string> = {
   instagram: "Instagram",
   telegram: "Telegram",
+  eitaa: "ایتا",
   website: "Website",
   x: "X",
   linkedin: "LinkedIn",

@@ -2,6 +2,8 @@ import { Worker } from "bullmq";
 import { closeDb } from "@socialyar/db";
 import { executeRun } from "@socialyar/workflow";
 import { executePublication } from "./publisher";
+import { closeAutoPublisher, enqueueAutoPublication } from "./auto-publish";
+import { startNewsPoller } from "./news-poller";
 import { connection } from "./queue";
 
 const workflowWorker = new Worker(
@@ -13,7 +15,9 @@ const workflowWorker = new Worker(
       workflowVersionId: string;
     };
 
-    return executeRun(data);
+    const result = await executeRun(data);
+    await enqueueAutoPublication(data.runId);
+    return result;
   },
   {
     connection,
@@ -39,6 +43,8 @@ const publicationWorker = new Worker(
   },
 );
 
+const stopNewsPoller = startNewsPoller();
+
 workflowWorker.on("completed", (job) => {
   console.log(`Run job ${job.id} completed`);
 });
@@ -62,6 +68,8 @@ const shutdown = async () => {
   await Promise.all([
     workflowWorker.close(),
     publicationWorker.close(),
+    closeAutoPublisher(),
+    stopNewsPoller(),
   ]);
   await connection.quit();
   await closeDb();

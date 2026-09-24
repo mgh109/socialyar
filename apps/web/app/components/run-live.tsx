@@ -37,6 +37,7 @@ const labels: Record<string, string> = {
 export function RunLive({ runId }: { runId: string }) {
   const [run, setRun] = useState<RunData | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
+  const [steps, setSteps] = useState<Array<{ key: string; name: string; type: string }>>([]);
   const [connected, setConnected] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -56,6 +57,9 @@ export function RunLive({ runId }: { runId: string }) {
   };
 
   useEffect(() => {
+    void apiFetch(`/runs/${runId}/steps`).then(async (response) => {
+      if (response.ok) setSteps(await response.json());
+    }).catch(() => {});
     let active = true;
     const refresh = async () => {
       try {
@@ -86,7 +90,8 @@ export function RunLive({ runId }: { runId: string }) {
   }, [runId]);
 
   const progress = useMemo(
-    () => events.filter((event) => event.type === "step_completed").length,
+    () => events.filter((event) => event.type === "step_completed" ||
+      (event.type === "approval_resolved" && event.payload.action === "approve")).length,
     [events],
   );
 
@@ -119,21 +124,17 @@ export function RunLive({ runId }: { runId: string }) {
                 Run #{runId.slice(0, 8)} · وضعیت: {run?.status ?? "..."}
               </p>
             </div>
-            <span className="status-pill">{progress} / 3 مرحله</span>
+            <span className="status-pill">{progress} / {steps.length} مرحله</span>
           </div>
 
           <div className="execution-strip">
-            {[
-              "متن ورودی",
-              "تأیید انسانی",
-              "پیش‌نویس",
-            ].map((name, index) => {
+            {steps.map(({ name, key }, index) => {
               const completed = index < progress;
               const active = index === progress && run?.status === "running";
               return (
                 <article
                   className={`execution-node ${completed ? "done" : ""} ${active ? "active" : ""}`}
-                  key={name}
+                  key={key}
                 >
                   <h3>{name}</h3>
                   <span>
@@ -183,7 +184,7 @@ export function RunLive({ runId }: { runId: string }) {
             </div>
             <div>
               <span className="micro-label">مرحله کامل</span>
-              <strong>{progress} / 3</strong>
+              <strong>{progress} / {steps.length}</strong>
             </div>
           </div>
         </div>

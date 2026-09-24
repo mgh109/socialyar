@@ -1,6 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
+import { generateNewsDraft, type AIConnection } from "@socialyar/ai";
 import {
-  getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps,
+  aiSettings, decryptSecret, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
 } from "@socialyar/db";
 
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
@@ -79,14 +80,36 @@ export async function executeRun(input: ExecuteRunInput) {
           return { runId: run.id, status: "waiting_approval", outputs };
         }
         let output: Record<string, unknown>;
-        if (step.type === "source" || step.type === "manual_input") {
+        if (step.type === "source" || step.type === "manual_input" || step.type === "rss_source") {
           const text = run.input.text ?? run.input.prompt;
           if (typeof text !== "string" || !text.trim()) throw new Error("A text input is required");
-          output = { text: text.trim() };
+          output = { text: text.trim(), title: run.input.title ?? null, url: run.input.url ?? null };
+        } else if (step.type === "ai") {
+          const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows)
+            .where(eq(workflows.id, run.workflowId)).limit(1);
+          const [settings] = workflow ? await db.select().from(aiSettings)
+            .where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
+          if (!settings) throw new Error("AI token is not configured for this workspace");
+          const upstream = [...ordered.slice(0, ordered.indexOf(step))].reverse()
+            .map((previous) => outputs[previous.key] as { text?: string; title?: string; url?: string } | undefined)
+            .find((value) => typeof value?.text === "string");
+          if (!upstream?.text) throw new Error("AI step needs text from the previous step");
+          const text = await generateNewsDraft({ provider: settings.provider as AIConnection["provider"],
+            model: settings.model, token: decryptSecret(settings.encryptedToken) },
+          { title: upstream.title || "خبر", text: upstream.text, url: upstream.url });
+          output = { text, title: upstream.title ?? null, url: upstream.url ?? null };
+        } else if (step.type === "publish") {
+          const upstream = [...ordered.slice(0, ordered.indexOf(step))].reverse()
+            .map((previous) => outputs[previous.key] as { text?: string; title?: string; url?: string } | undefined)
+            .find((value) => typeof value?.text === "string");
+          if (!upstream?.text) throw new Error("Publish step needs text from the previous step");
+          output = { ...upstream, queuedForPublication: true };
         } else if (step.type === "draft") {
           const source = step.config.sourceKey;
-          const key = typeof source === "string" ? source : ordered[ordered.indexOf(step) - 1]?.key;
-          const upstream = key ? outputs[key] : null;
+          const key = typeof source === "string" ? source : null;
+          const upstream = key ? outputs[key] : [...ordered.slice(0, ordered.indexOf(step))].reverse()
+            .map((previous) => outputs[previous.key] as { text?: string } | undefined)
+            .find((value) => typeof value?.text === "string");
           const text = upstream && typeof upstream === "object" && "text" in upstream ? upstream.text : null;
           if (typeof text !== "string") throw new Error("Draft requires a text output from the preceding step");
           output = { text, title: typeof step.config.title === "string" ? step.config.title : null };

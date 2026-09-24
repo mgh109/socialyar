@@ -1,8 +1,11 @@
 import { and, asc, desc, eq } from "drizzle-orm";
+import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   getDb,
+  aiSettings,
+  socialAccounts,
   workflowConnections,
   workflowSteps,
   workflowVersions,
@@ -26,6 +29,7 @@ const connectionSchema = z.object({
 
 const createWorkflowSchema = z.object({
   name: z.string().min(1),
+  status: z.enum(["draft", "active"]).default("draft"),
   description: z.string().nullable().optional(),
   autonomyMode: z.enum(["manual", "assisted", "semi_auto", "full_auto"]).default("assisted"),
   prompt: z.string().nullable().optional(),
@@ -91,12 +95,45 @@ async function insertGraph(
   }
 }
 
+async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspaceId: string): Promise<string | null> {
+  const sorted = [...steps].sort((a, b) => a.order - b.order);
+  const types = sorted.map((step) => step.type);
+  const source = sorted.find((step) => step.type === "rss_source");
+  const publisher = sorted.find((step) => step.type === "publish");
+  if (!source || !publisher || ["rss_source", "ai", "publish"].some((type) => types.filter((item) => item === type).length !== 1) ||
+    types.some((type) => !["rss_source", "ai", "human_approval", "draft", "publish"].includes(type)) ||
+    types.indexOf("rss_source") >= types.indexOf("ai") || types.indexOf("ai") >= types.indexOf("publish") ||
+    (types.includes("human_approval") && (types.indexOf("human_approval") < types.indexOf("ai") || types.indexOf("human_approval") > types.indexOf("publish")))) {
+    return "auto_workflow_requires_rss_ai_and_eitaa_in_order";
+  }
+  try {
+    const url = new URL(String(source.config.feedUrl));
+    if (url.protocol !== "https:" || url.username || url.password || url.port ||
+      isIP(url.hostname.replace(/[\[\]]/g, "")) !== 0 ||
+      /^(localhost|.*\.local|.*\.internal)$/i.test(url.hostname)) return "invalid_rss_url";
+  } catch { return "invalid_rss_url"; }
+  const accountId = publisher.config.accountId;
+  if (typeof accountId !== "string" || !z.string().uuid().safeParse(accountId).success) return "eitaa_account_required";
+  const db = getDb();
+  const [account] = await db.select().from(socialAccounts)
+    .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, workspaceId),
+      eq(socialAccounts.channel, "eitaa"), eq(socialAccounts.isActive, true))).limit(1);
+  if (!account) return "eitaa_account_not_found";
+  const [settings] = await db.select().from(aiSettings)
+    .where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
+  return settings ? null : "ai_token_not_configured";
+}
+
 export async function workflowRoutes(app: FastifyInstance) {
   const db = getDb();
   app.addHook("onRequest", app.authenticate);
 
   app.post("/workflows", async (request, reply) => {
     const input = createWorkflowSchema.parse(request.body);
+    if (input.status === "active" && input.autonomyMode === "full_auto") {
+      const problem = await autoWorkflowProblem(input.steps, request.auth.workspaceId);
+      if (problem) return reply.code(409).send({ error: problem });
+    }
 
     const result = await db.transaction(async (tx) => {
       const [workflow] = await tx
@@ -106,6 +143,7 @@ export async function workflowRoutes(app: FastifyInstance) {
           name: input.name,
           description: input.description ?? null,
           autonomyMode: input.autonomyMode,
+          status: input.status,
           createdBy: request.auth.userId,
           currentVersion: 1,
         })
@@ -211,6 +249,10 @@ export async function workflowRoutes(app: FastifyInstance) {
 
     if (!existing) {
       return reply.code(404).send({ error: "workflow_not_found" });
+    }
+    if ((input.status ?? existing.status) === "active" && (input.autonomyMode ?? existing.autonomyMode) === "full_auto") {
+      const problem = await autoWorkflowProblem(input.steps, request.auth.workspaceId);
+      if (problem) return reply.code(409).send({ error: problem });
     }
 
     const nextVersion = existing.currentVersion + 1;

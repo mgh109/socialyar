@@ -137,6 +137,26 @@ async function publishWebsite(
   };
 }
 
+async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
+  const botToken = requiredString(request.credentials, "botToken");
+  const chatId = requiredString(request.credentials, "chatId");
+  const response = await fetch(`https://eitaayar.ir/api/${encodeURIComponent(botToken)}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text: request.title
+      ? `${request.title}\n\n${request.content}` : request.content }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await response.json() as { ok?: boolean; description?: string; result?: { message_id?: number; chat?: { username?: string } } };
+  if (!response.ok || !data.ok || !data.result?.message_id) {
+    throw new Error(`Eitaa publish failed: ${data.description ?? response.statusText}`);
+  }
+  const username = data.result.chat?.username ?? chatId.replace(/^@/, "");
+  return { externalId: String(data.result.message_id),
+    externalUrl: /^[a-zA-Z0-9_]+$/.test(username) ? `https://eitaa.com/${username}/${data.result.message_id}` : undefined,
+    publishedAt: new Date().toISOString(), provider: "eitaayar" };
+}
+
 async function publishFallbackWebhook(
   request: PublishRequest,
 ): Promise<PublishResult> {
@@ -191,6 +211,8 @@ export async function publishToChannel(
         return await publishTelegram(request);
       case "website":
         return await publishWebsite(request);
+      case "eitaa":
+        return await publishEitaa(request);
       case "instagram":
       case "x":
       case "linkedin":

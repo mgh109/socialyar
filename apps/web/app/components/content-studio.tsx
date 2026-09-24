@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 
 type Variant = {
   id: string;
-  channel: "instagram" | "telegram" | "website" | "x" | "linkedin";
+  channel: "instagram" | "telegram" | "website" | "x" | "linkedin" | "eitaa";
   title: string | null;
   body: string;
   hashtags: string[];
@@ -33,6 +33,7 @@ type StudioPayload = {
 const channelLabels: Record<string, string> = {
   instagram: "Instagram",
   telegram: "Telegram",
+  eitaa: "ایتا",
   website: "Website",
   x: "X",
   linkedin: "LinkedIn",

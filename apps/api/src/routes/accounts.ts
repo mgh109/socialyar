@@ -1,9 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getDb, socialAccounts } from "@socialyar/db";
+import { decryptSecret, encryptSecret, getDb, socialAccounts } from "@socialyar/db";
 
-const channelSchema = z.enum(["instagram", "telegram", "website", "x", "linkedin"]);
+const channelSchema = z.enum(["instagram", "telegram", "website", "x", "linkedin", "eitaa"]);
 
 const createAccountSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -133,6 +133,12 @@ export async function accountRoutes(app: FastifyInstance) {
 
   app.post("/social-accounts", async (request, reply) => {
     const input = createAccountSchema.parse(request.body);
+    if (input.channel === "eitaa" && (typeof input.credentials.botToken !== "string" || !input.credentials.botToken || typeof input.credentials.chatId !== "string" || !input.credentials.chatId)) {
+      return reply.code(400).send({ error: "eitaa_token_and_chat_required" });
+    }
+    const credentials = input.channel === "eitaa"
+      ? { chatId: input.credentials.chatId, botTokenEnc: encryptSecret(input.credentials.botToken as string) }
+      : input.credentials;
 
     const [account] = await db
       .insert(socialAccounts)
@@ -141,7 +147,7 @@ export async function accountRoutes(app: FastifyInstance) {
         channel: input.channel,
         externalAccountId: input.externalAccountId,
         displayName: input.displayName ?? null,
-        credentials: input.credentials,
+        credentials,
         isActive: input.isActive,
       })
       .returning();
@@ -175,7 +181,11 @@ export async function accountRoutes(app: FastifyInstance) {
             ? current.displayName
             : input.displayName,
         credentials: input.credentials
-          ? { ...current.credentials, ...input.credentials }
+          ? current.channel === "eitaa"
+            ? { chatId: input.credentials.chatId ?? current.credentials.chatId,
+                botTokenEnc: typeof input.credentials.botToken === "string"
+                  ? encryptSecret(input.credentials.botToken) : current.credentials.botTokenEnc }
+            : { ...current.credentials, ...input.credentials }
           : current.credentials,
         isActive: input.isActive ?? current.isActive,
         updatedAt: new Date(),
@@ -228,6 +238,15 @@ export async function accountRoutes(app: FastifyInstance) {
 
       if (account.channel === "website") {
         return await testWebsite(account.credentials);
+      }
+      if (account.channel === "eitaa") {
+        const token = typeof account.credentials.botTokenEnc === "string"
+          ? decryptSecret(account.credentials.botTokenEnc) : "";
+        if (!token) throw new Error("توکن ایتا ثبت نشده است");
+        const response = await fetch(`https://eitaayar.ir/api/${encodeURIComponent(token)}/getMe`, { signal: AbortSignal.timeout(15000) });
+        const data = await response.json() as { ok?: boolean; description?: string };
+        if (!response.ok || !data.ok) throw new Error(data.description ?? "Eitaa connection failed");
+        return { ok: true, provider: "eitaayar" };
       }
 
       return reply.code(501).send({

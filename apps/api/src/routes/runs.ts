@@ -142,6 +142,16 @@ export async function runRoutes(app: FastifyInstance) {
     return row.run;
   });
 
+  app.get("/runs/:runId/steps", async (request, reply) => {
+    const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
+    const [owned] = await db.select({ versionId: runs.workflowVersionId }).from(runs)
+      .innerJoin(workflows, eq(runs.workflowId, workflows.id))
+      .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
+    if (!owned) return reply.code(404).send({ error: "run_not_found" });
+    return db.select({ key: workflowSteps.key, name: workflowSteps.name, type: workflowSteps.type })
+      .from(workflowSteps).where(eq(workflowSteps.workflowVersionId, owned.versionId)).orderBy(asc(workflowSteps.order));
+  });
+
   app.post("/runs/:runId/approval", async (request, reply) => {
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
     const { action } = z.object({ action: z.enum(["approve", "reject"]) }).parse(request.body);

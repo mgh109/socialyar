@@ -46,6 +46,7 @@ services:
       REDIS_URL: redis://redis:6379
       WEB_ORIGIN: http://localhost:3000
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HOOR_SECRET_KEY: ${HOOR_SECRET_KEY:-}
     ports:
       - "4000:4000"
     depends_on:
@@ -64,6 +65,7 @@ services:
       WORKER_CONCURRENCY: "4"
       PUBLISHER_CONCURRENCY: "2"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      HOOR_SECRET_KEY: ${HOOR_SECRET_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

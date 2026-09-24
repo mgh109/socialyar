@@ -6,7 +6,7 @@ import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Channel = "telegram" | "website" | "instagram" | "x" | "linkedin";
+type Channel = "telegram" | "website" | "instagram" | "x" | "linkedin" | "eitaa";
 
 type Account = {
   id: string;
@@ -22,6 +22,7 @@ const channelMeta: Record<
   Channel,
   { label: string; description: string; native: boolean }
 > = {
+  eitaa: { label: "ایتا", description: "ارسال خبر به کانال با توکن ایتایار", native: true },
   telegram: {
     label: "Telegram",
     description: "انتشار مستقیم با Telegram Bot API",
@@ -103,7 +104,7 @@ export function ConnectionsManager() {
 
     const credentials: Record<string, string> = {};
 
-    if (channel === "telegram") {
+    if (channel === "telegram" || channel === "eitaa") {
       credentials.botToken = botToken;
       if (chatId) credentials.chatId = chatId;
     }
@@ -130,7 +131,7 @@ export function ConnectionsManager() {
           displayName: displayName || null,
           externalAccountId:
             externalAccountId ||
-            (channel === "telegram" ? chatId : channel),
+            (channel === "telegram" || channel === "eitaa" ? chatId : channel),
           credentials,
           isActive: true,
         }),
@@ -336,17 +337,17 @@ export function ConnectionsManager() {
                 value={externalAccountId}
                 onChange={(event) => setExternalAccountId(event.target.value)}
                 placeholder={
-                  channel === "telegram"
+                  channel === "telegram" || channel === "eitaa"
                     ? "@channel یا chat id"
                     : "شناسه مقصد"
                 }
               />
             </label>
 
-            {channel === "telegram" ? (
+            {channel === "telegram" || channel === "eitaa" ? (
               <>
                 <label>
-                  <span>Bot Token</span>
+                  <span>{channel === "eitaa" ? "توکن ایتایار" : "Bot Token"}</span>
                   <input
                     type="password"
                     value={botToken}
@@ -361,6 +362,7 @@ export function ConnectionsManager() {
                     value={chatId}
                     onChange={(event) => setChatId(event.target.value)}
                     placeholder="@channel"
+                    required={channel === "eitaa"}
                   />
                 </label>
               </>

@@ -8,6 +8,7 @@ import {
   getDb,
   publications,
 } from "@socialyar/db";
+import { publicationQueue } from "../queue";
 
 const rangeQuery = z.object({
   workspaceId: z.string().uuid(),
@@ -184,6 +185,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
           "website",
           "x",
           "linkedin",
+          "eitaa",
         ]),
         type: z.string().min(1),
         value: z.number().int().default(1),
@@ -208,5 +210,22 @@ export async function analyticsRoutes(app: FastifyInstance) {
       .returning();
 
     return reply.code(201).send(event);
+  });
+
+  app.post("/publications/:publicationId/retry", async (request, reply) => {
+    const { publicationId } = z.object({ publicationId: z.string().uuid() }).parse(request.params);
+    const [publication] = await db.select().from(publications)
+      .where(and(eq(publications.id, publicationId), eq(publications.workspaceId, request.auth.workspaceId))).limit(1);
+    if (!publication) return reply.code(404).send({ error: "publication_not_found" });
+    if (publication.status !== "failed") return reply.code(409).send({ error: "publication_not_failed" });
+    const jobId = `publication-${publication.id}`;
+    const previousJob = await publicationQueue.getJob(jobId);
+    if (previousJob) await previousJob.remove();
+    await publicationQueue.add("publish-content", { publicationId }, {
+      jobId, attempts: 1, removeOnComplete: 1000, removeOnFail: 1000,
+    });
+    await db.update(publications).set({ status: "queued", error: null, updatedAt: new Date() })
+      .where(eq(publications.id, publication.id));
+    return reply.code(202).send({ status: "queued" });
   });
 }

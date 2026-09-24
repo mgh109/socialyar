@@ -49,6 +49,7 @@ type PublicationRow = {
 const channelLabels: Record<string, string> = {
   instagram: "Instagram",
   telegram: "Telegram",
+  eitaa: "ایتا",
   website: "Website",
   x: "X",
   linkedin: "LinkedIn",
@@ -60,6 +61,18 @@ export function AnalyticsDashboard() {
   const [publications, setPublications] = useState<PublicationRow[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [message, setMessage] = useState("در حال دریافت آمار...");
+  const [retrying, setRetrying] = useState<string | null>(null);
+
+  const retry = async (id: string) => {
+    setRetrying(id);
+    try {
+      const response = await apiFetch(`/publications/${id}/retry`, { method: "POST" });
+      if (!response.ok) throw new Error("ثبت تلاش دوباره ناموفق بود");
+      await load();
+      setMessage("انتشار دوباره در صف قرار گرفت");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "خطا در تلاش دوباره"); }
+    finally { setRetrying(null); }
+  };
 
   const load = async () => {
     if (!workspaceId) {
@@ -259,6 +272,8 @@ export function AnalyticsDashboard() {
                   </div>
 
                   <div className="history-action">
+                    {row.publication.status === "failed" ? <button className="ghost-button" disabled={retrying === row.publication.id}
+                      onClick={() => void retry(row.publication.id)}>تلاش دوباره</button> : null}
                     {row.publication.externalUrl ? (
                       <a
                         className="ghost-link"

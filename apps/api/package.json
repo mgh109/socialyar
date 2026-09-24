@@ -10,6 +10,7 @@
   "dependencies": {
     "@fastify/cors": "^11.0.0",
     "@socialyar/db": "workspace:*",
+    "@socialyar/ai": "workspace:*",
     "@socialyar/shared": "workspace:*",
     "@socialyar/workflow": "workspace:*",
     "bullmq": "^5.34.0",

@@ -7,6 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@socialyar/ai": "workspace:*",
     "@socialyar/db": "workspace:*",
     "@socialyar/shared": "workspace:*",
     "drizzle-orm": "^0.38.0"

@@ -25,7 +25,7 @@ const variantUpdateSchema = z.object({
 });
 
 function buildVariant(
-  channel: "instagram" | "telegram" | "website",
+  channel: "instagram" | "telegram" | "website" | "eitaa",
   title: string,
   body: string,
 ) {
@@ -47,7 +47,7 @@ function buildVariant(
     };
   }
 
-  if (channel === "telegram") {
+  if (channel === "telegram" || channel === "eitaa") {
     return {
       channel,
       format: "news",
@@ -160,6 +160,7 @@ export async function contentRoutes(app: FastifyInstance) {
       const variants = [
         buildVariant("instagram", title, content.body),
         buildVariant("telegram", title, content.body),
+        buildVariant("eitaa", title, content.body),
         buildVariant("website", title, content.body),
       ];
 

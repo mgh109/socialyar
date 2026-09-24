@@ -30,6 +30,7 @@ type ApprovalRow = {
 const channelLabels: Record<string, string> = {
   instagram: "Instagram",
   telegram: "Telegram",
+  eitaa: "ایتا",
   website: "Website",
   x: "X",
   linkedin: "LinkedIn",

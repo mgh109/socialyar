@@ -16,7 +16,7 @@ export const workflowStatus = pgEnum("workflow_status", ["draft", "active", "pau
 export const runStatus = pgEnum("run_status", ["queued", "running", "waiting_approval", "failed", "completed", "cancelled"]);
 export const runStepStatus = pgEnum("run_step_status", ["queued", "running", "retrying", "waiting_approval", "failed", "completed", "skipped"]);
 export const runEventType = pgEnum("run_event_type", ["run_started", "step_started", "step_completed", "step_failed", "retry", "fallback", "approval_requested", "approval_resolved", "run_completed", "run_failed"]);
-export const channel = pgEnum("channel", ["instagram", "telegram", "website", "x", "linkedin"]);
+export const channel = pgEnum("channel", ["instagram", "telegram", "website", "x", "linkedin", "eitaa"]);
 export const contentStatus = pgEnum("content_status", ["draft", "generated", "waiting_approval", "approved", "rejected", "scheduled", "published", "failed"]);
 export const approvalStatus = pgEnum("approval_status", ["pending", "approved", "rejected", "changes_requested"]);
 export const publicationStatus = pgEnum("publication_status", ["queued", "publishing", "published", "failed", "cancelled"]);
@@ -84,6 +84,22 @@ export const workflows = pgTable("workflows", {
   workspaceIdx: index("workflows_workspace_idx").on(t.workspaceId),
   statusIdx: index("workflows_status_idx").on(t.status),
 }));
+
+export const aiSettings = pgTable("ai_settings", {
+  workspaceId: uuid("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  encryptedToken: text("encrypted_token").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const newsItems = pgTable("news_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workflowId: uuid("workflow_id").notNull().references(() => workflows.id, { onDelete: "cascade" }),
+  itemKey: text("item_key").notNull(),
+  runId: uuid("run_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ keyUq: uniqueIndex("news_items_workflow_key_uq").on(t.workflowId, t.itemKey) }));
 
 export const workflowVersions = pgTable("workflow_versions", {
   id: uuid("id").defaultRandom().primaryKey(),

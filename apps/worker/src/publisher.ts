@@ -3,6 +3,7 @@ import { publishToChannel } from "@socialyar/channels";
 import {
   contentVariants,
   getDb,
+  decryptSecret,
   publications,
   schedules,
   socialAccounts,
@@ -24,6 +25,7 @@ export async function executePublication(input: {
   if (!publication) {
     throw new Error("Publication not found");
   }
+  if (publication.status === "published" || publication.status === "cancelled") return;
 
   const [variant] = await db
     .select()
@@ -61,7 +63,7 @@ export async function executePublication(input: {
     .update(publications)
     .set({
       status: "publishing",
-      attempt: input.attempt,
+      attempt: publication.attempt + 1,
       error: null,
       socialAccountId: account?.id ?? null,
       updatedAt: new Date(),
@@ -75,7 +77,9 @@ export async function executePublication(input: {
       channel: variant.channel,
       title: variant.title,
       content: variant.body,
-      credentials: account.credentials,
+      credentials: variant.channel === "eitaa" && typeof account.credentials.botTokenEnc === "string"
+        ? { ...account.credentials, botToken: decryptSecret(account.credentials.botTokenEnc) }
+        : account.credentials,
       externalAccountId: account.externalAccountId,
     });
 
