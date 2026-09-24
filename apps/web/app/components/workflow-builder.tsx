@@ -20,14 +20,16 @@ const autoSteps: Step[] = [
   { key: "publish", type: "publish", name: "انتشار ایتا", subtitle: "کانال متصل", config: { accountId: "" } },
 ];
 const labels: Record<string, string> = { rss_source: "RSS", manual_input: "ورودی", ai: "AI", human_approval: "تأیید", draft: "متن", publish: "ایتا" };
-const errors: Record<string, string> = { invalid_rss_url: "نشانی RSS باید HTTPS عمومی باشد", eitaa_account_required: "کانال ایتا را انتخاب کن", eitaa_account_not_found: "اتصال ایتا معتبر نیست", ai_token_not_configured: "توکن AI را تنظیم کن", auto_workflow_requires_rss_ai_and_eitaa_in_order: "ترتیب منبع، AI و انتشار باید حفظ شود" };
+const errors: Record<string, string> = { invalid_rss_url: "نشانی RSS باید HTTPS عمومی باشد", eitaa_account_required: "کانال ایتا را انتخاب کن", eitaa_account_not_found: "اتصال ایتا معتبر نیست", ai_token_not_configured: "توکن AI را تنظیم کن", auto_workflow_requires_rss_ai_and_eitaa_in_order: "ابتدا منبع RSS و سپس مرحله‌های موردنظر را اضافه کن" };
+const availableTypes = ["rss_source", "manual_input", "ai", "human_approval", "draft", "publish"];
+const upcomingChannels = ["اینستاگرام", "تلگرام", "بله", "X"];
 
 export function WorkflowBuilder() {
   const router = useRouter();
   const [mode, setMode] = useState<"manual" | "auto">("auto");
-  const [steps, setSteps] = useState<Step[]>(autoSteps);
-  const [selectedKey, setSelectedKey] = useState("rss");
-  const [name, setName] = useState("خبرهای ایتا");
+  const [steps, setSteps] = useState<Step[]>([]);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [name, setName] = useState("جریان جدید");
   const [prompt, setPrompt] = useState("");
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [autoEnabled, setAutoEnabled] = useState(false);
@@ -60,7 +62,7 @@ export function WorkflowBuilder() {
       setMode(automatic ? "auto" : "manual"); setAutoEnabled(automatic && data.workflow.status === "active");
       const loaded = [...data.steps].sort((a, b) => a.order - b.order).map((step) => ({ ...step, config: step.config ?? {},
         subtitle: [...autoSteps, ...manualSteps].find((item) => item.type === step.type)?.subtitle ?? "مرحله سفارشی" }));
-      setSteps(loaded); setSelectedKey(loaded[0]?.key ?? "rss"); setMessage("جریان بارگذاری شد");
+      setSteps(loaded); setSelectedKey(loaded[0]?.key ?? ""); setMessage("جریان بارگذاری شد");
     }).catch((error) => setMessage(error instanceof Error ? error.message : "بارگذاری ناموفق بود"));
     return () => window.clearInterval(timer);
   }, []);
@@ -73,11 +75,11 @@ export function WorkflowBuilder() {
     step.key === key ? { ...step, config: { ...step.config, [field]: value } } : step));
   const validOrder = (items: Step[]) => {
     const types = items.map((item) => item.type);
-    if (mode === "auto") return types[0] === "rss_source" && types[1] === "ai" && types.at(-1) === "publish" &&
-      types.slice(2, -1).every((type) => type === "draft" || type === "human_approval");
-    return types[0] === "manual_input" && types.at(-1) === "draft" &&
-      types.slice(1, -1).every((type) => type === "ai" || type === "human_approval") &&
-      (!types.includes("ai") || !types.includes("human_approval") || types.indexOf("ai") < types.indexOf("human_approval"));
+    if (!types.length) return true;
+    return ["rss_source", "manual_input"].includes(types[0]) &&
+      !types.slice(1).some((type) => ["rss_source", "manual_input"].includes(type)) &&
+      types.every((type) => availableTypes.includes(type) && types.filter((other) => other === type).length === 1) &&
+      (!types.includes("publish") || types.at(-1) === "publish");
   };
   const relocated = (items: Step[], from: number, to: number) => {
     const next = [...items]; next.splice(to, 0, next.splice(from, 1)[0]); return next;
@@ -85,24 +87,37 @@ export function WorkflowBuilder() {
   const canMove = (from: number, to: number) => to >= 0 && to < steps.length && validOrder(relocated(steps, from, to));
   const move = (from: number, to: number) => { if (from !== to && canMove(from, to)) setSteps((current) => relocated(current, from, to)); };
   const addOptions = (index: number) => {
-    const candidates = mode === "auto" ? ["draft", "human_approval"] : ["ai"];
+    const candidates = steps.length ? ["ai", "human_approval", "draft", "publish"] : ["rss_source", "manual_input"];
     return candidates.filter((type) => !steps.some((step) => step.type === type) &&
       validOrder([...steps.slice(0, index + 1), { ...[...manualSteps, ...autoSteps].find((step) => step.type === type)! }, ...steps.slice(index + 1)]));
   };
   const add = (type: string, index: number) => {
+    if (!addOptions(index).includes(type)) return;
     const template = [...manualSteps, ...autoSteps].find((step) => step.type === type)!;
     const item = { ...template, key: `${type}-${Date.now()}` };
     setSteps((current) => [...current.slice(0, index + 1), item, ...current.slice(index + 1)]);
+    if (type === "rss_source" || type === "manual_input") setMode(type === "rss_source" ? "auto" : "manual");
     setSelectedKey(item.key); setInsertAt(null);
+  };
+  const remove = (step: Step) => {
+    if (["rss_source", "manual_input"].includes(step.type)) {
+      setSteps([]); setMode("auto"); setSelectedKey(""); setAutoEnabled(false);
+      setMessage("منبع حذف شد؛ مراحل وابسته هم از بوم برداشته شدند. برای اعمال، ذخیره کن.");
+      return;
+    }
+    setSteps((current) => current.filter((item) => item.key !== step.key));
+    if (selectedKey === step.key) setSelectedKey(steps[0]?.key ?? "");
   };
   const save = async (active = autoEnabled) => {
     setBusy(true); setMessage("در حال ذخیره...");
     try {
       if (!name.trim()) throw new Error("نام جریان را وارد کن");
       if (!validOrder(steps)) throw new Error("ترتیب مراحل جریان معتبر نیست");
-      if (mode === "auto" && active && (!feedUrl || !accountId || !aiReady)) throw new Error("برای فعال‌سازی، RSS، حساب ایتا و توکن AI لازم است");
+      if (active && (mode !== "auto" || steps.length < 2 || !feedUrl)) throw new Error("برای فعال‌سازی، منبع RSS و دست‌کم یک مرحلهٔ دیگر لازم است");
+      if (active && steps.some((step) => step.type === "ai") && !aiReady) throw new Error("برای اجرای کارت AI، توکن هوش مصنوعی را تنظیم کن");
+      if (active && steps.some((step) => step.type === "publish") && !accountId) throw new Error("برای انتشار، کانال ایتا را انتخاب کن");
       const connections = steps.slice(0, -1).map((step, index) => ({ sourceKey: step.key, targetKey: steps[index + 1].key }));
-      const body = { name: name.trim(), description: mode === "auto" ? "RSS → AI → ایتا" : prompt.slice(0, 180),
+      const body = { name: name.trim(), description: steps.map((step) => step.name).join(" ← ") || "بوم خالی",
         status: mode === "auto" && active ? "active" : "draft", autonomyMode: mode === "auto" ? "full_auto" : "assisted", prompt,
         steps: steps.map((step, order) => ({ key: step.key, type: step.type, name: step.name,
           config: step.config, position: { x: order * 220, y: 0 }, order })), connections };
@@ -120,6 +135,9 @@ export function WorkflowBuilder() {
   };
   const run = async () => {
     if (!prompt.trim()) { setMessage("برای اجرای دستی، متن را وارد کن"); return; }
+    if (!steps.some((step) => step.type === "manual_input")) { setMessage("ابتدا کارت ورودی دستی را اضافه کن"); return; }
+    if (steps.some((step) => step.type === "ai") && !aiReady) { setMessage("برای اجرای AI، توکن آن را تنظیم کن"); return; }
+    if (steps.some((step) => step.type === "publish") && !accountId) { setMessage("برای انتشار، کانال ایتا را انتخاب کن"); return; }
     const id = await save(false); if (!id) return;
     setBusy(true);
     try {
@@ -129,23 +147,25 @@ export function WorkflowBuilder() {
     } catch (error) { setMessage(error instanceof Error ? error.message : "اجرای جریان ناموفق بود"); }
     finally { setBusy(false); }
   };
-  const statusText = mode === "auto" ? autoEnabled ? "● پایش فعال · هر ۵ دقیقه" : "○ پیش‌نویس · ارسال خاموش" : "اجرای دستی";
+  const statusText = !steps.length ? "بوم خالی · هنوز جریانی ساخته نشده" : mode === "auto" ? autoEnabled ? "● پایش فعال · هر ۵ دقیقه" : "○ پیش‌نویس · ارسال خاموش" : "اجرای دستی";
   const activityLabel = activity?.publication?.status === "published" ? "آخرین ارسال موفق" : activity?.publication?.status === "failed" ? "آخرین ارسال ناموفق" : activity?.run?.status === "failed" ? "آخرین اجرای ناموفق" : "آخرین فعالیت";
   return <main className="workflow-page builder-page">
     <header className="app-header"><div className="brand-lockup"><BrandLogo /><span>میز کار / {name}</span></div>
       <div className="header-actions"><span className="save-status" role="status">{message}</span>
         <button className="ghost-button" onClick={() => void save(autoEnabled)} disabled={busy}>ذخیره تغییرات</button>
-        {mode === "auto" ? <button className="primary-button" onClick={() => void save(!autoEnabled)} disabled={busy}>
+        {mode === "auto" ? <button className="primary-button" onClick={() => void save(!autoEnabled)} disabled={busy || !steps.length}>
           {autoEnabled ? "توقف پایش" : "فعال‌سازی خودکار"}</button>
           : <button className="primary-button" onClick={() => void run()} disabled={busy || !prompt.trim()}>▶ اجرای جریان</button>}
       </div></header>
     <div className="builder-layout">
       <section className="builder-workspace" aria-label="بوم جریان">
-        <div className="builder-toolbar"><div><h1>میز کار جریان</h1><p>کارت را انتخاب کن تا تنظیماتش باز شود. ترتیب اجرا از راست به چپ است.</p></div>
-          <span className={`status-pill ${autoEnabled ? "is-live" : ""}`}>{statusText}</span></div>
+        <div className="builder-toolbar"><div><h1>میز کار جریان</h1><p>از یک منبع شروع کن، سپس مرحله‌ها را به انتخاب خودت اضافه کن.</p></div>
+          <div className="builder-toolbar-actions"><span className={`status-pill ${autoEnabled ? "is-live" : ""}`}>{statusText}</span>
+            {steps.length && addOptions(steps.length - 1).length ? <button className="ghost-button" onClick={() => setInsertAt(insertAt === steps.length - 1 ? null : steps.length - 1)}>+ افزودن کارت</button> : null}</div></div>
         <div className="builder-activity"><strong>{activityLabel}</strong><span>{activity?.publication ? `${activity.publication.status === "published" ? "منتشر شد" : activity.publication.status === "failed" ? "نیاز به بررسی" : "در صف انتشار"} · ${new Date(activity.publication.publishedAt ?? activity.publication.createdAt).toLocaleString("fa-IR")}` : activity?.run ? `${activity.run.status} · ${new Date(activity.run.createdAt).toLocaleString("fa-IR")}` : "هنوز خبری پردازش نشده است"}</span>
           {activity?.publication?.status === "failed" ? <Link href="/analytics">بررسی خطا ←</Link> : activity?.publication?.externalUrl ? <a href={activity.publication.externalUrl} target="_blank" rel="noreferrer">دیدن خبر ↗</a> : null}</div>
-        <div className="builder-canvas"><div className="builder-node-list">{steps.map((step, index) => <div className="builder-stage" key={step.key}>
+        <div className="builder-canvas">{!steps.length ? <div className="builder-empty"><div className="builder-empty-icon">+</div><h2>جریان خودت را بساز</h2><p>بوم خالی است. یکی از منابع را انتخاب کن؛ بعد می‌توانی AI، تأیید، پیش‌نویس یا انتشار را به مسیر اضافه کنی.</p>
+          <div className="builder-empty-actions"><button onClick={() => add("rss_source", -1)}>+ خبر از RSS</button><button onClick={() => add("manual_input", -1)}>+ ورودی دستی</button></div></div> : <div className="builder-node-list">{steps.map((step, index) => <div className="builder-stage" key={step.key}>
           <article className={`builder-node ${dragIndex === index ? "dragging" : ""} ${selected?.key === step.key ? "selected" : ""}`}
             draggable onDragStart={() => setDragIndex(index)} onDragEnd={() => setDragIndex(null)}
             onDragOver={(event) => { if (dragIndex !== null && canMove(dragIndex, index)) event.preventDefault(); }}
@@ -156,18 +176,18 @@ export function WorkflowBuilder() {
             </button><div className="builder-node-actions">
               <button onClick={() => move(index, index - 1)} disabled={!canMove(index, index - 1)} aria-label={`انتقال ${step.name} به راست`}>→</button>
               <button onClick={() => move(index, index + 1)} disabled={!canMove(index, index + 1)} aria-label={`انتقال ${step.name} به چپ`}>←</button>
-              {mode === "auto" && ["draft", "human_approval"].includes(step.type) ? <button onClick={() => { setSteps((current) => current.filter((item) => item.key !== step.key)); setSelectedKey(steps[0].key); }} aria-label={`حذف ${step.name}`}>×</button> : null}
+              <button onClick={() => remove(step)} aria-label={`حذف ${step.name}`}>×</button>
             </div>
           </article>{index < steps.length - 1 ? <div className="builder-insert"><span aria-hidden="true">←</span>{addOptions(index).length ? <div className="builder-insert-wrap">
             <button className="builder-insert-button" onClick={() => setInsertAt(insertAt === index ? null : index)} aria-label={`افزودن مرحله پس از ${step.name}`} aria-expanded={insertAt === index}>+</button>
-            {insertAt === index ? <div className="builder-insert-options">{addOptions(index).map((type) => <button key={type} onClick={() => add(type, index)}>{type === "draft" ? "پیش‌نویس" : type === "ai" ? "بازنویسی AI" : "تأیید انسانی"}</button>)}</div> : null}</div> : null}</div> : null}
-        </div>)}</div></div>
-        <div className="builder-hint">{mode === "auto" ? "خبرهای تازه پس از بازنویسی به کانال می‌روند. با افزودن «تأیید انسانی» می‌توانی پیش از ارسال هر خبر آن را بررسی کنی." : "اجرای دستی متن را به تأیید و سپس استودیوی محتوا می‌فرستد."}</div>
+            {insertAt === index ? <div className="builder-insert-options">{addOptions(index).map((type) => <button key={type} onClick={() => add(type, index)}>{type === "publish" ? "انتشار ایتا" : type === "draft" ? "پیش‌نویس" : type === "ai" ? "بازنویسی AI" : "تأیید انسانی"}</button>)}</div> : null}</div> : null}</div> : null}
+        </div>)}{insertAt === steps.length - 1 && addOptions(steps.length - 1).length ? <div className="builder-end-options">{addOptions(steps.length - 1).map((type) => <button key={type} onClick={() => add(type, steps.length - 1)}>+ {type === "publish" ? "انتشار ایتا" : type === "draft" ? "پیش‌نویس" : type === "ai" ? "بازنویسی AI" : "تأیید انسانی"}</button>)}</div> : null}</div>}</div>
+        <div className="builder-hint">برای انتشار، کارت «انتشار ایتا» را به انتهای مسیر اضافه کن. انتشار به‌صورت پیش‌فرض در هیچ جریان تازه‌ای فعال نیست.</div>
+        <div className="builder-channels"><strong>کانال‌های انتشار</strong><div><span className="channel-ready">ایتا · قابل افزودن از کارت‌ها</span>{upcomingChannels.map((channel) => <button className="channel-upcoming" key={channel} disabled title="در نسخه‌های بعدی فعال می‌شود">{channel} · به‌زودی</button>)}</div></div>
       </section>
       <aside className="builder-settings"><h2>تنظیمات جریان</h2><label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-        <label><span>روش اجرا</span><select value={mode} onChange={(event) => { const next = event.target.value as "manual" | "auto"; setMode(next); setSteps(next === "auto" ? autoSteps : manualSteps); setSelectedKey(next === "auto" ? "rss" : "input"); setAutoEnabled(false); setMessage("روش اجرا تغییر کرد؛ برای اعمال آن تغییرات را ذخیره کن"); }}>
-          <option value="auto">خبر خودکار از RSS</option><option value="manual">ورودی دستی</option></select></label>
-        <div className="builder-selected-title"><small>تنظیمات کارت انتخاب‌شده</small><strong>{selected?.name}</strong><p>{selected?.subtitle}</p></div>
+        <div className="builder-help"><strong>روش اجرا</strong><p>{!steps.length ? "با انتخاب اولین کارت مشخص می‌شود." : mode === "auto" ? "خبر خودکار از RSS" : "ورودی دستی"}</p></div>
+        {selected ? <div className="builder-selected-title"><small>تنظیمات کارت انتخاب‌شده</small><strong>{selected.name}</strong><p>{selected.subtitle}</p></div> : <div className="builder-help"><p>اولین کارت را از بوم انتخاب کن تا تنظیماتش اینجا نمایش داده شود.</p></div>}
         {selected?.type === "rss_source" ? <label><span>آدرس خوراک RSS</span><input type="url" dir="ltr" placeholder="https://example.com/feed.xml" value={feedUrl}
           onChange={(event) => updateConfig(selected.key, "feedUrl", event.target.value)} /></label>
         : selected?.type === "publish" ? <><label><span>کانال ایتا</span><select value={accountId} onChange={(event) => updateConfig(selected.key, "accountId", event.target.value)}>
@@ -175,8 +195,8 @@ export function WorkflowBuilder() {
           {!eitaaAccounts.length ? <Link className="builder-note" href="/connections">+ ابتدا کانال ایتا را وصل کن</Link> : null}</>
         : selected?.type === "ai" ? <Link className="builder-note" href="/settings/ai">{aiReady ? "✓ توکن AI تنظیم شده · تغییر مدل" : "+ توکن و مدل AI را تنظیم کن"}</Link>
         : selected?.type === "manual_input" ? <label><span>متن ورودی</span><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="متن خبر یا موضوع را بنویس" /></label>
-        : <div className="builder-help"><p>{selected?.type === "human_approval" ? "هر خبر پیش از ادامه منتظر تأیید تو می‌ماند." : "متن خروجی برای مشاهده و ویرایش در استودیو نگهداری می‌شود."}</p></div>}
-        {mode === "auto" && !autoEnabled ? <div className="builder-help"><strong>پیش از فعال‌سازی</strong><p>RSS، توکن AI و کانال ایتا را تنظیم کن. بدون کارت تأیید، ارسال خودکار انجام می‌شود.</p></div> : null}
+        : selected ? <div className="builder-help"><p>{selected.type === "human_approval" ? "هر خبر پیش از ادامه منتظر تأیید تو می‌ماند." : "متن خروجی برای مشاهده و ویرایش در استودیو نگهداری می‌شود."}</p></div> : null}
+        {mode === "auto" && !autoEnabled && steps.length ? <div className="builder-help"><strong>پیش از فعال‌سازی</strong><p>برای AI توکن همان سرویس و برای انتشار، کانال ایتا را تنظیم کن. کارت‌هایی را که لازم نداری اضافه نکن.</p></div> : null}
       </aside>
     </div>
   </main>;

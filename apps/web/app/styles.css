@@ -1129,3 +1129,20 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
   .builder-insert > span { display:none; }
   .builder-insert-options { right:-48px; top:28px; }
 }
+.builder-empty { width:min(100%,480px); margin:auto; text-align:center; display:flex; flex-direction:column; align-items:center; gap:10px; padding:32px 12px; }
+.builder-empty-icon { width:52px; height:52px; display:grid; place-items:center; border:1px dashed var(--green); border-radius:13px; background:var(--accent-soft); color:var(--accent-text); font-size:30px; }
+.builder-empty h2 { font-size:19px; margin:8px 0 0; }
+.builder-empty p { color:var(--muted); line-height:1.8; font-size:13px; margin:0 0 8px; }
+.builder-empty-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:9px; }
+.builder-empty-actions button,.builder-end-options button { border:1px solid var(--border); background:var(--panel); color:var(--text); padding:10px 14px; border-radius:8px; cursor:pointer; }
+.builder-empty-actions button:hover,.builder-end-options button:hover { border-color:var(--green); background:var(--accent-soft); }
+.builder-end-options { display:flex; flex-direction:column; gap:5px; margin-right:12px; padding:7px; border:1px solid var(--border); background:var(--panel); border-radius:9px; }
+.builder-end-options button { padding:6px 9px; white-space:nowrap; font-size:11px; }
+.builder-channels { margin-top:13px; padding:13px; border:1px solid var(--border); border-radius:10px; background:var(--panel); }
+.builder-channels strong { display:block; margin-bottom:10px; font-size:12px; }
+.builder-channels > div { display:flex; flex-wrap:wrap; gap:7px; }
+.builder-channels span { padding:6px 9px; border:1px solid var(--border); border-radius:8px; font-size:11px; }
+.builder-channels .channel-ready { color:var(--accent-text); border-color:var(--green); }
+.builder-channels .channel-upcoming { color:var(--muted); opacity:.6; }
+@media(max-width:700px) { .builder-end-options { margin:10px 0 0; flex-direction:row; flex-wrap:wrap; justify-content:center; } }
+.builder-channels button.channel-upcoming { border:1px solid var(--border); background:var(--panel2); border-radius:8px; padding:6px 9px; font:inherit; font-size:11px; color:var(--muted); opacity:.6; cursor:not-allowed; }

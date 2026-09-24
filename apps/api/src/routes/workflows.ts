@@ -104,10 +104,10 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
   const types = sorted.map((step) => step.type);
   const source = sorted.find((step) => step.type === "rss_source");
   const publisher = sorted.find((step) => step.type === "publish");
-  if (!source || !publisher || ["rss_source", "ai", "publish"].some((type) => types.filter((item) => item === type).length !== 1) ||
-    types.some((type) => !["rss_source", "ai", "human_approval", "draft", "publish"].includes(type)) ||
-    types.indexOf("rss_source") >= types.indexOf("ai") || types.indexOf("ai") >= types.indexOf("publish") ||
-    (types.includes("human_approval") && (types.indexOf("human_approval") < types.indexOf("ai") || types.indexOf("human_approval") > types.indexOf("publish")))) {
+  if (!source || types.length < 2 || types[0] !== "rss_source" ||
+    types.some((type) => !["rss_source", "ai", "human_approval", "draft", "publish"].includes(type) ||
+      types.filter((item) => item === type).length !== 1) ||
+    (publisher && types.at(-1) !== "publish")) {
     return "auto_workflow_requires_rss_ai_and_eitaa_in_order";
   }
   try {
@@ -116,16 +116,21 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
       isIP(url.hostname.replace(/[\[\]]/g, "")) !== 0 ||
       /^(localhost|.*\.local|.*\.internal)$/i.test(url.hostname)) return "invalid_rss_url";
   } catch { return "invalid_rss_url"; }
-  const accountId = publisher.config.accountId;
-  if (typeof accountId !== "string" || !z.string().uuid().safeParse(accountId).success) return "eitaa_account_required";
   const db = getDb();
-  const [account] = await db.select().from(socialAccounts)
-    .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, workspaceId),
-      eq(socialAccounts.channel, "eitaa"), eq(socialAccounts.isActive, true))).limit(1);
-  if (!account) return "eitaa_account_not_found";
-  const [settings] = await db.select().from(aiSettings)
-    .where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
-  return settings ? null : "ai_token_not_configured";
+  if (publisher) {
+    const accountId = publisher.config.accountId;
+    if (typeof accountId !== "string" || !z.string().uuid().safeParse(accountId).success) return "eitaa_account_required";
+    const [account] = await db.select().from(socialAccounts)
+      .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, workspaceId),
+        eq(socialAccounts.channel, "eitaa"), eq(socialAccounts.isActive, true))).limit(1);
+    if (!account) return "eitaa_account_not_found";
+  }
+  if (types.includes("ai")) {
+    const [settings] = await db.select().from(aiSettings)
+      .where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
+    if (!settings) return "ai_token_not_configured";
+  }
+  return null;
 }
 
 export async function workflowRoutes(app: FastifyInstance) {
