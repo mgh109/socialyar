@@ -1,4 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap");
 :root {
   color-scheme: light;
   --bg: #f7f8fb;
@@ -39,7 +38,7 @@ html[data-theme="dark"] {
 }
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
-body { margin: 0; background: var(--bg); color: var(--text); font-family: "Vazirmatn", Tahoma, sans-serif; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font-estedad), Tahoma, sans-serif; }
 button, textarea { font: inherit; }
 button, a { -webkit-tap-highlight-color: transparent; }
 a { color: inherit; text-decoration: none; }
