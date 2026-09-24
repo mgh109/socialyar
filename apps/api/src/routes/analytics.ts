@@ -35,6 +35,7 @@ function rangeCondition(
 
 export async function analyticsRoutes(app: FastifyInstance) {
   const db = getDb();
+  app.addHook("onRequest", app.authenticate);
 
   app.get("/analytics/summary", async (request) => {
     const query = rangeQuery.parse(request.query);
@@ -49,13 +50,13 @@ export async function analyticsRoutes(app: FastifyInstance) {
         contentVariants,
         eq(publications.contentVariantId, contentVariants.id),
       )
-      .where(rangeCondition(query.workspaceId, query.from, query.to))
+      .where(rangeCondition(request.auth.workspaceId, query.from, query.to))
       .orderBy(desc(publications.createdAt));
 
     const eventRows = await db
       .select()
       .from(analyticsEvents)
-      .where(eq(analyticsEvents.workspaceId, query.workspaceId));
+      .where(eq(analyticsEvents.workspaceId, request.auth.workspaceId));
 
     const total = publicationRows.length;
     const published = publicationRows.filter(
@@ -164,7 +165,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
         contentItems,
         eq(contentVariants.contentItemId, contentItems.id),
       )
-      .where(rangeCondition(query.workspaceId, query.from, query.to))
+      .where(rangeCondition(request.auth.workspaceId, query.from, query.to))
       .orderBy(desc(publications.createdAt));
 
     return query.status
@@ -194,7 +195,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
     const [event] = await db
       .insert(analyticsEvents)
       .values({
-        workspaceId: input.workspaceId,
+        workspaceId: request.auth.workspaceId,
         publicationId: input.publicationId ?? null,
         channel: input.channel,
         type: input.type,

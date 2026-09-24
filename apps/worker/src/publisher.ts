@@ -40,7 +40,7 @@ export async function executePublication(input: {
         await db
           .select()
           .from(socialAccounts)
-          .where(eq(socialAccounts.id, publication.socialAccountId))
+          .where(and(eq(socialAccounts.id, publication.socialAccountId), eq(socialAccounts.workspaceId, publication.workspaceId), eq(socialAccounts.channel, variant.channel), eq(socialAccounts.isActive, true)))
           .limit(1)
       )[0]
     : (
@@ -57,24 +57,19 @@ export async function executePublication(input: {
           .limit(1)
       )[0];
 
-  if (!account) {
-    throw new Error(
-      `No active social account configured for ${variant.channel}`,
-    );
-  }
-
   await db
     .update(publications)
     .set({
       status: "publishing",
       attempt: input.attempt,
       error: null,
-      socialAccountId: account.id,
+      socialAccountId: account?.id ?? null,
       updatedAt: new Date(),
     })
     .where(eq(publications.id, publication.id));
 
   try {
+    if (!account) throw new Error(`No active social account configured for ${variant.channel}`);
     const result = await publishToChannel({
       channel: variant.channel,
       title: variant.title,

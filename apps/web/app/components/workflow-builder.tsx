@@ -15,16 +15,12 @@ type Step = {
 };
 
 const initialSteps: Step[] = [
-  { key: "monitor", type: "source", name: "پایش منابع", subtitle: "هر ۱۰ دقیقه", badge: "ورودی" },
-  { key: "verify", type: "agent", name: "اعتبارسنجی خبر", subtitle: "حداقل ۲ منبع معتبر", badge: "ایجنت" },
-  { key: "rewrite", type: "ai", name: "بازنویسی محتوا", subtitle: "با لحن رسانه", badge: "هوش مصنوعی" },
-  { key: "sensitivity", type: "logic", name: "بررسی حساسیت", subtitle: "سیاسی / حساس؟", badge: "منطق" },
-  { key: "approval", type: "human_approval", name: "تأیید انسانی", subtitle: "فقط برای محتوای حساس", badge: "انسان" },
-  { key: "publish", type: "publish", name: "انتشار", subtitle: "سایت + تلگرام", badge: "انتشار" },
+  { key: "input", type: "manual_input", name: "متن ورودی", subtitle: "متن را خودت وارد کن", badge: "ورودی" },
+  { key: "review", type: "human_approval", name: "تأیید انسانی", subtitle: "پیش از ادامه", badge: "تأیید" },
+  { key: "draft", type: "draft", name: "پیش‌نویس", subtitle: "آماده ویرایش در استودیو", badge: "خروجی" },
 ];
 
-const defaultPrompt =
-  "هر ۱۰ دقیقه خبرهای مهم AI را بررسی کن؛ فقط خبر معتبر را ادامه بده، با لحن رسانه بازنویسی کن، اگر سیاسی بود از من تأیید بگیر و بقیه را در سایت و تلگرام منتشر کن.";
+const defaultPrompt = "";
 
 export function WorkflowBuilder() {
   const router = useRouter();
@@ -118,7 +114,7 @@ export function WorkflowBuilder() {
     setMessage("در حال ساخت Run...");
 
     try {
-      const id = workflowId ?? (await save());
+      const id = await save();
       if (!id) return;
 
       const response = await apiFetch(`/workflows/${id}/runs`, {
@@ -142,14 +138,14 @@ export function WorkflowBuilder() {
       <header className="app-header">
         <div className="brand-lockup">
           <BrandLogo />
-          <span>ساخت جریان با هوش مصنوعی</span>
+          <span>ساخت جریان</span>
         </div>
         <div className="header-actions">
           <span className="save-status">{message}</span>
           <button className="ghost-button" onClick={save} disabled={busy || !name.trim()}>
             ذخیره
           </button>
-          <button className="primary-button" onClick={run} disabled={busy || !name.trim()}>
+          <button className="primary-button" onClick={run} disabled={busy || !name.trim() || !prompt.trim()}>
             ▶ اجرای جریان
           </button>
         </div>
@@ -159,8 +155,8 @@ export function WorkflowBuilder() {
         <div className="canvas-panel">
           <div className="canvas-title">
             <div>
-              <h1>جریان پیشنهادی</h1>
-              <p>نمونهٔ ۶ مرحله‌ای؛ مراحل به‌صورت خودکار از متن ساخته نمی‌شوند</p>
+              <h1>جریان دستی</h1>
+              <p>ورودی دستی، تأیید و پیش‌نویس؛ تولید خودکار و پایش منابع هنوز فعال نیست</p>
             </div>
             <span className="status-pill">Assisted</span>
           </div>
@@ -183,7 +179,7 @@ export function WorkflowBuilder() {
                 <article className={`flow-node node-${step.type}`} key={step.key}>
                   <div className="node-top">
                     <span className="node-index">{String(index + 1).padStart(2, "0")}</span>
-                    {index > 0 && index < 5 ? <span className="ai-badge">AI</span> : null}
+                    {step.type === "ai" ? <span className="ai-badge">AI</span> : null}
                   </div>
                   <h3>{step.name}</h3>
                   <p>{step.subtitle}</p>
@@ -196,9 +192,9 @@ export function WorkflowBuilder() {
           <div className="ai-summary">
             <h2>طرح این جریان</h2>
             <div className="summary-points">
-              <span>+ اعتبارسنجی با دو منبع</span>
-              <span>+ قانون حساسیت و تأیید انسانی</span>
-              <span>+ انتشار در سایت و تلگرام</span>
+              <span>+ دریافت متن از شما</span>
+              <span>+ توقف برای تأیید</span>
+              <span>+ ساخت پیش‌نویس قابل ویرایش</span>
             </div>
             <p>پیش از اجرا، تنظیمات هر مرحله را بررسی کن.</p>
           </div>
@@ -207,7 +203,7 @@ export function WorkflowBuilder() {
         <aside className="assistant-panel">
           <div>
             <h2>دستیار ساخت جریان</h2>
-            <p>درخواست جریان را ثبت کن؛ این نسخه از الگوی ثابت مراحل استفاده می‌کند.</p>
+            <p>متن را وارد کن؛ این نسخه یک مسیر دستی با تأیید انسانی می‌سازد.</p>
           </div>
 
           <label className="prompt-box">
@@ -217,7 +213,7 @@ export function WorkflowBuilder() {
 
           <label className="prompt-box">
             <span>درخواست</span>
-            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />
+            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="متن خودت را برای ساخت پیش‌نویس وارد کن" />
           </label>
 
           <button className="primary-button wide" onClick={save} disabled={busy || !name.trim()}>ذخیره جریان</button>
@@ -225,19 +221,18 @@ export function WorkflowBuilder() {
           <div className="understood-card">
             <h3>این چیزی است که فهمیدم</h3>
             <dl>
-              <div><dt>هدف</dt><dd>کشف و انتشار سریع خبر معتبر</dd></div>
-              <div><dt>تناوب</dt><dd>هر ۱۰ دقیقه</dd></div>
-              <div><dt>اعتبار</dt><dd>حداقل ۲ منبع</dd></div>
-              <div><dt>تأیید</dt><dd>فقط سیاسی / حساس</dd></div>
-              <div><dt>خروجی</dt><dd>Website + Telegram</dd></div>
+              <div><dt>هدف</dt><dd>ساخت پیش‌نویس از متن ورودی</dd></div>
+              <div><dt>تناوب</dt><dd>اجرای دستی</dd></div>
+              <div><dt>اعتبار</dt><dd>متن واردشده توسط شما</dd></div>
+              <div><dt>تأیید</dt><dd>قبل از ادامه</dd></div>
+              <div><dt>خروجی</dt><dd>پیش‌نویس برای استودیو</dd></div>
             </dl>
           </div>
 
           <div className="before-save">
             <h3>قبل از ذخیره</h3>
-            <p>می‌توانی همه تغییرات را تأیید کنی یا با یک جمله اصلاحشان کنی.</p>
+            <p>متن و نام جریان را بررسی کن، سپس ذخیره کن.</p>
             <div className="inline-actions">
-              <button className="ghost-button">✎ اصلاح با دستور</button>
               <button className="success-button" onClick={save} disabled={busy}>✓ تأیید و ذخیره</button>
             </div>
           </div>

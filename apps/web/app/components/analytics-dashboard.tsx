@@ -1,9 +1,9 @@
 "use client";
+import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { getWorkspaceId } from "../lib/session";
 
 type Summary = {
   totals: {
@@ -55,8 +55,7 @@ const channelLabels: Record<string, string> = {
 };
 
 export function AnalyticsDashboard() {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-  const workspaceId = process.env.NEXT_PUBLIC_WORKSPACE_ID ?? "";
+  const workspaceId = getWorkspaceId();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [publications, setPublications] = useState<PublicationRow[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -64,13 +63,13 @@ export function AnalyticsDashboard() {
 
   const load = async () => {
     if (!workspaceId) {
-      setMessage("NEXT_PUBLIC_WORKSPACE_ID تنظیم نشده");
+      setMessage("ابتدا وارد حساب کاربری شوید");
       return;
     }
 
     const [summaryResponse, historyResponse] = await Promise.all([
-      fetch(`${apiUrl}/analytics/summary?workspaceId=${workspaceId}`),
-      fetch(`${apiUrl}/publications?workspaceId=${workspaceId}`),
+      apiFetch(`/analytics/summary?workspaceId=${workspaceId}`),
+      apiFetch(`/publications?workspaceId=${workspaceId}`),
     ]);
 
     if (!summaryResponse.ok || !historyResponse.ok) {
@@ -86,7 +85,7 @@ export function AnalyticsDashboard() {
     void load().catch((error) =>
       setMessage(error instanceof Error ? error.message : "خطا در Analytics"),
     );
-  }, [apiUrl, workspaceId]);
+  }, [workspaceId]);
 
   const filtered = useMemo(
     () =>

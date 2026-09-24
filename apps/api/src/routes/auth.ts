@@ -77,6 +77,10 @@ export async function authRoutes(app: FastifyInstance) {
               error: { type: "string" },
             },
           },
+          409: {
+            type: "object",
+            properties: { error: { type: "string" } },
+          },
         },
       },
     },

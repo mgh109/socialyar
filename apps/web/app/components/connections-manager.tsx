@@ -1,7 +1,7 @@
 "use client";
+import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
-import { getWorkspaceId } from "../lib/session";
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
@@ -50,8 +50,7 @@ const channelMeta: Record<
 };
 
 export function ConnectionsManager() {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-  const workspaceId = process.env.NEXT_PUBLIC_WORKSPACE_ID ?? "";
+  const workspaceId = getWorkspaceId();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [channel, setChannel] = useState<Channel>("telegram");
   const [displayName, setDisplayName] = useState("");
@@ -66,12 +65,12 @@ export function ConnectionsManager() {
 
   const load = async () => {
     if (!workspaceId) {
-      setMessage("NEXT_PUBLIC_WORKSPACE_ID تنظیم نشده");
+      setMessage("ابتدا وارد حساب کاربری شوید");
       return;
     }
 
-    const response = await fetch(
-      `${apiUrl}/social-accounts?workspaceId=${workspaceId}`,
+    const response = await apiFetch(
+      `/social-accounts?workspaceId=${workspaceId}`,
     );
     if (!response.ok) throw new Error("Could not load connections");
     setAccounts(await response.json());
@@ -81,7 +80,7 @@ export function ConnectionsManager() {
     void load().catch((error) =>
       setMessage(error instanceof Error ? error.message : "خطا در اتصال‌ها"),
     );
-  }, [apiUrl, workspaceId]);
+  }, [workspaceId]);
 
   const connectedChannels = useMemo(
     () => new Set(accounts.filter((account) => account.isActive).map((account) => account.channel)),
@@ -122,7 +121,7 @@ export function ConnectionsManager() {
     setMessage("در حال ذخیره اتصال...");
 
     try {
-      const response = await fetch(`${apiUrl}/social-accounts`, {
+      const response = await apiFetch(`/social-accounts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -152,8 +151,8 @@ export function ConnectionsManager() {
   const toggle = async (account: Account) => {
     setBusy(true);
     try {
-      const response = await fetch(
-        `${apiUrl}/social-accounts/${account.id}`,
+      const response = await apiFetch(
+        `/social-accounts/${account.id}`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -174,8 +173,8 @@ export function ConnectionsManager() {
     setBusy(true);
     setMessage(`در حال تست ${channelMeta[account.channel].label}...`);
     try {
-      const response = await fetch(
-        `${apiUrl}/social-accounts/${account.id}/test`,
+      const response = await apiFetch(
+        `/social-accounts/${account.id}/test`,
         { method: "POST" },
       );
       const data = await response.json();
@@ -193,8 +192,8 @@ export function ConnectionsManager() {
   const remove = async (account: Account) => {
     setBusy(true);
     try {
-      const response = await fetch(
-        `${apiUrl}/social-accounts/${account.id}`,
+      const response = await apiFetch(
+        `/social-accounts/${account.id}`,
         { method: "DELETE" },
       );
       if (!response.ok && response.status !== 204) {

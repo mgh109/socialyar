@@ -38,6 +38,22 @@ export function RunLive({ runId }: { runId: string }) {
   const [run, setRun] = useState<RunData | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [connected, setConnected] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
+
+  const resolve = async (action: "approve" | "reject") => {
+    setActionBusy(true);
+    setActionError("");
+    try {
+      const response = await apiFetch(`/runs/${runId}/approval`, {
+        method: "POST", body: JSON.stringify({ action }),
+      });
+      if (!response.ok) throw new Error(`تصمیم ثبت نشد (${response.status})`);
+      setRun((current) => current ? { ...current, status: action === "approve" ? "queued" : "cancelled" } : current);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "خطا در ثبت تصمیم");
+    } finally { setActionBusy(false); }
+  };
 
   useEffect(() => {
     let active = true;
@@ -74,15 +90,14 @@ export function RunLive({ runId }: { runId: string }) {
     [events],
   );
 
-  const canOpenStudio =
-    run?.status === "completed" || run?.status === "waiting_approval";
+  const canOpenStudio = run?.status === "completed";
 
   return (
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
           <BrandLogo />
-          <span>اجرای جریان · خبرهای AI</span>
+          <span>اجرای جریان</span>
         </div>
         <div className="header-actions">
           <span className={connected ? "live-dot online" : "live-dot"} />
@@ -104,17 +119,14 @@ export function RunLive({ runId }: { runId: string }) {
                 Run #{runId.slice(0, 8)} · وضعیت: {run?.status ?? "..."}
               </p>
             </div>
-            <span className="status-pill">{progress} / 6 مرحله</span>
+            <span className="status-pill">{progress} / 3 مرحله</span>
           </div>
 
           <div className="execution-strip">
             {[
-              "پایش منابع",
-              "اعتبارسنجی",
-              "بازنویسی محتوا",
-              "بررسی حساسیت",
+              "متن ورودی",
               "تأیید انسانی",
-              "انتشار",
+              "پیش‌نویس",
             ].map((name, index) => {
               const completed = index < progress;
               const active = index === progress && run?.status === "running";
@@ -135,6 +147,15 @@ export function RunLive({ runId }: { runId: string }) {
               );
             })}
           </div>
+
+          {run?.status === "waiting_approval" ? (
+            <div className="run-output-ready">
+              <strong>این جریان منتظر تصمیم شماست.</strong>
+              <button className="primary-button" disabled={actionBusy} onClick={() => void resolve("approve")}>تأیید و ادامه</button>
+              <button className="ghost-button" disabled={actionBusy} onClick={() => void resolve("reject")}>رد کردن</button>
+              {actionError ? <span role="alert">{actionError}</span> : null}
+            </div>
+          ) : null}
 
           {canOpenStudio ? (
             <div className="run-output-ready">
@@ -162,7 +183,7 @@ export function RunLive({ runId }: { runId: string }) {
             </div>
             <div>
               <span className="micro-label">مرحله کامل</span>
-              <strong>{progress} / 6</strong>
+              <strong>{progress} / 3</strong>
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ import {
   getDb,
   publications,
   schedules,
+  socialAccounts,
 } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 
@@ -46,11 +47,12 @@ async function enqueuePublication(
 
 export async function approvalRoutes(app: FastifyInstance) {
   const db = getDb();
+  app.addHook("onRequest", app.authenticate);
 
   app.get("/approvals", async (request) => {
     const query = z
       .object({
-        workspaceId: z.string().uuid(),
+        workspaceId: z.string().uuid().optional(),
         status: z
           .enum(["pending", "approved", "rejected", "changes_requested"])
           .optional(),
@@ -75,10 +77,10 @@ export async function approvalRoutes(app: FastifyInstance) {
       .where(
         query.status
           ? and(
-              eq(approvals.workspaceId, query.workspaceId),
+              eq(approvals.workspaceId, request.auth.workspaceId),
               eq(approvals.status, query.status),
             )
-          : eq(approvals.workspaceId, query.workspaceId),
+          : eq(approvals.workspaceId, request.auth.workspaceId),
       )
       .orderBy(desc(approvals.createdAt));
 
@@ -94,12 +96,14 @@ export async function approvalRoutes(app: FastifyInstance) {
     const [current] = await db
       .select()
       .from(approvals)
-      .where(eq(approvals.id, approvalId))
+      .where(and(eq(approvals.id, approvalId), eq(approvals.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
     if (!current) {
       return reply.code(404).send({ error: "approval_not_found" });
     }
+
+    if (current.status !== "pending") return reply.code(409).send({ error: "approval_already_resolved" });
 
     const nextApprovalStatus =
       input.action === "approve"
@@ -124,7 +128,7 @@ export async function approvalRoutes(app: FastifyInstance) {
           resolutionNote: input.note ?? null,
           resolvedAt: new Date(),
         })
-        .where(eq(approvals.id, approvalId))
+        .where(and(eq(approvals.id, approvalId), eq(approvals.status, "pending")))
         .returning();
 
       const [variant] = await tx
@@ -168,8 +172,14 @@ export async function approvalRoutes(app: FastifyInstance) {
       .where(eq(contentItems.id, variant.contentItemId))
       .limit(1);
 
-    if (!content) {
+    if (!content || content.workspaceId !== request.auth.workspaceId) {
       return reply.code(404).send({ error: "content_not_found" });
+    }
+
+    if (input.socialAccountId) {
+      const [account] = await db.select().from(socialAccounts)
+        .where(and(eq(socialAccounts.id, input.socialAccountId), eq(socialAccounts.workspaceId, request.auth.workspaceId), eq(socialAccounts.channel, variant.channel), eq(socialAccounts.isActive, true))).limit(1);
+      if (!account) return reply.code(400).send({ error: "channel_account_not_found" });
     }
 
     const scheduledAt = new Date(input.scheduledAt);
@@ -263,7 +273,7 @@ export async function approvalRoutes(app: FastifyInstance) {
         contentItems,
         eq(contentVariants.contentItemId, contentItems.id),
       )
-      .where(eq(schedules.workspaceId, query.workspaceId))
+      .where(eq(schedules.workspaceId, request.auth.workspaceId))
       .orderBy(asc(schedules.scheduledAt));
   });
 
@@ -275,12 +285,14 @@ export async function approvalRoutes(app: FastifyInstance) {
     const [schedule] = await db
       .select()
       .from(schedules)
-      .where(eq(schedules.id, scheduleId))
+      .where(and(eq(schedules.id, scheduleId), eq(schedules.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
     if (!schedule) {
       return reply.code(404).send({ error: "schedule_not_found" });
     }
+
+    if (schedule.status === "completed" || schedule.status === "cancelled") return reply.code(409).send({ error: "schedule_not_publishable" });
 
     let [publication] = await db
       .select()

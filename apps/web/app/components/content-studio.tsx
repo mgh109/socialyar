@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
@@ -38,14 +39,13 @@ const channelLabels: Record<string, string> = {
 };
 
 export function ContentStudio({ runId }: { runId: string }) {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
   const [data, setData] = useState<StudioPayload | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [message, setMessage] = useState("در حال دریافت خروجی Run...");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    void fetch(`${apiUrl}/runs/${runId}/content`, {
+    void apiFetch(`/runs/${runId}/content`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
@@ -62,7 +62,7 @@ export function ContentStudio({ runId }: { runId: string }) {
       .catch((error) => {
         setMessage(error instanceof Error ? error.message : "خطا در دریافت محتوا");
       });
-  }, [apiUrl, runId]);
+  }, [runId]);
 
   const active = useMemo(
     () => data?.variants.find((variant) => variant.id === activeId) ?? null,
@@ -109,7 +109,7 @@ export function ContentStudio({ runId }: { runId: string }) {
     setMessage("در حال ذخیره...");
 
     try {
-      const response = await fetch(`${apiUrl}/content/${data.content.id}`, {
+      const response = await apiFetch(`/content/${data.content.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -133,7 +133,7 @@ export function ContentStudio({ runId }: { runId: string }) {
     setMessage("در حال ذخیره نسخه کانال...");
 
     try {
-      const response = await fetch(`${apiUrl}/content-variants/${active.id}`, {
+      const response = await apiFetch(`/content-variants/${active.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -161,8 +161,8 @@ export function ContentStudio({ runId }: { runId: string }) {
     try {
       await saveVariant();
 
-      const response = await fetch(
-        `${apiUrl}/content-variants/${active.id}/approval`,
+      const response = await apiFetch(
+        `/content-variants/${active.id}/approval`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

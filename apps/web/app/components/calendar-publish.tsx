@@ -1,9 +1,9 @@
 "use client";
+import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { getWorkspaceId } from "../lib/session";
 
 type ApprovalRow = {
   approval: { id: string; status: string };
@@ -55,8 +55,7 @@ function defaultScheduleTime() {
 }
 
 export function CalendarPublish() {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-  const workspaceId = process.env.NEXT_PUBLIC_WORKSPACE_ID ?? "";
+  const workspaceId = getWorkspaceId();
   const [approved, setApproved] = useState<ApprovalRow[]>([]);
   const [calendar, setCalendar] = useState<CalendarRow[]>([]);
   const [selectedVariantId, setSelectedVariantId] = useState("");
@@ -68,15 +67,15 @@ export function CalendarPublish() {
 
   const load = async () => {
     if (!workspaceId) {
-      setMessage("NEXT_PUBLIC_WORKSPACE_ID تنظیم نشده");
+      setMessage("ابتدا وارد حساب کاربری شوید");
       return;
     }
 
     const [approvedResponse, calendarResponse] = await Promise.all([
-      fetch(
-        `${apiUrl}/approvals?workspaceId=${workspaceId}&status=approved`,
+      apiFetch(
+        `/approvals?workspaceId=${workspaceId}&status=approved`,
       ),
-      fetch(`${apiUrl}/calendar?workspaceId=${workspaceId}`),
+      apiFetch(`/calendar?workspaceId=${workspaceId}`),
     ]);
 
     if (!approvedResponse.ok || !calendarResponse.ok) {
@@ -100,7 +99,7 @@ export function CalendarPublish() {
     void load().catch((error) =>
       setMessage(error instanceof Error ? error.message : "خطا در Calendar"),
     );
-  }, [apiUrl, workspaceId]);
+  }, [workspaceId]);
 
   const selected = useMemo(
     () => approved.find((row) => row.variant.id === selectedVariantId) ?? null,
@@ -113,8 +112,8 @@ export function CalendarPublish() {
     setMessage("در حال زمان‌بندی...");
 
     try {
-      const response = await fetch(
-        `${apiUrl}/content-variants/${selected.variant.id}/schedules`,
+      const response = await apiFetch(
+        `/content-variants/${selected.variant.id}/schedules`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -144,8 +143,8 @@ export function CalendarPublish() {
     setMessage("در حال ارسال برای انتشار...");
 
     try {
-      const response = await fetch(
-        `${apiUrl}/schedules/${scheduleId}/publish-now`,
+      const response = await apiFetch(
+        `/schedules/${scheduleId}/publish-now`,
         { method: "POST" },
       );
 

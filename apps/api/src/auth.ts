@@ -117,7 +117,7 @@ export async function authPlugin(app: FastifyInstance) {
     throw new Error("JWT_SECRET must be at least 32 characters");
   }
 
-  app.decorateRequest("auth", null);
+  app.decorateRequest("auth", null as unknown as AuthContext);
 
   app.decorate("signAccessToken", (payload) =>
     signToken(payload, secret),

@@ -1,9 +1,9 @@
 "use client";
+import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { getWorkspaceId } from "../lib/session";
 
 type ApprovalRow = {
   approval: {
@@ -36,8 +36,7 @@ const channelLabels: Record<string, string> = {
 };
 
 export function ApprovalCenter() {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-  const workspaceId = process.env.NEXT_PUBLIC_WORKSPACE_ID ?? "";
+  const workspaceId = getWorkspaceId();
   const [rows, setRows] = useState<ApprovalRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [message, setMessage] = useState("در حال دریافت صف تأیید...");
@@ -45,12 +44,12 @@ export function ApprovalCenter() {
 
   const load = async () => {
     if (!workspaceId) {
-      setMessage("NEXT_PUBLIC_WORKSPACE_ID تنظیم نشده");
+      setMessage("ابتدا وارد حساب کاربری شوید");
       return;
     }
 
-    const response = await fetch(
-      `${apiUrl}/approvals?workspaceId=${workspaceId}`,
+    const response = await apiFetch(
+      `/approvals?workspaceId=${workspaceId}`,
     );
 
     if (!response.ok) {
@@ -67,7 +66,7 @@ export function ApprovalCenter() {
     void load().catch((error) =>
       setMessage(error instanceof Error ? error.message : "خطا در دریافت Approval"),
     );
-  }, [apiUrl, workspaceId]);
+  }, [workspaceId]);
 
   const active = useMemo(
     () => rows.find((row) => row.approval.id === activeId) ?? null,
@@ -82,8 +81,8 @@ export function ApprovalCenter() {
     setMessage("در حال ثبت تصمیم...");
 
     try {
-      const response = await fetch(
-        `${apiUrl}/approvals/${active.approval.id}/resolve`,
+      const response = await apiFetch(
+        `/approvals/${active.approval.id}/resolve`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getDb, socialAccounts } from "@socialyar/db";
@@ -120,6 +120,7 @@ async function testWebsite(credentials: Record<string, unknown>) {
 
 export async function accountRoutes(app: FastifyInstance) {
   const db = getDb();
+  app.addHook("onRequest", app.authenticate);
 
   app.get("/social-accounts", async (request) => {
     const { workspaceId } = z
@@ -129,7 +130,7 @@ export async function accountRoutes(app: FastifyInstance) {
     const accounts = await db
       .select()
       .from(socialAccounts)
-      .where(eq(socialAccounts.workspaceId, workspaceId));
+      .where(eq(socialAccounts.workspaceId, request.auth.workspaceId));
 
     return accounts.map(safeAccount);
   });
@@ -140,7 +141,7 @@ export async function accountRoutes(app: FastifyInstance) {
     const [account] = await db
       .insert(socialAccounts)
       .values({
-        workspaceId: input.workspaceId,
+        workspaceId: request.auth.workspaceId,
         channel: input.channel,
         externalAccountId: input.externalAccountId,
         displayName: input.displayName ?? null,
@@ -161,7 +162,7 @@ export async function accountRoutes(app: FastifyInstance) {
     const [current] = await db
       .select()
       .from(socialAccounts)
-      .where(eq(socialAccounts.id, accountId))
+      .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
     if (!current) {
@@ -183,7 +184,7 @@ export async function accountRoutes(app: FastifyInstance) {
         isActive: input.isActive ?? current.isActive,
         updatedAt: new Date(),
       })
-      .where(eq(socialAccounts.id, accountId))
+      .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, request.auth.workspaceId)))
       .returning();
 
     return safeAccount(updated);
@@ -196,7 +197,7 @@ export async function accountRoutes(app: FastifyInstance) {
 
     const [deleted] = await db
       .delete(socialAccounts)
-      .where(eq(socialAccounts.id, accountId))
+      .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, request.auth.workspaceId)))
       .returning({ id: socialAccounts.id });
 
     if (!deleted) {
@@ -214,7 +215,7 @@ export async function accountRoutes(app: FastifyInstance) {
     const [account] = await db
       .select()
       .from(socialAccounts)
-      .where(eq(socialAccounts.id, accountId))
+      .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
     if (!account) {

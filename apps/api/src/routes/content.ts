@@ -13,18 +13,7 @@ import {
 const canonicalUpdateSchema = z.object({
   title: z.string().nullable().optional(),
   body: z.string().min(1).optional(),
-  status: z
-    .enum([
-      "draft",
-      "generated",
-      "waiting_approval",
-      "approved",
-      "rejected",
-      "scheduled",
-      "published",
-      "failed",
-    ])
-    .optional(),
+
 });
 
 const variantUpdateSchema = z.object({
@@ -32,18 +21,7 @@ const variantUpdateSchema = z.object({
   body: z.string().min(1).optional(),
   hashtags: z.array(z.string()).optional(),
   settings: z.record(z.unknown()).optional(),
-  status: z
-    .enum([
-      "draft",
-      "generated",
-      "waiting_approval",
-      "approved",
-      "rejected",
-      "scheduled",
-      "published",
-      "failed",
-    ])
-    .optional(),
+
 });
 
 function buildVariant(
@@ -56,7 +34,7 @@ function buildVariant(
       channel,
       format: "post",
       title,
-      body: `${title}\n\n${body}\n\nبرای خبرهای بیشتر SocialYar را دنبال کنید.`,
+      body: `${title}\n\n${body}\n\nبرای خبرهای بیشتر هور+ را دنبال کنید.`,
       hashtags: ["#هوش_مصنوعی", "#AI", "#تکنولوژی"],
       settings: {
         tone: "news",
@@ -107,6 +85,7 @@ function buildVariant(
 
 export async function contentRoutes(app: FastifyInstance) {
   const db = getDb();
+  app.addHook("onRequest", app.authenticate);
 
   app.post("/runs/:runId/content", async (request, reply) => {
     const { runId } = z
@@ -114,23 +93,28 @@ export async function contentRoutes(app: FastifyInstance) {
       .parse(request.params);
 
     const [run] = await db
-      .select()
+      .select({ run: runs })
       .from(runs)
-      .where(eq(runs.id, runId))
+      .innerJoin(workflows, eq(runs.workflowId, workflows.id))
+      .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId)))
       .limit(1);
 
     if (!run) {
       return reply.code(404).send({ error: "run_not_found" });
     }
+    const ownedRun = run.run;
 
     const [workflow] = await db
       .select()
       .from(workflows)
-      .where(eq(workflows.id, run.workflowId))
+      .where(eq(workflows.id, ownedRun.workflowId))
       .limit(1);
 
     if (!workflow) {
       return reply.code(404).send({ error: "workflow_not_found" });
+    }
+    if (ownedRun.status !== "completed") {
+      return reply.code(409).send({ error: "run_not_completed" });
     }
 
     let [content] = await db
@@ -142,18 +126,17 @@ export async function contentRoutes(app: FastifyInstance) {
 
     if (!content) {
       const prompt =
-        typeof run.input === "object" &&
-        run.input &&
-        "prompt" in run.input &&
-        typeof run.input.prompt === "string"
-          ? run.input.prompt
+        typeof ownedRun.input === "object" &&
+        ownedRun.input &&
+        "prompt" in ownedRun.input &&
+        typeof ownedRun.input.prompt === "string"
+          ? ownedRun.input.prompt
           : null;
 
-      const generatedBody =
-        run.output && Object.keys(run.output).length > 0
-          ? "این پیش‌نویس از اجرای Workflow ساخته شده و آماده ویرایش نهایی است."
-          : prompt ??
-            "این پیش‌نویس از اجرای Workflow ساخته شده و آماده ویرایش نهایی است.";
+      const draft = ownedRun.output?.draft;
+      const generatedBody = draft && typeof draft === "object" && "text" in draft && typeof draft.text === "string"
+        ? draft.text : prompt;
+      if (!generatedBody?.trim()) return reply.code(409).send({ error: "run_has_no_text_output" });
 
       [content] = await db
         .insert(contentItems)
@@ -169,7 +152,7 @@ export async function contentRoutes(app: FastifyInstance) {
               workflowName: workflow.name,
             },
           },
-          status: "generated",
+          status: "generated" as const,
         })
         .returning();
 
@@ -189,7 +172,7 @@ export async function contentRoutes(app: FastifyInstance) {
           body: variant.body,
           hashtags: variant.hashtags,
           settings: variant.settings,
-          status: "generated",
+          status: "generated" as const,
           generatedBy: "system",
         })),
       );
@@ -224,7 +207,7 @@ export async function contentRoutes(app: FastifyInstance) {
         ...input,
         updatedAt: new Date(),
       })
-      .where(eq(contentItems.id, contentItemId))
+      .where(and(eq(contentItems.id, contentItemId), eq(contentItems.workspaceId, request.auth.workspaceId)))
       .returning();
 
     if (!updated) {
@@ -239,6 +222,13 @@ export async function contentRoutes(app: FastifyInstance) {
       .object({ variantId: z.string().uuid() })
       .parse(request.params);
     const input = variantUpdateSchema.parse(request.body);
+
+    const [owned] = await db.select({ id: contentVariants.id })
+      .from(contentVariants)
+      .innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id))
+      .where(and(eq(contentVariants.id, variantId), eq(contentItems.workspaceId, request.auth.workspaceId)))
+      .limit(1);
+    if (!owned) return reply.code(404).send({ error: "variant_not_found" });
 
     const [updated] = await db
       .update(contentVariants)
@@ -284,7 +274,7 @@ export async function contentRoutes(app: FastifyInstance) {
       .where(eq(contentItems.id, variant.contentItemId))
       .limit(1);
 
-    if (!content) {
+    if (!content || content.workspaceId !== request.auth.workspaceId) {
       return reply.code(404).send({ error: "content_not_found" });
     }
 

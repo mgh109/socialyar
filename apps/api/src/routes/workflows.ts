@@ -127,7 +127,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         .returning();
 
       await insertGraph(
-        tx as ReturnType<typeof getDb>,
+        tx as unknown as ReturnType<typeof getDb>,
         version.id,
         input.steps,
         input.connections,
@@ -246,7 +246,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         .returning();
 
       await insertGraph(
-        tx as ReturnType<typeof getDb>,
+        tx as unknown as ReturnType<typeof getDb>,
         version.id,
         input.steps,
         input.connections,

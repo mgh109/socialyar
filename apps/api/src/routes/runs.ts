@@ -4,9 +4,11 @@ import { z } from "zod";
 import {
   getDb,
   runEvents,
+  runSteps,
   runs,
   workflowVersions,
   workflows,
+  workflowSteps,
 } from "@socialyar/db";
 import { workflowQueue } from "../queue";
 
@@ -138,6 +140,42 @@ export async function runRoutes(app: FastifyInstance) {
     }
 
     return row.run;
+  });
+
+  app.post("/runs/:runId/approval", async (request, reply) => {
+    const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
+    const { action } = z.object({ action: z.enum(["approve", "reject"]) }).parse(request.body);
+    const [owned] = await db.select({ run: runs }).from(runs)
+      .innerJoin(workflows, eq(runs.workflowId, workflows.id))
+      .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
+    if (!owned) return reply.code(404).send({ error: "run_not_found" });
+    if (owned.run.status !== "waiting_approval") return reply.code(409).send({ error: "run_not_waiting_approval" });
+
+    const [pending] = await db.select({ step: runSteps }).from(runSteps)
+      .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
+      .where(and(eq(runSteps.runId, runId), eq(runSteps.status, "waiting_approval"))).limit(1);
+    if (!pending) return reply.code(409).send({ error: "approval_step_not_found" });
+    const next = action === "approve" ? "queued" : "cancelled";
+    const [claimed] = await db.update(runs).set({ status: next, finishedAt: action === "reject" ? new Date() : null })
+      .where(and(eq(runs.id, runId), eq(runs.status, "waiting_approval"))).returning();
+    if (!claimed) return reply.code(409).send({ error: "approval_already_resolved" });
+    await db.update(runSteps).set({ status: action === "approve" ? "completed" : "skipped",
+      output: { approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
+      .where(eq(runSteps.id, pending.step.id));
+    await db.insert(runEvents).values({ runId, runStepId: pending.step.id, type: "approval_resolved",
+      payload: { action, resolvedBy: request.auth.userId } });
+    if (action === "approve") {
+      try {
+        await workflowQueue.add("execute-workflow", {
+          runId, workflowId: owned.run.workflowId, workflowVersionId: owned.run.workflowVersionId,
+        }, { jobId: `${runId}-resume`, attempts: 3, backoff: { type: "exponential", delay: 2000 } });
+      } catch (error) {
+        await db.update(runs).set({ status: "failed", output: { error: { message: "Could not resume run" } }, finishedAt: new Date() })
+          .where(eq(runs.id, runId));
+        return reply.code(503).send({ error: "queue_unavailable" });
+      }
+    }
+    return { runId, status: next };
   });
 
   app.get("/runs/:runId/events", async (request, reply) => {
