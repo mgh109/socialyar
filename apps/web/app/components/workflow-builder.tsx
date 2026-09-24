@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "../lib/session";
 
@@ -10,6 +10,7 @@ type Step = {
   name: string;
   subtitle: string;
   badge: string;
+  config?: Record<string, unknown>;
 };
 
 const initialSteps: Step[] = [
@@ -27,10 +28,33 @@ const defaultPrompt =
 export function WorkflowBuilder() {
   const router = useRouter();
   const [prompt, setPrompt] = useState(defaultPrompt);
-  const [steps] = useState(initialSteps);
+  const [steps, setSteps] = useState<Step[]>(initialSteps);
+  const [name, setName] = useState("خبرهای AI");
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
+
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("id");
+    if (!id) return;
+    void apiFetch(`/workflows/${encodeURIComponent(id)}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("جریان پیدا نشد");
+        return response.json();
+      })
+      .then((data: { workflow: { id: string; name: string }; version: { prompt: string | null } | null; steps: Array<{ key: string; type: string; name: string; config: Record<string, unknown> }> }) => {
+        setWorkflowId(data.workflow.id);
+        setName(data.workflow.name);
+        setPrompt(data.version?.prompt ?? "");
+        setSteps(data.steps.map((step) => ({
+          ...step,
+          subtitle: initialSteps.find((item) => item.key === step.key)?.subtitle ?? "",
+          badge: initialSteps.find((item) => item.key === step.key)?.badge ?? step.type,
+        })));
+        setMessage("جریان ذخیره‌شده بارگذاری شد");
+      })
+      .catch((error) => setMessage(error instanceof Error ? error.message : "بارگذاری جریان ناموفق بود"));
+  }, []);
 
   const connections = useMemo(
     () =>
@@ -47,8 +71,8 @@ export function WorkflowBuilder() {
 
     try {
       const body = {
-        name: "خبرهای AI",
-        description: "کشف، اعتبارسنجی، تولید و انتشار خبرهای AI",
+        name,
+        description: prompt.slice(0, 180),
         autonomyMode: "assisted",
         prompt,
         steps: steps.map((step, order) => ({
@@ -57,16 +81,16 @@ export function WorkflowBuilder() {
           name: step.name,
           config:
             step.type === "human_approval"
-              ? { recommendation: "محتوای حساس قبل از انتشار بررسی شود" }
-              : {},
+              ? { recommendation: "محتوای حساس قبل از انتشار بررسی شود", ...step.config }
+              : step.config ?? {},
           position: { x: order * 190, y: 0 },
           order,
         })),
         connections,
       };
 
-      const response = await apiFetch("/workflows", {
-        method: "POST",
+      const response = await apiFetch(workflowId ? `/workflows/${workflowId}` : "/workflows", {
+        method: workflowId ? "PUT" : "POST",
         body: JSON.stringify(body),
       });
 
@@ -77,6 +101,7 @@ export function WorkflowBuilder() {
 
       const data = await response.json();
       setWorkflowId(data.workflow.id);
+      if (!workflowId) window.history.replaceState(null, "", `/workflows/new?id=${data.workflow.id}`);
       setMessage("✓ جریان ذخیره شد");
       return data.workflow.id as string;
     } catch (error) {
@@ -120,10 +145,10 @@ export function WorkflowBuilder() {
         </div>
         <div className="header-actions">
           <span className="save-status">{message}</span>
-          <button className="ghost-button" onClick={save} disabled={busy}>
+          <button className="ghost-button" onClick={save} disabled={busy || !name.trim()}>
             ذخیره
           </button>
-          <button className="primary-button" onClick={run} disabled={busy}>
+          <button className="primary-button" onClick={run} disabled={busy || !name.trim()}>
             ▶ اجرای جریان
           </button>
         </div>
@@ -134,7 +159,7 @@ export function WorkflowBuilder() {
           <div className="canvas-title">
             <div>
               <h1>جریان پیشنهادی</h1>
-              <p>۶ مرحله از روی درخواست تو ساخته شد · ۱ نقطه تأیید انسانی</p>
+              <p>نمونهٔ ۶ مرحله‌ای؛ مراحل به‌صورت خودکار از متن ساخته نمی‌شوند</p>
             </div>
             <span className="status-pill">Assisted</span>
           </div>
@@ -168,28 +193,33 @@ export function WorkflowBuilder() {
           </div>
 
           <div className="ai-summary">
-            <h2>AI چه چیزی ساخته؟</h2>
+            <h2>طرح این جریان</h2>
             <div className="summary-points">
               <span>+ اعتبارسنجی با دو منبع</span>
               <span>+ قانون حساسیت و تأیید انسانی</span>
               <span>+ انتشار در سایت و تلگرام</span>
             </div>
-            <p>فرض AI: چون منبع مشخص نکردی، از منابع با Trust بالا استفاده می‌شود.</p>
+            <p>پیش از اجرا، تنظیمات هر مرحله را بررسی کن.</p>
           </div>
         </div>
 
         <aside className="assistant-panel">
           <div>
             <h2>دستیار ساخت جریان</h2>
-            <p>هدفت را بنویس؛ مرحله و اتصال‌ها مستقیم روی Canvas ساخته می‌شوند.</p>
+            <p>درخواست جریان را ثبت کن؛ این نسخه از الگوی ثابت مراحل استفاده می‌کند.</p>
           </div>
+
+          <label className="prompt-box">
+            <span>نام جریان</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} required />
+          </label>
 
           <label className="prompt-box">
             <span>درخواست</span>
             <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} />
           </label>
 
-          <button className="primary-button wide">✦ ساخت جریان</button>
+          <button className="primary-button wide" onClick={save} disabled={busy || !name.trim()}>ذخیره جریان</button>
 
           <div className="understood-card">
             <h3>این چیزی است که فهمیدم</h3>
