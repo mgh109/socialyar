@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { getWorkspaceId } from "../lib/session";
@@ -125,7 +126,7 @@ export function ApprovalCenter() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>هور+</strong>
+          <BrandLogo />
           <span>Approval Center</span>
         </div>
         <div className="header-actions">

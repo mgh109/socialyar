@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "../components/brand-logo";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { saveSession, type AuthSession } from "../lib/session";
@@ -46,7 +47,7 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <section className="auth-brand">
-        <span className="eyebrow">هور+</span>
+        <BrandLogo large />
         <h1>مدیریت محتوا، از ایده تا انتشار</h1>
         <p>
           وارد فضای کاری خودت شو و Workflowها، محتوا، تأیید، انتشار و تحلیل را یکجا مدیریت کن.

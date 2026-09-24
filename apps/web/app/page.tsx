@@ -1,3 +1,4 @@
+import { BrandLogo } from "./components/brand-logo";
 import Link from "next/link";
 import { WorkflowList } from "./components/workflow-list";
 
@@ -5,7 +6,7 @@ export default function HomePage() {
   return (
     <main className="shell">
       <header className="topbar">
-        <strong>هور+</strong>
+        <BrandLogo />
         <span>فضای کاری محتوا</span>
       </header>
       <WorkflowList />

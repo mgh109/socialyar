@@ -17,7 +17,7 @@ const estedad = localFont({
   display: "swap",
 });
 
-export const metadata = { title: "هور+ | مدیریت جریان محتوا", description: "ساخت و مدیریت جریان‌های تولید و انتشار محتوا" };
+export const metadata = { icons: { icon: "/logo.png", shortcut: "/logo.png", apple: "/logo.png" }, title: "هور+ | مدیریت جریان محتوا", description: "ساخت و مدیریت جریان‌های تولید و انتشار محتوا" };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

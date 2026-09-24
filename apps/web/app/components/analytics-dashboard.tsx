@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { getWorkspaceId } from "../lib/session";
@@ -102,7 +103,7 @@ export function AnalyticsDashboard() {
       <main className="workflow-page">
         <header className="app-header">
           <div className="brand-lockup">
-            <strong>هور+</strong>
+            <BrandLogo />
             <span>Analytics</span>
           </div>
         </header>
@@ -115,7 +116,7 @@ export function AnalyticsDashboard() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>هور+</strong>
+          <BrandLogo />
           <span>Analytics & Publication History</span>
         </div>
         <div className="header-actions">

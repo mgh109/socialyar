@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "./brand-logo";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiFetch } from "../lib/session";
@@ -140,7 +141,7 @@ export function WorkflowBuilder() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>هور+</strong>
+          <BrandLogo />
           <span>ساخت جریان با هوش مصنوعی</span>
         </div>
         <div className="header-actions">

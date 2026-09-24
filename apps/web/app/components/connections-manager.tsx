@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "./brand-logo";
 import { getWorkspaceId } from "../lib/session";
 
 import Link from "next/link";
@@ -212,7 +213,7 @@ export function ConnectionsManager() {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>هور+</strong>
+          <BrandLogo />
           <span>Connections</span>
         </div>
         <div className="header-actions">

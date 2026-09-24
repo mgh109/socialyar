@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/session";
@@ -80,7 +81,7 @@ export function RunLive({ runId }: { runId: string }) {
     <main className="workflow-page">
       <header className="app-header">
         <div className="brand-lockup">
-          <strong>هور+</strong>
+          <BrandLogo />
           <span>اجرای جریان · خبرهای AI</span>
         </div>
         <div className="header-actions">
