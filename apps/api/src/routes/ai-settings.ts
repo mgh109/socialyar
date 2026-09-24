@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { generateNewsDraft, type AIConnection } from "@socialyar/ai";
-import { aiSettings, decryptSecret, encryptSecret, getDb } from "@socialyar/db";
+import { aiSettings, decryptSecret, encryptSecret, getDb, secretConfigurationProblem } from "@socialyar/db";
 
 const settingsSchema = z.object({
   provider: z.enum(["openai", "openrouter", "gapgpt"]),
@@ -10,29 +10,52 @@ const settingsSchema = z.object({
   token: z.string().min(8).optional(),
 });
 
+function isMissingSettingsTable(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth++) {
+    const detail = current as { code?: string; cause?: unknown };
+    if (detail.code === "42P01") return true;
+    current = detail.cause;
+  }
+  return false;
+}
+
 export async function aiSettingsRoutes(app: FastifyInstance) {
   const db = getDb();
   app.addHook("onRequest", app.authenticate);
 
-  app.get("/settings/ai", async (request) => {
-    const [row] = await db.select().from(aiSettings)
-      .where(eq(aiSettings.workspaceId, request.auth.workspaceId)).limit(1);
-    return { configured: Boolean(row), provider: row?.provider ?? "openrouter", model: row?.model ?? "" };
+  app.get("/settings/ai", async (request, reply) => {
+    try {
+      const [row] = await db.select().from(aiSettings)
+        .where(eq(aiSettings.workspaceId, request.auth.workspaceId)).limit(1);
+      return { configured: Boolean(row), provider: row?.provider ?? "openrouter", model: row?.model ?? "",
+        configurationProblem: secretConfigurationProblem() };
+    } catch (error) {
+      if (isMissingSettingsTable(error)) return reply.code(503).send({ error: "ai_settings_migration_required" });
+      throw error;
+    }
   });
 
   app.put("/settings/ai", async (request, reply) => {
     const input = settingsSchema.parse(request.body);
-    const [existing] = await db.select().from(aiSettings)
-      .where(eq(aiSettings.workspaceId, request.auth.workspaceId)).limit(1);
-    if ((!existing || existing.provider !== input.provider) && !input.token) return reply.code(400).send({ error: "token_required_for_provider" });
-    const encryptedToken = input.token ? encryptSecret(input.token) : existing!.encryptedToken;
-    await db.insert(aiSettings).values({
-      workspaceId: request.auth.workspaceId, provider: input.provider,
-      model: input.model, encryptedToken, updatedAt: new Date(),
-    }).onConflictDoUpdate({ target: aiSettings.workspaceId, set: {
-      provider: input.provider, model: input.model, encryptedToken, updatedAt: new Date(),
-    } });
-    return { configured: true, provider: input.provider, model: input.model };
+    const configurationProblem = secretConfigurationProblem();
+    if (configurationProblem) return reply.code(503).send({ error: configurationProblem });
+    try {
+      const [existing] = await db.select().from(aiSettings)
+        .where(eq(aiSettings.workspaceId, request.auth.workspaceId)).limit(1);
+      if ((!existing || existing.provider !== input.provider) && !input.token) return reply.code(400).send({ error: "token_required_for_provider" });
+      const encryptedToken = input.token ? encryptSecret(input.token) : existing!.encryptedToken;
+      await db.insert(aiSettings).values({
+        workspaceId: request.auth.workspaceId, provider: input.provider,
+        model: input.model, encryptedToken, updatedAt: new Date(),
+      }).onConflictDoUpdate({ target: aiSettings.workspaceId, set: {
+        provider: input.provider, model: input.model, encryptedToken, updatedAt: new Date(),
+      } });
+      return { configured: true, provider: input.provider, model: input.model };
+    } catch (error) {
+      if (isMissingSettingsTable(error)) return reply.code(503).send({ error: "ai_settings_migration_required" });
+      throw error;
+    }
   });
 
   app.post("/settings/ai/test", async (request, reply) => {

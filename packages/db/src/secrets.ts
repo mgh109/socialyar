@@ -1,10 +1,17 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
+export function secretConfigurationProblem(): "secret_key_missing" | "secret_key_invalid" | null {
+  const value = process.env.HOOR_SECRET_KEY;
+  if (!value) return "secret_key_missing";
+  return Buffer.from(value, "base64").length === 32 ? null : "secret_key_invalid";
+}
+
 function key() {
   const value = process.env.HOOR_SECRET_KEY;
-  if (!value) throw new Error("HOOR_SECRET_KEY is required to store integration tokens");
-  const bytes = Buffer.from(value, "base64");
-  if (bytes.length !== 32) throw new Error("HOOR_SECRET_KEY must contain 32 random bytes encoded as base64");
+  const problem = secretConfigurationProblem();
+  if (problem === "secret_key_missing") throw new Error("HOOR_SECRET_KEY is required to store integration tokens");
+  if (problem === "secret_key_invalid") throw new Error("HOOR_SECRET_KEY must contain 32 random bytes encoded as base64");
+  const bytes = Buffer.from(value!, "base64");
   return bytes;
 }
 

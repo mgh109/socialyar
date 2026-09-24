@@ -4,6 +4,13 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../lib/session";
 
+const setupErrors: Record<string, string> = {
+  secret_key_missing: "کلید رمزنگاری HOOR_SECRET_KEY روی سرویس API تنظیم نشده است. مدیر سامانه باید آن را روی API و worker با مقدار یکسان تنظیم کند.",
+  secret_key_invalid: "مقدار HOOR_SECRET_KEY معتبر نیست؛ باید خروجی base64 مربوط به ۳۲ بایت تصادفی باشد.",
+  ai_settings_migration_required: "جدول تنظیمات هوش مصنوعی در پایگاه داده وجود ندارد. مدیر سامانه باید migration شمارهٔ 0002 را اجرا کند.",
+  token_required_for_provider: "برای تغییر سرویس، کلید API همان سرویس را وارد کن.",
+};
+
 export default function AISettingsPage() {
   const [provider, setProvider] = useState<"openai" | "openrouter" | "gapgpt">("openrouter");
   const [model, setModel] = useState("");
@@ -14,17 +21,24 @@ export default function AISettingsPage() {
   const [preview, setPreview] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [configurationProblem, setConfigurationProblem] = useState<string | null>(null);
   useEffect(() => { void apiFetch("/settings/ai").then(async (response) => {
-    if (!response.ok) throw new Error("دریافت تنظیمات ناموفق بود");
-    const data = await response.json(); setProvider(data.provider); setSavedProvider(data.provider); setModel(data.model); setConfigured(data.configured);
+    const data = await response.json();
+    if (!response.ok) throw new Error(setupErrors[data.error] ?? "دریافت تنظیمات ناموفق بود");
+    setProvider(data.provider); setSavedProvider(data.provider); setModel(data.model); setConfigured(data.configured);
+    setConfigurationProblem(data.configurationProblem ?? null);
   }).catch((error) => setMessage(error.message)); }, []);
   const save = async () => {
     setBusy(true); setMessage("");
     try {
       if (provider !== savedProvider && !token.trim()) throw new Error("برای تغییر سرویس، کلید API همان سرویس را وارد کن");
       const response = await apiFetch("/settings/ai", { method: "PUT", body: JSON.stringify({ provider, model, ...(token ? { token } : {}) }) });
-      if (!response.ok) throw new Error("ثبت توکن یا مدل ناموفق بود");
-      setToken(""); setConfigured(true); setSavedProvider(provider); setMessage("✓ تنظیمات ذخیره شد؛ توکن دوباره نمایش داده نمی‌شود.");
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        if (setupErrors[data.error]) setConfigurationProblem(data.error);
+        throw new Error(setupErrors[data.error] ?? `ثبت توکن یا مدل ناموفق بود (${response.status})`);
+      }
+      setToken(""); setConfigured(true); setSavedProvider(provider); setConfigurationProblem(null); setMessage("✓ تنظیمات ذخیره شد؛ توکن دوباره نمایش داده نمی‌شود.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "خطا در ذخیره"); }
     finally { setBusy(false); }
   };
@@ -38,6 +52,7 @@ export default function AISettingsPage() {
   };
   return <main className="settings-page"><Link href="/workflows/new">← بازگشت به میز کار</Link><h1>تنظیمات هوش مصنوعی</h1>
     <p>توکن در سرور رمزگذاری می‌شود و در مرورگر دوباره نمایش داده نمی‌شود.</p>
+    {configurationProblem ? <p className="settings-setup-error" role="alert">{setupErrors[configurationProblem]}</p> : null}
     <section className="settings-card"><label>سرویس<select value={provider} onChange={(event) => { const next = event.target.value as typeof provider; setProvider(next); setModel(next === "openrouter" ? "openai/gpt-4.1-mini" : next === "gapgpt" ? "gpt-4o" : "gpt-4.1-mini"); setToken(""); }}>
       <option value="openrouter">OpenRouter</option><option value="openai">OpenAI / ChatGPT API</option><option value="gapgpt">گپ‌جی‌پی‌تی (GapGPT)</option></select></label>
       {provider === "openai" ? <p>برای اتصال به مدل‌های ChatGPT، کلید API را از <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">پلتفرم OpenAI ↗</a> بگیر. اشتراک ChatGPT به‌تنهایی کلید API نیست.</p> : null}
