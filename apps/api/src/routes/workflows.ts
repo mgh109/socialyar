@@ -5,6 +5,10 @@ import { z } from "zod";
 import {
   getDb,
   aiSettings,
+  contentItems,
+  contentVariants,
+  publications,
+  runs,
   socialAccounts,
   workflowConnections,
   workflowSteps,
@@ -127,6 +131,23 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
 export async function workflowRoutes(app: FastifyInstance) {
   const db = getDb();
   app.addHook("onRequest", app.authenticate);
+
+  app.get("/workflows/:workflowId/activity", async (request, reply) => {
+    const { workflowId } = z.object({ workflowId: z.string().uuid() }).parse(request.params);
+    const [owned] = await db.select({ id: workflows.id }).from(workflows)
+      .where(and(eq(workflows.id, workflowId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
+    if (!owned) return reply.code(404).send({ error: "workflow_not_found" });
+    const [run] = await db.select({ id: runs.id, status: runs.status, createdAt: runs.createdAt }).from(runs)
+      .where(eq(runs.workflowId, workflowId)).orderBy(desc(runs.createdAt)).limit(1);
+    const [publication] = await db.select({ status: publications.status, createdAt: publications.createdAt,
+      publishedAt: publications.publishedAt, externalUrl: publications.externalUrl }).from(publications)
+      .innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
+      .innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id))
+      .innerJoin(runs, eq(contentItems.runId, runs.id))
+      .where(and(eq(runs.workflowId, workflowId), eq(publications.workspaceId, request.auth.workspaceId)))
+      .orderBy(desc(publications.createdAt)).limit(1);
+    return { run: run ?? null, publication: publication ?? null };
+  });
 
   app.post("/workflows", async (request, reply) => {
     const input = createWorkflowSchema.parse(request.body);

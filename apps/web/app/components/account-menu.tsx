@@ -18,12 +18,14 @@ export function AccountMenu() {
   }, [pathname]);
   useEffect(() => {
     const close = (event: MouseEvent) => { if (!menu.current?.contains(event.target as Node)) setOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", escape); };
   }, []);
   if (pathname === "/login") return null;
   return <div className="account-dock" ref={menu}>
-    {open ? <div className="account-popover" role="menu">
+    {open ? <div className="account-popover" aria-label="حساب کاربری">
       <div className="account-identity"><div className="account-avatar">{email.charAt(0).toUpperCase() || "ه"}</div>
         <strong dir="ltr">{email || "حساب من"}</strong><small>فضای کاری {getWorkspaceId().slice(0, 8)}</small></div>
       <Link href="/account">حساب کاربری</Link>
