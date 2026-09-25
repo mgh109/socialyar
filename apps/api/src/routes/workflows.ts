@@ -111,9 +111,15 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
     return "auto_workflow_requires_rss_ai_and_eitaa_in_order";
   }
   const feedUrls = Array.isArray(source.config.feedUrls) ? source.config.feedUrls : [source.config.feedUrl];
-  if (!feedUrls.length || feedUrls.length > 10 || feedUrls.some((value) => typeof value !== "string" || !value.trim()) ||
-    new Set(feedUrls).size !== feedUrls.length) return "invalid_rss_url";
-  for (const value of feedUrls) {
+  const channels = source.config.eitaaChannels ?? [];
+  if (!Array.isArray(channels) || channels.length > 10 || channels.some((value) => typeof value !== "string" ||
+    !/^(?:https:\/\/eitaa\.com\/(?:s\/)?|@)?[a-zA-Z0-9_]{4,32}\/?$/.test(value.trim())) ||
+    new Set(channels.map((value) => String(value).trim().replace(/^https:\/\/eitaa\.com\/(?:s\/)?|^@|\/$/g, "").toLowerCase())).size !== channels.length) return "invalid_eitaa_source";
+  const filledFeeds = feedUrls.filter((value) => typeof value === "string" && value.trim());
+  if (!filledFeeds.length && !channels.length || feedUrls.length > 10 ||
+    feedUrls.some((value) => typeof value !== "string" || !value.trim()) && filledFeeds.length > 0 ||
+    new Set(filledFeeds).size !== filledFeeds.length) return "invalid_rss_url";
+  for (const value of filledFeeds) {
     try {
       const url = new URL(value as string);
       if (url.protocol !== "https:" || url.username || url.password || url.port ||
