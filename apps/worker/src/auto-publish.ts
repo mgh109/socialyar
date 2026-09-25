@@ -31,21 +31,21 @@ export async function enqueueAutoPublication(runId: string) {
     .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, row.workspaceId),
       eq(socialAccounts.channel, "eitaa"), eq(socialAccounts.isActive, true))).limit(1);
   if (!account) throw new Error("Eitaa account is no longer active");
-  const generated = row.run.output?.[publishStep.key] as { text?: string; title?: string; url?: string } | undefined;
+  const generated = row.run.output?.[publishStep.key] as { text?: string; title?: string; url?: string; imageUrl?: string } | undefined;
   if (!generated?.text) throw new Error("Run has no AI generated content");
 
   let [content] = await db.select().from(contentItems).where(eq(contentItems.runId, runId)).limit(1);
   if (!content) {
     [content] = await db.insert(contentItems).values({ workspaceId: row.workspaceId, runId,
       title: generated.title ?? "خبر جدید", body: generated.text,
-      metadata: { sourceUrl: generated.url ?? null, automated: true }, status: "approved" }).returning();
+      metadata: { sourceUrl: generated.url ?? null, imageUrl: generated.imageUrl ?? null, automated: true }, status: "approved" }).returning();
   }
   let [variant] = await db.select().from(contentVariants).where(and(
     eq(contentVariants.contentItemId, content.id), eq(contentVariants.channel, "eitaa"))).limit(1);
   if (!variant) {
     [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: "eitaa",
       title: content.title, body: generated.url ? `${generated.text}\n\nمنبع: ${sourceLink(generated.url)}` : generated.text,
-      status: "approved", generatedBy: "ai" }).returning();
+      settings: { imageUrl: generated.imageUrl ?? null }, status: "approved", generatedBy: "ai" }).returning();
   }
   let [publication] = await db.select().from(publications)
     .where(eq(publications.contentVariantId, variant.id)).limit(1);
