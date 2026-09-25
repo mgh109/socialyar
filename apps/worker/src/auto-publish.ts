@@ -15,6 +15,9 @@ export async function enqueueAutoPublication(runId: string) {
     .where(and(eq(workflowSteps.workflowVersionId, row.run.workflowVersionId), eq(workflowSteps.type, "publish"))).limit(1);
   if (!publishStep) return;
   const accountId = publishStep.config.accountId;
+  const publishIntervalSeconds = publishStep.config.publishIntervalSeconds ?? 30;
+  if (typeof publishIntervalSeconds !== "number" || ![30, 60, 120, 300].includes(publishIntervalSeconds))
+    throw new Error("Invalid publication interval");
   if (typeof accountId !== "string") throw new Error("Publish step needs an Eitaa account");
   const [account] = await db.select().from(socialAccounts)
     .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, row.workspaceId),
@@ -34,7 +37,10 @@ export async function enqueueAutoPublication(runId: string) {
   if (!variant) {
     [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: "eitaa",
       title: content.title, body: generated.text,
-      settings: { imageUrl: generated.imageUrl ?? null }, status: "approved", generatedBy: "ai" }).returning();
+      settings: { imageUrl: generated.imageUrl ?? null, publishIntervalSeconds }, status: "approved", generatedBy: "ai" }).returning();
+  } else if (variant.settings.publishIntervalSeconds !== publishIntervalSeconds) {
+    [variant] = await db.update(contentVariants).set({ settings: { ...variant.settings, publishIntervalSeconds } })
+      .where(eq(contentVariants.id, variant.id)).returning();
   }
   let [publication] = await db.select().from(publications)
     .where(eq(publications.contentVariantId, variant.id)).limit(1);

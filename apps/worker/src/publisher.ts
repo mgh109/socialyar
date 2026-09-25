@@ -1,10 +1,14 @@
 import { and, eq } from "drizzle-orm";
 import { publishToChannel } from "@socialyar/channels";
+import { setTimeout as pause } from "node:timers/promises";
+import { reservePublicationSlot } from "./queue";
 import {
+  contentItems,
   contentVariants,
   getDb,
   decryptSecret,
   publications,
+  runs,
   schedules,
   socialAccounts,
 } from "@socialyar/db";
@@ -58,6 +62,20 @@ export async function executePublication(input: {
           )
           .limit(1)
       )[0];
+
+  // Auto publications share a channel-wide interval, including across different workflows and workers.
+  let interval = variant.settings.publishIntervalSeconds;
+  if (interval === undefined && publication.scheduleId === null) {
+    // Pace auto publications that entered the queue before this setting was introduced.
+    const [source] = await db.select({ trigger: runs.trigger }).from(contentItems)
+      .innerJoin(runs, eq(contentItems.runId, runs.id))
+      .where(eq(contentItems.id, variant.contentItemId)).limit(1);
+    if (source?.trigger === "rss") interval = 30;
+  }
+  if (account && typeof interval === "number" && Number.isInteger(interval) && interval >= 30 && interval <= 300) {
+    const waitMs = await reservePublicationSlot(account.id, interval);
+    if (waitMs) await pause(waitMs);
+  }
 
   await db
     .update(publications)
