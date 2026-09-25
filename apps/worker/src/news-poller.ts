@@ -5,6 +5,7 @@ import { Queue } from "bullmq";
 import { XMLParser } from "fast-xml-parser";
 import { getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
 import { connection } from "./queue";
+import { channelHandle, fetchEitaaPosts } from "./eitaa-source";
 
 const queue = new Queue("workflow-runs", { connection });
 const parser = new XMLParser({ ignoreAttributes: false, processEntities: true });
@@ -44,6 +45,34 @@ function publicFeedUrl(value: string) {
   return url;
 }
 
+async function queueItem(workflowId: string, versionId: string, title: string, summary: string,
+  link: string, imageUrl: string | null, legacyId?: string): Promise<boolean> {
+  const db = getDb();
+  const itemKey = createHash("sha256").update(link).digest("hex");
+  const legacyKey = createHash("sha256").update(legacyId || link).digest("hex");
+  if (legacyKey !== itemKey) {
+    const [seen] = await db.select({ id: newsItems.id }).from(newsItems)
+      .where(and(eq(newsItems.workflowId, workflowId), inArray(newsItems.itemKey, [itemKey, legacyKey]))).limit(1);
+    if (seen) return false;
+  }
+  const [claimed] = await db.insert(newsItems).values({ workflowId, itemKey }).onConflictDoNothing().returning();
+  if (!claimed) return false;
+  const [run] = await db.insert(runs).values({ workflowId, workflowVersionId: versionId,
+    trigger: "rss", input: { title, text: summary || title, url: link, imageUrl }, status: "queued" }).returning();
+  await db.update(newsItems).set({ runId: run.id }).where(eq(newsItems.id, claimed.id));
+  await db.insert(runEvents).values({ runId: run.id, type: "run_started", message: "Source item queued" });
+  try {
+    await queue.add("execute-workflow", { runId: run.id, workflowId,
+      workflowVersionId: versionId }, { jobId: run.id, attempts: 2, removeOnComplete: 1000 });
+  } catch (error) {
+    await db.update(runs).set({ status: "failed", output: { error: { message: "Queue unavailable" } },
+      finishedAt: new Date() }).where(eq(runs.id, run.id));
+    await db.delete(newsItems).where(eq(newsItems.id, claimed.id));
+    throw error;
+  }
+  return true;
+}
+
 async function poll() {
   if (polling) return;
   polling = true;
@@ -60,13 +89,13 @@ async function poll() {
           .where(and(eq(workflowSteps.workflowVersionId, version.id), eq(workflowSteps.type, "rss_source"))).limit(1);
         if (!source) continue;
         const urls = Array.isArray(source.config.feedUrls) ? source.config.feedUrls : [source.config.feedUrl];
-        if (!urls.length) continue;
-        const rotation = Math.floor(Date.now() / 300_000) % urls.length;
+        const channelInputs = Array.isArray(source.config.eitaaChannels) ? source.config.eitaaChannels : [];
+        const rotation = urls.length ? Math.floor(Date.now() / 300_000) % urls.length : 0;
         const feedOrder = [...urls.slice(rotation), ...urls.slice(0, rotation)];
         let queuedCount = 0;
         for (const feedUrl of feedOrder.slice(0, 10)) {
         try {
-        if (typeof feedUrl !== "string") continue;
+        if (typeof feedUrl !== "string" || !feedUrl.trim()) continue;
         const url = publicFeedUrl(feedUrl);
         const response = await fetch(url, { signal: AbortSignal.timeout(15000), redirect: "error" });
         if (!response.ok) throw new Error(`RSS returned ${response.status}`);
@@ -75,39 +104,30 @@ async function poll() {
         const entries = feed.rss?.channel?.item ?? feed.feed?.entry ?? [];
         const items = Array.isArray(entries) ? entries.slice(0, 3) : [entries];
         for (const item of items.reverse()) {
-          if (queuedCount >= 3) break;
+          if (queuedCount >= (channelInputs.length ? 2 : 3)) break;
           const title = stringValue(item?.title).trim();
           const link = stringValue(item?.link).trim();
           const summary = stringValue(item?.description ?? item?.summary ?? item?.["content:encoded"]).replace(/<[^>]+>/g, " ").trim();
           if (!title || !link) continue;
-          const itemKey = createHash("sha256").update(link).digest("hex");
-          const legacyKey = createHash("sha256").update(stringValue(item.guid ?? item.id) || link).digest("hex");
-          if (legacyKey !== itemKey) {
-            const [seen] = await db.select({ id: newsItems.id }).from(newsItems)
-              .where(and(eq(newsItems.workflowId, workflow.id), inArray(newsItems.itemKey, [itemKey, legacyKey]))).limit(1);
-            if (seen) continue;
-          }
-          const [claimed] = await db.insert(newsItems).values({ workflowId: workflow.id, itemKey })
-            .onConflictDoNothing().returning();
-          if (!claimed) continue;
-          const [run] = await db.insert(runs).values({ workflowId: workflow.id, workflowVersionId: version.id,
-            trigger: "rss", input: { title, text: summary || title, url: link, imageUrl: imageFromEntry(item) }, status: "queued" }).returning();
-          await db.update(newsItems).set({ runId: run.id }).where(eq(newsItems.id, claimed.id));
-          await db.insert(runEvents).values({ runId: run.id, type: "run_started", message: "RSS item queued" });
-          try {
-            await queue.add("execute-workflow", { runId: run.id, workflowId: workflow.id,
-              workflowVersionId: version.id }, { jobId: run.id, attempts: 2, removeOnComplete: 1000 });
-            queuedCount++;
-          } catch (error) {
-            await db.update(runs).set({ status: "failed", output: { error: { message: "Queue unavailable" } },
-              finishedAt: new Date() }).where(eq(runs.id, run.id));
-            await db.delete(newsItems).where(eq(newsItems.id, claimed.id));
-            throw error;
-          }
+          if (await queueItem(workflow.id, version.id, title, summary, link,
+            imageFromEntry(item), stringValue(item.guid ?? item.id))) queuedCount++;
         }
         } catch (error) {
           console.error(`RSS poll failed for workflow ${workflow.id}, feed ${feedUrl}`, error);
         }
+        }
+        const channelRotation = channelInputs.length ? Math.floor(Date.now() / 300_000) % channelInputs.length : 0;
+        const channelOrder = [...channelInputs.slice(channelRotation), ...channelInputs.slice(0, channelRotation)];
+        for (const input of channelOrder.slice(0, 10)) {
+          try {
+            if (typeof input !== "string") continue;
+            const handle = channelHandle(input);
+            const posts = await fetchEitaaPosts(handle);
+            for (const post of posts) {
+              if (queuedCount >= 3) break;
+              if (await queueItem(workflow.id, version.id, post.title, post.text, post.url, post.imageUrl)) queuedCount++;
+            }
+          } catch (error) { console.error(`Eitaa poll failed for workflow ${workflow.id}, channel ${input}`, error); }
         }
       } catch (error) {
         console.error(`RSS poll failed for workflow ${workflow.id}`, error);
