@@ -256,6 +256,32 @@ export async function workflowRoutes(app: FastifyInstance) {
     return { workflow, version, steps, connections };
   });
 
+  app.delete("/workflows/:workflowId", async (request, reply) => {
+    const { workflowId } = z.object({ workflowId: z.string().uuid() }).parse(request.params);
+
+    const result = await db.transaction(async (tx) => {
+      const [workflow] = await tx.select().from(workflows).where(and(
+        eq(workflows.id, workflowId),
+        eq(workflows.workspaceId, request.auth.workspaceId),
+      )).for("update").limit(1);
+
+      if (!workflow) return "not_found";
+      if (workflow.status === "active") return "active";
+
+      const [previousRun] = await tx.select({ id: runs.id }).from(runs)
+        .where(eq(runs.workflowId, workflowId)).limit(1);
+      if (previousRun) return "has_runs";
+
+      await tx.delete(workflows).where(eq(workflows.id, workflowId));
+      return "deleted";
+    });
+
+    if (result === "not_found") return reply.code(404).send({ error: "workflow_not_found" });
+    if (result === "active") return reply.code(409).send({ error: "workflow_active" });
+    if (result === "has_runs") return reply.code(409).send({ error: "workflow_has_runs" });
+    return reply.code(204).send();
+  });
+
   app.put("/workflows/:workflowId", async (request, reply) => {
     const { workflowId } = z
       .object({ workflowId: z.string().uuid() })
