@@ -5,17 +5,6 @@ import { connection } from "./queue";
 
 const publicationQueue = new Queue("publication-jobs", { connection });
 
-function sourceLink(value: string): string {
-  try {
-    const url = new URL(value);
-    if (url.hostname === "tasnimnews.ir" || url.hostname === "www.tasnimnews.ir") {
-      const match = url.pathname.match(/^(\/fa\/news\/\d{4}\/\d{2}\/\d{2}\/\d+)(?:\/.*)?$/);
-      if (match) return `${url.origin}${match[1]}`;
-    }
-  } catch { /* Preserve the original value when it is not a URL. */ }
-  return value;
-}
-
 export async function enqueueAutoPublication(runId: string) {
   const db = getDb();
   const [row] = await db.select({ run: runs, workspaceId: workflows.workspaceId })
@@ -44,7 +33,7 @@ export async function enqueueAutoPublication(runId: string) {
     eq(contentVariants.contentItemId, content.id), eq(contentVariants.channel, "eitaa"))).limit(1);
   if (!variant) {
     [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: "eitaa",
-      title: content.title, body: generated.url ? `${generated.text}\n\nمنبع: ${sourceLink(generated.url)}` : generated.text,
+      title: content.title, body: generated.text,
       settings: { imageUrl: generated.imageUrl ?? null }, status: "approved", generatedBy: "ai" }).returning();
   }
   let [publication] = await db.select().from(publications)
