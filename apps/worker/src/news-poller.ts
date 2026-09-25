@@ -6,6 +6,7 @@ import { XMLParser } from "fast-xml-parser";
 import { getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
 import { connection } from "./queue";
 import { channelHandle, fetchEitaaPosts } from "./eitaa-source";
+import { baleHandle, fetchBalePosts } from "./bale-source";
 
 const queue = new Queue("workflow-runs", { connection });
 const parser = new XMLParser({ ignoreAttributes: false, processEntities: true });
@@ -46,9 +47,9 @@ function publicFeedUrl(value: string) {
 }
 
 async function queueItem(workflowId: string, versionId: string, title: string, summary: string,
-  link: string, imageUrl: string | null, legacyId?: string): Promise<boolean> {
+  link: string, imageUrl: string | null, legacyId?: string, uniqueId?: string): Promise<boolean> {
   const db = getDb();
-  const itemKey = createHash("sha256").update(link).digest("hex");
+  const itemKey = createHash("sha256").update(uniqueId ?? link).digest("hex");
   const legacyKey = createHash("sha256").update(legacyId || link).digest("hex");
   if (legacyKey !== itemKey) {
     const [seen] = await db.select({ id: newsItems.id }).from(newsItems)
@@ -90,6 +91,7 @@ async function poll() {
         if (!source) continue;
         const urls = Array.isArray(source.config.feedUrls) ? source.config.feedUrls : [source.config.feedUrl];
         const channelInputs = Array.isArray(source.config.eitaaChannels) ? source.config.eitaaChannels : [];
+        const baleInputs = Array.isArray(source.config.baleChannels) ? source.config.baleChannels : [];
         const rotation = urls.length ? Math.floor(Date.now() / 300_000) % urls.length : 0;
         const feedOrder = [...urls.slice(rotation), ...urls.slice(0, rotation)];
         let queuedCount = 0;
@@ -104,7 +106,7 @@ async function poll() {
         const entries = feed.rss?.channel?.item ?? feed.feed?.entry ?? [];
         const items = Array.isArray(entries) ? entries.slice(0, 3) : [entries];
         for (const item of items.reverse()) {
-          if (queuedCount >= (channelInputs.length ? 2 : 3)) break;
+          if (queuedCount >= (channelInputs.length || baleInputs.length ? 1 : 3)) break;
           const title = stringValue(item?.title).trim();
           const link = stringValue(item?.link).trim();
           const summary = stringValue(item?.description ?? item?.summary ?? item?.["content:encoded"]).replace(/<[^>]+>/g, " ").trim();
@@ -124,10 +126,24 @@ async function poll() {
             const handle = channelHandle(input);
             const posts = await fetchEitaaPosts(handle);
             for (const post of posts) {
-              if (queuedCount >= 3) break;
+              if (queuedCount >= (baleInputs.length ? 2 : 3)) break;
               if (await queueItem(workflow.id, version.id, post.title, post.text, post.url, post.imageUrl)) queuedCount++;
             }
           } catch (error) { console.error(`Eitaa poll failed for workflow ${workflow.id}, channel ${input}`, error); }
+        }
+        const baleRotation = baleInputs.length ? Math.floor(Date.now() / 300_000) % baleInputs.length : 0;
+        const baleOrder = [...baleInputs.slice(baleRotation), ...baleInputs.slice(0, baleRotation)];
+        for (const input of baleOrder.slice(0, 10)) {
+          try {
+            if (typeof input !== "string") continue;
+            const handle = baleHandle(input);
+            const posts = await fetchBalePosts(handle);
+            for (const post of posts) {
+              if (queuedCount >= 3) break;
+              if (await queueItem(workflow.id, version.id, post.title, post.text, post.url,
+                post.imageUrl, undefined, `bale:${handle}:${post.id}`)) queuedCount++;
+            }
+          } catch (error) { console.error(`Bale poll failed for workflow ${workflow.id}, channel ${input}`, error); }
         }
       } catch (error) {
         console.error(`RSS poll failed for workflow ${workflow.id}`, error);
