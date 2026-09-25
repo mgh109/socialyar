@@ -12,7 +12,7 @@ import { authRoutes } from "./routes/auth";
 import { aiSettingsRoutes } from "./routes/ai-settings";
 import { authPlugin } from "./auth";
 import { closeQueue } from "./queue";
-
+ 
 const app = Fastify({ logger: true });
 
 await app.register(cors, {
