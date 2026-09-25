@@ -15,12 +15,12 @@ const manualSteps: Step[] = [
   { key: "draft", type: "draft", name: "پیش‌نویس", subtitle: "قابل ویرایش در استودیو", config: {} },
 ];
 const autoSteps: Step[] = [
-  { key: "rss", type: "rss_source", name: "منبع خبر", subtitle: "خوراک RSS", config: { feedUrl: "" } },
+  { key: "rss", type: "rss_source", name: "منبع خبر", subtitle: "RSS و کانال عمومی ایتا", config: { feedUrl: "", eitaaChannels: [] } },
   { key: "ai", type: "ai", name: "بازنویسی AI", subtitle: "مدل انتخاب‌شده در تنظیمات", config: {} },
   { key: "publish", type: "publish", name: "انتشار ایتا", subtitle: "کانال متصل", config: { accountId: "" } },
 ];
 const labels: Record<string, string> = { rss_source: "RSS", manual_input: "ورودی", ai: "AI", human_approval: "تأیید", draft: "متن", publish: "ایتا" };
-const errors: Record<string, string> = { invalid_rss_url: "نشانی RSS باید HTTPS عمومی باشد", eitaa_account_required: "کانال ایتا را انتخاب کن", eitaa_account_not_found: "اتصال ایتا معتبر نیست", ai_token_not_configured: "توکن AI را تنظیم کن", auto_workflow_requires_rss_ai_and_eitaa_in_order: "ابتدا منبع RSS و سپس مرحله‌های موردنظر را اضافه کن" };
+const errors: Record<string, string> = { invalid_eitaa_source: "شناسهٔ کانال عمومی ایتا معتبر نیست", invalid_rss_url: "نشانی RSS باید HTTPS عمومی باشد", eitaa_account_required: "کانال ایتا را انتخاب کن", eitaa_account_not_found: "اتصال ایتا معتبر نیست", ai_token_not_configured: "توکن AI را تنظیم کن", auto_workflow_requires_rss_ai_and_eitaa_in_order: "ابتدا منبع خبر و سپس مرحله‌های موردنظر را اضافه کن" };
 const availableTypes = ["rss_source", "manual_input", "ai", "human_approval", "draft", "publish"];
 const upcomingChannels = ["اینستاگرام", "تلگرام", "بله", "X"];
 
@@ -72,11 +72,14 @@ export function WorkflowBuilder() {
   const sourceConfig = steps.find((step) => step.type === "rss_source")?.config;
   const feedUrls = Array.isArray(sourceConfig?.feedUrls) ? sourceConfig.feedUrls.map(String) : [String(sourceConfig?.feedUrl ?? "")];
   const feedUrl = feedUrls[0] ?? "";
+  const eitaaChannels = Array.isArray(sourceConfig?.eitaaChannels) ? sourceConfig.eitaaChannels.map(String) : [];
   const accountId = String(steps.find((step) => step.type === "publish")?.config.accountId ?? "");
   const updateConfig = (key: string, field: string, value: string) => setSteps((current) => current.map((step) =>
     step.key === key ? { ...step, config: { ...step.config, [field]: value } } : step));
   const updateFeeds = (key: string, urls: string[]) => setSteps((current) => current.map((step) =>
     step.key === key ? { ...step, config: { ...step.config, feedUrl: urls[0] ?? "", feedUrls: urls } } : step));
+  const updateChannels = (key: string, channels: string[]) => setSteps((current) => current.map((step) =>
+    step.key === key ? { ...step, config: { ...step.config, eitaaChannels: channels } } : step));
   const validOrder = (items: Step[]) => {
     const types = items.map((item) => item.type);
     if (!types.length) return true;
@@ -117,8 +120,11 @@ export function WorkflowBuilder() {
     try {
       if (!name.trim()) throw new Error("نام جریان را وارد کن");
       if (!validOrder(steps)) throw new Error("ترتیب مراحل جریان معتبر نیست");
-      if (active && (mode !== "auto" || steps.length < 2 || feedUrls.some((url) => !url.trim()))) throw new Error("برای فعال‌سازی، آدرس همهٔ خوراک‌های RSS را وارد کن");
-      if (active && new Set(feedUrls.map((url) => url.trim())).size !== feedUrls.length) throw new Error("آدرس تکراری را از منابع حذف کن");
+      const filledFeeds = feedUrls.map((url) => url.trim()).filter(Boolean);
+      if (active && (mode !== "auto" || steps.length < 2 || !filledFeeds.length && !eitaaChannels.length ||
+        feedUrls.some((url) => !url.trim()) && filledFeeds.length > 0 || eitaaChannels.some((channel) => !channel.trim())))
+        throw new Error("برای فعال‌سازی، آدرس منابع را کامل وارد کن");
+      if (active && new Set(filledFeeds).size !== filledFeeds.length) throw new Error("آدرس تکراری را از منابع حذف کن");
       if (active && steps.some((step) => step.type === "ai") && !aiReady) throw new Error("برای اجرای کارت AI، توکن هوش مصنوعی را تنظیم کن");
       if (active && steps.some((step) => step.type === "publish") && !accountId) throw new Error("برای انتشار، کانال ایتا را انتخاب کن");
       const connections = steps.slice(0, -1).map((step, index) => ({ sourceKey: step.key, targetKey: steps[index + 1].key }));
@@ -177,7 +183,7 @@ export function WorkflowBuilder() {
             onDrop={(event) => { event.preventDefault(); if (dragIndex !== null) move(dragIndex, index); setDragIndex(null); }}>
             <button className="builder-node-select" onClick={() => setSelectedKey(step.key)} aria-pressed={selected?.key === step.key}>
               <span className="builder-node-top"><span className="builder-node-icon">{labels[step.type] ?? "کارت"}</span><span>۰{index + 1}</span></span>
-              <strong>{step.name}</strong><small>{step.type === "rss_source" && feedUrl ? feedUrls.length > 1 ? `${feedUrls.length} خوراک RSS` : (() => { try { return new URL(feedUrl).hostname; } catch { return step.subtitle; } })() : step.type === "publish" && accountId ? eitaaAccounts.find((a) => a.id === accountId)?.displayName ?? step.subtitle : step.subtitle}</small>
+              <strong>{step.name}</strong><small>{step.type === "rss_source" ? `${feedUrls.filter(Boolean).length} RSS · ${eitaaChannels.filter(Boolean).length} کانال ایتا` : step.type === "publish" && accountId ? eitaaAccounts.find((a) => a.id === accountId)?.displayName ?? step.subtitle : step.subtitle}</small>
             </button><div className="builder-node-actions">
               <button onClick={() => move(index, index - 1)} disabled={!canMove(index, index - 1)} aria-label={`انتقال ${step.name} به راست`}>→</button>
               <button onClick={() => move(index, index + 1)} disabled={!canMove(index, index + 1)} aria-label={`انتقال ${step.name} به چپ`}>←</button>
@@ -197,7 +203,12 @@ export function WorkflowBuilder() {
             onChange={(event) => updateFeeds(selected.key, feedUrls.map((item, i) => i === index ? event.target.value : item))} />
           {feedUrls.length > 1 ? <button type="button" onClick={() => updateFeeds(selected.key, feedUrls.filter((_, i) => i !== index))} aria-label={`حذف خوراک ${index + 1}`}>×</button> : null}</div>)}
           <button type="button" className="builder-add-feed" disabled={feedUrls.length >= 10} onClick={() => updateFeeds(selected.key, [...feedUrls, ""])}>+ افزودن منبع RSS</button>
-          <small>هر خوراک هر ۵ دقیقه بررسی می‌شود؛ خبر تکراری در همین جریان دوباره ارسال نمی‌شود.</small></div>
+          <strong>کانال‌های عمومی ایتا</strong>{eitaaChannels.map((channel, index) => <div className="builder-feed-row" key={index}>
+            <input dir="ltr" aria-label={`کانال ایتا ${index + 1}`} placeholder="@channel_name یا https://eitaa.com/channel_name" value={channel}
+              onChange={(event) => updateChannels(selected.key, eitaaChannels.map((item, i) => i === index ? event.target.value : item))} />
+            <button type="button" onClick={() => updateChannels(selected.key, eitaaChannels.filter((_, i) => i !== index))} aria-label={`حذف کانال ${index + 1}`}>×</button></div>)}
+          <button type="button" className="builder-add-feed" disabled={eitaaChannels.length >= 10} onClick={() => updateChannels(selected.key, [...eitaaChannels, ""])}>+ افزودن کانال ایتا</button>
+          <small>فقط کانال عمومی قابل خواندن است. منابع هر ۵ دقیقه بررسی می‌شوند و خبر تکراری در همین جریان دوباره ارسال نمی‌شود.</small></div>
         : selected?.type === "publish" ? <><label><span>کانال ایتا</span><select value={accountId} onChange={(event) => updateConfig(selected.key, "accountId", event.target.value)}>
           <option value="">انتخاب کانال</option>{eitaaAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}</select></label>
           {!eitaaAccounts.length ? <Link className="builder-note" href="/connections">+ ابتدا کانال ایتا را وصل کن</Link> : null}</>
