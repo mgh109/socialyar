@@ -21,6 +21,20 @@ function stringValue(value: unknown): string {
   return "";
 }
 
+function imageFromEntry(item: Record<string, any>): string | null {
+  const candidates = [item["media:content"], item["media:thumbnail"], item.enclosure, item.image];
+  for (const candidate of candidates) {
+    const entry = Array.isArray(candidate) ? candidate[0] : candidate;
+    const mediaType = entry?.["@_type"] ?? entry?.type;
+    if (typeof mediaType === "string" && !mediaType.startsWith("image/")) continue;
+    const value = stringValue(entry?.["@_url"] ?? entry?.url ?? entry);
+    try {
+      if (new URL(value).protocol === "https:") return value;
+    } catch { /* No usable image in this field. */ }
+  }
+  return null;
+}
+
 function publicFeedUrl(value: string) {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.port ||
@@ -62,7 +76,7 @@ async function poll() {
             .onConflictDoNothing().returning();
           if (!claimed) continue;
           const [run] = await db.insert(runs).values({ workflowId: workflow.id, workflowVersionId: version.id,
-            trigger: "rss", input: { title, text: summary || title, url: link }, status: "queued" }).returning();
+            trigger: "rss", input: { title, text: summary || title, url: link, imageUrl: imageFromEntry(item) }, status: "queued" }).returning();
           await db.update(newsItems).set({ runId: run.id }).where(eq(newsItems.id, claimed.id));
           await db.insert(runEvents).values({ runId: run.id, type: "run_started", message: "RSS item queued" });
           try {
