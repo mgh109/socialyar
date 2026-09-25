@@ -193,7 +193,11 @@ export function WorkflowBuilder() {
         : selected?.type === "publish" ? <><label><span>کانال ایتا</span><select value={accountId} onChange={(event) => updateConfig(selected.key, "accountId", event.target.value)}>
           <option value="">انتخاب کانال</option>{eitaaAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}</select></label>
           {!eitaaAccounts.length ? <Link className="builder-note" href="/connections">+ ابتدا کانال ایتا را وصل کن</Link> : null}</>
-        : selected?.type === "ai" ? <Link className="builder-note" href="/settings/ai">{aiReady ? "✓ توکن AI تنظیم شده · تغییر مدل" : "+ توکن و مدل AI را تنظیم کن"}</Link>
+        : selected?.type === "ai" ? <><label><span>دستور بازنویسی این جریان</span><textarea value={String(selected.config.instructions ?? "")}
+          onChange={(event) => updateConfig(selected.key, "instructions", event.target.value)} maxLength={3000}
+          placeholder="مثلاً: خبر را در دو جملهٔ کوتاه و بی‌طرف برای کانال ایتا بازنویسی کن. نام‌ها و اعداد را حفظ کن." /></label>
+          <small className="builder-note">دستورهای این کارت برای هر خبر همین جریان اجرا می‌شوند. اطلاعات تازه خارج از متن منبع ساخته نمی‌شود.</small>
+          <Link className="builder-note" href="/settings/ai">{aiReady ? "✓ توکن AI تنظیم شده · تغییر مدل" : "+ توکن و مدل AI را تنظیم کن"}</Link></>
         : selected?.type === "manual_input" ? <label><span>متن ورودی</span><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="متن خبر یا موضوع را بنویس" /></label>
         : selected ? <div className="builder-help"><p>{selected.type === "human_approval" ? "هر خبر پیش از ادامه منتظر تأیید تو می‌ماند." : "متن خروجی برای مشاهده و ویرایش در استودیو نگهداری می‌شود."}</p></div> : null}
         {mode === "auto" && !autoEnabled && steps.length ? <div className="builder-help"><strong>پیش از فعال‌سازی</strong><p>برای AI توکن همان سرویس و برای انتشار، کانال ایتا را تنظیم کن. کارت‌هایی را که لازم نداری اضافه نکن.</p></div> : null}

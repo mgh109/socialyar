@@ -83,7 +83,7 @@ export async function executeRun(input: ExecuteRunInput) {
         if (step.type === "source" || step.type === "manual_input" || step.type === "rss_source") {
           const text = run.input.text ?? run.input.prompt;
           if (typeof text !== "string" || !text.trim()) throw new Error("A text input is required");
-          output = { text: text.trim(), title: run.input.title ?? null, url: run.input.url ?? null };
+          output = { text: text.trim(), title: run.input.title ?? null, url: run.input.url ?? null, imageUrl: run.input.imageUrl ?? null };
         } else if (step.type === "ai") {
           const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows)
             .where(eq(workflows.id, run.workflowId)).limit(1);
@@ -91,16 +91,17 @@ export async function executeRun(input: ExecuteRunInput) {
             .where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
           if (!settings) throw new Error("AI token is not configured for this workspace");
           const upstream = [...ordered.slice(0, ordered.indexOf(step))].reverse()
-            .map((previous) => outputs[previous.key] as { text?: string; title?: string; url?: string } | undefined)
+            .map((previous) => outputs[previous.key] as { text?: string; title?: string; url?: string; imageUrl?: string } | undefined)
             .find((value) => typeof value?.text === "string");
           if (!upstream?.text) throw new Error("AI step needs text from the previous step");
           const text = await generateNewsDraft({ provider: settings.provider as AIConnection["provider"],
             model: settings.model, token: decryptSecret(settings.encryptedToken) },
-          { title: upstream.title || "خبر", text: upstream.text, url: upstream.url });
-          output = { text, title: upstream.title ?? null, url: upstream.url ?? null };
+          { title: upstream.title || "خبر", text: upstream.text, url: upstream.url },
+          typeof step.config.instructions === "string" ? step.config.instructions : undefined);
+          output = { text, title: upstream.title ?? null, url: upstream.url ?? null, imageUrl: upstream.imageUrl ?? null };
         } else if (step.type === "publish") {
           const upstream = [...ordered.slice(0, ordered.indexOf(step))].reverse()
-            .map((previous) => outputs[previous.key] as { text?: string; title?: string; url?: string } | undefined)
+            .map((previous) => outputs[previous.key] as { text?: string; title?: string; url?: string; imageUrl?: string } | undefined)
             .find((value) => typeof value?.text === "string");
           if (!upstream?.text) throw new Error("Publish step needs text from the previous step");
           output = { ...upstream, queuedForPublication: true };

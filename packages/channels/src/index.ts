@@ -1,4 +1,6 @@
 import type { Channel } from "@socialyar/shared";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 
 export type ChannelCredentials = Record<string, unknown>;
 
@@ -7,6 +9,7 @@ export type PublishRequest = {
   channel: Channel;
   title?: string | null;
   content: string;
+  imageUrl?: string | null;
   credentials: ChannelCredentials;
   externalAccountId?: string | null;
 };
@@ -140,11 +143,42 @@ async function publishWebsite(
 async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
   const botToken = requiredString(request.credentials, "botToken");
   const chatId = requiredString(request.credentials, "chatId");
-  const response = await fetch(`https://eitaayar.ir/api/${encodeURIComponent(botToken)}/sendMessage`, {
+  const message = request.title ? `${request.title}\n\n${request.content}` : request.content;
+  let image: Blob | null = null;
+  if (request.imageUrl) {
+    try {
+      const url = new URL(request.imageUrl);
+      if (url.protocol !== "https:" || url.username || url.password || url.port || isIP(url.hostname)) throw new Error("Invalid image URL");
+      const addresses = await lookup(url.hostname, { all: true });
+      if (!addresses.length || addresses.some(({ address, family }) => family !== 4 ||
+        /^(?:0\.|10\.|127\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|198\.18\.|198\.19\.|22[4-9]\.|23\d\.|24\d\.|25\d\.)/.test(address))) {
+        throw new Error("Image host is not public IPv4");
+      }
+      const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(10000) });
+      const length = Number(response.headers.get("content-length") ?? 0);
+      const type = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+      if (!response.ok || !["image/jpeg", "image/png", "image/webp"].includes(type) || length > 5_000_000) throw new Error("Unsupported image");
+      if (!response.body) throw new Error("Image has no body");
+      const reader = response.body.getReader();
+      const chunks: ArrayBuffer[] = [];
+      let size = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 5_000_000) { await reader.cancel(); throw new Error("Image is too large"); }
+        chunks.push(Uint8Array.from(value).buffer as ArrayBuffer);
+      }
+      image = new Blob(chunks, { type });
+    } catch (error) { console.warn("Eitaa image unavailable; sending text", error); }
+  }
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  form.set(image ? "caption" : "text", message);
+  if (image) form.set("file", image, image.type === "image/png" ? "news.png" : image.type === "image/webp" ? "news.webp" : "news.jpg");
+  const response = await fetch(`https://eitaayar.ir/api/${encodeURIComponent(botToken)}/${image ? "sendFile" : "sendMessage"}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text: request.title
-      ? `${request.title}\n\n${request.content}` : request.content }),
+    body: form,
     signal: AbortSignal.timeout(20000),
   });
   const data = await response.json() as { ok?: boolean; description?: string; result?: { message_id?: number; chat?: { username?: string } } };

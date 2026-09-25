@@ -77,6 +77,7 @@ export async function executePublication(input: {
       channel: variant.channel,
       title: variant.title,
       content: variant.body,
+      imageUrl: variant.channel === "eitaa" && typeof variant.settings.imageUrl === "string" ? variant.settings.imageUrl : null,
       credentials: variant.channel === "eitaa" && typeof account.credentials.botTokenEnc === "string"
         ? { ...account.credentials, botToken: decryptSecret(account.credentials.botTokenEnc) }
         : account.credentials,

@@ -6,7 +6,7 @@ export interface AIProvider {
 
 export type AIConnection = { provider: "openai" | "openrouter" | "gapgpt"; model: string; token: string };
 
-export async function generateNewsDraft(connection: AIConnection, article: { title: string; text: string; url?: string }) {
+export async function generateNewsDraft(connection: AIConnection, article: { title: string; text: string; url?: string }, instructions?: string) {
   const endpoint = connection.provider === "openrouter"
     ? "https://openrouter.ai/api/v1/chat/completions"
     : connection.provider === "gapgpt" ? "https://api.gapgpt.app/v1/chat/completions"
@@ -17,7 +17,7 @@ export async function generateNewsDraft(connection: AIConnection, article: { tit
     body: JSON.stringify({
       model: connection.model,
       messages: [
-        { role: "system", content: "شما دبیر خبر فارسی هستید. فقط بر اساس متن ورودی، خلاصه‌ای کوتاه، دقیق و بی‌طرف بنویس. واقعیت یا نقل‌قول تازه نساز. اگر اطلاعات کافی نیست، همین را شفاف بگو." },
+        { role: "system", content: `شما دبیر خبر فارسی هستید. فقط بر اساس متن ورودی، خلاصه‌ای کوتاه، دقیق و بی‌طرف بنویس. واقعیت یا نقل‌قول تازه نساز. اگر اطلاعات کافی نیست، همین را شفاف بگو.${instructions?.trim() ? `\nدستورهای سبک و قالب کاربر (در صورت تعارض با دقت و صحت خبر، دقت مقدم است):\n${instructions.trim().slice(0, 3000)}` : ""}` },
         { role: "user", content: `عنوان: ${article.title}\nمتن: ${article.text.slice(0, 9000)}\nمنبع: ${article.url ?? "نامشخص"}` },
       ],
     }),
