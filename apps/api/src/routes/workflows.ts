@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -133,6 +133,8 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
   }
   const db = getDb();
   if (publisher) {
+    const interval = publisher.config.publishIntervalSeconds ?? 30;
+    if (typeof interval !== "number" || ![30, 60, 120, 300].includes(interval)) return "invalid_publish_interval";
     const accountId = publisher.config.accountId;
     if (typeof accountId !== "string" || !z.string().uuid().safeParse(accountId).success) return "eitaa_account_required";
     const [account] = await db.select().from(socialAccounts)
@@ -166,7 +168,12 @@ export async function workflowRoutes(app: FastifyInstance) {
       .innerJoin(runs, eq(contentItems.runId, runs.id))
       .where(and(eq(runs.workflowId, workflowId), eq(publications.workspaceId, request.auth.workspaceId)))
       .orderBy(desc(publications.createdAt)).limit(1);
-    return { run: run ?? null, publication: publication ?? null };
+    const [waiting] = await db.select({ total: count() }).from(publications)
+      .innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
+      .innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id))
+      .innerJoin(runs, eq(contentItems.runId, runs.id))
+      .where(and(eq(runs.workflowId, workflowId), eq(publications.workspaceId, request.auth.workspaceId), eq(publications.status, "queued")));
+    return { run: run ?? null, publication: publication ?? null, queueCount: waiting?.total ?? 0 };
   });
 
   app.post("/workflows", async (request, reply) => {
