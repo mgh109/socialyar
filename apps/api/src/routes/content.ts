@@ -52,7 +52,7 @@ function buildVariant(
       channel,
       format: "news",
       title,
-      body: `${title}\n\n${body}\n\nمنبع: خروجی Workflow`,
+      body: `${title}\n\n${body}`,
       hashtags: [],
       settings: {
         tone: "news",
