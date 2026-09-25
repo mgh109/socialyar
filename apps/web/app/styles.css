@@ -1150,3 +1150,16 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .builder-channels .channel-upcoming { color:var(--muted); opacity:.6; }
 @media(max-width:700px) { .builder-end-options { margin:10px 0 0; flex-direction:row; flex-wrap:wrap; justify-content:center; } }
 .builder-channels button.channel-upcoming { border:1px solid var(--border); background:var(--panel2); border-radius:8px; padding:6px 9px; font:inherit; font-size:11px; color:var(--muted); opacity:.6; cursor:not-allowed; }
+
+/* Keep the canvas in focus; secondary information stays available on demand. */
+.builder-workspace { padding-top:16px; padding-bottom:16px; }
+.builder-toolbar { align-items:center; margin-bottom:8px; }
+.builder-toolbar h1 { font-size:18px; }
+.builder-toolbar-actions .status-pill { padding:5px 9px; font-size:11px; }
+.builder-activity { border:0; background:transparent; padding:0 2px; margin-bottom:9px; min-height:24px; }
+.builder-canvas { min-height:max(570px,calc(100vh - 185px)); padding:26px 20px; }
+.builder-more { margin-top:10px; color:var(--muted); font-size:12px; }
+.builder-more summary { cursor:pointer; width:max-content; }
+.builder-more p { margin:8px 0; }
+.builder-more > div { display:flex; flex-wrap:wrap; gap:10px; }
+@media(max-width:700px) { .builder-canvas { min-height:440px; } }
