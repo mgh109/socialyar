@@ -2,6 +2,7 @@
   rules:
     - changes:
         - apps/api/**/*
+        - .env.example
         - .gitlab-ci.yml
 
 .web-rules: &web_rules
@@ -14,6 +15,7 @@
   rules:
     - changes:
         - apps/worker/**/*
+        - .env.example
         - .gitlab-ci.yml
 
 include:
