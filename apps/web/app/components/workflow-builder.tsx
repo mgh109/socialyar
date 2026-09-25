@@ -159,7 +159,7 @@ export function WorkflowBuilder() {
       </div></header>
     <div className="builder-layout">
       <section className="builder-workspace" aria-label="بوم جریان">
-        <div className="builder-toolbar"><div><h1>میز کار جریان</h1><p>از یک منبع شروع کن، سپس مرحله‌ها را به انتخاب خودت اضافه کن.</p></div>
+        <div className="builder-toolbar"><div><h1>میز کار جریان</h1></div>
           <div className="builder-toolbar-actions"><span className={`status-pill ${autoEnabled ? "is-live" : ""}`}>{statusText}</span>
             {steps.length && addOptions(steps.length - 1).length ? <button className="ghost-button" onClick={() => setInsertAt(insertAt === steps.length - 1 ? null : steps.length - 1)}>+ افزودن کارت</button> : null}</div></div>
         <div className="builder-activity"><strong>{activityLabel}</strong><span>{activity?.publication ? `${activity.publication.status === "published" ? "منتشر شد" : activity.publication.status === "failed" ? "نیاز به بررسی" : "در صف انتشار"} · ${new Date(activity.publication.publishedAt ?? activity.publication.createdAt).toLocaleString("fa-IR")}` : activity?.run ? `${activity.run.status} · ${new Date(activity.run.createdAt).toLocaleString("fa-IR")}` : "هنوز خبری پردازش نشده است"}</span>
@@ -182,8 +182,7 @@ export function WorkflowBuilder() {
             <button className="builder-insert-button" onClick={() => setInsertAt(insertAt === index ? null : index)} aria-label={`افزودن مرحله پس از ${step.name}`} aria-expanded={insertAt === index}>+</button>
             {insertAt === index ? <div className="builder-insert-options">{addOptions(index).map((type) => <button key={type} onClick={() => add(type, index)}>{type === "publish" ? "انتشار ایتا" : type === "draft" ? "پیش‌نویس" : type === "ai" ? "بازنویسی AI" : "تأیید انسانی"}</button>)}</div> : null}</div> : null}</div> : null}
         </div>)}{insertAt === steps.length - 1 && addOptions(steps.length - 1).length ? <div className="builder-end-options">{addOptions(steps.length - 1).map((type) => <button key={type} onClick={() => add(type, steps.length - 1)}>+ {type === "publish" ? "انتشار ایتا" : type === "draft" ? "پیش‌نویس" : type === "ai" ? "بازنویسی AI" : "تأیید انسانی"}</button>)}</div> : null}</div>}</div>
-        <div className="builder-hint">برای انتشار، کارت «انتشار ایتا» را به انتهای مسیر اضافه کن. انتشار به‌صورت پیش‌فرض در هیچ جریان تازه‌ای فعال نیست.</div>
-        <div className="builder-channels"><strong>کانال‌های انتشار</strong><div><span className="channel-ready">ایتا · قابل افزودن از کارت‌ها</span>{upcomingChannels.map((channel) => <button className="channel-upcoming" key={channel} disabled title="در نسخه‌های بعدی فعال می‌شود">{channel} · به‌زودی</button>)}</div></div>
+        <details className="builder-more"><summary>راهنمای انتشار و کانال‌ها</summary><p>برای انتشار، کارت «انتشار ایتا» را به انتهای مسیر اضافه کن. انتشار در جریان تازه خاموش است.</p><div><span>ایتا · فعال</span>{upcomingChannels.map((channel) => <span key={channel}>{channel} · به‌زودی</span>)}</div></details>
       </section>
       <aside className="builder-settings"><h2>تنظیمات جریان</h2><label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
         <div className="builder-help"><strong>روش اجرا</strong><p>{!steps.length ? "با انتخاب اولین کارت مشخص می‌شود." : mode === "auto" ? "خبر خودکار از RSS" : "ورودی دستی"}</p></div>
