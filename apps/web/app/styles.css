@@ -1163,3 +1163,11 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .builder-more p { margin:8px 0; }
 .builder-more > div { display:flex; flex-wrap:wrap; gap:10px; }
 @media(max-width:700px) { .builder-canvas { min-height:440px; } }
+.builder-feeds { display:flex; flex-direction:column; gap:9px; font-size:13px; }
+.builder-feed-row { display:flex; align-items:center; gap:6px; direction:ltr; }
+.builder-feed-row input { min-width:0; flex:1; }
+.builder-feed-row button { border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--muted); padding:9px 12px; cursor:pointer; }
+.builder-feed-row button:hover { color:var(--red); }
+.builder-add-feed { align-self:start; border:0; background:transparent; color:var(--accent-text); font:inherit; cursor:pointer; padding:5px 0; }
+.builder-add-feed:disabled { opacity:.5; cursor:default; }
+.builder-feeds small { color:var(--muted); line-height:1.7; }
