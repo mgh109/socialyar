@@ -112,11 +112,15 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
   }
   const feedUrls = Array.isArray(source.config.feedUrls) ? source.config.feedUrls : [source.config.feedUrl];
   const channels = source.config.eitaaChannels ?? [];
+  const baleChannels = source.config.baleChannels ?? [];
   if (!Array.isArray(channels) || channels.length > 10 || channels.some((value) => typeof value !== "string" ||
     !/^(?:https:\/\/eitaa\.com\/(?:s\/)?|@)?[a-zA-Z0-9_]{4,32}\/?$/.test(value.trim())) ||
     new Set(channels.map((value) => String(value).trim().replace(/^https:\/\/eitaa\.com\/(?:s\/)?|^@|\/$/g, "").toLowerCase())).size !== channels.length) return "invalid_eitaa_source";
+  if (!Array.isArray(baleChannels) || baleChannels.length > 10 || baleChannels.some((value) => typeof value !== "string" ||
+    !/^(?:https:\/\/ble\.ir\/(?:s\/)?|@)?[a-zA-Z0-9_]{4,32}\/?$/.test(value.trim())) ||
+    new Set(baleChannels.map((value) => String(value).trim().replace(/^https:\/\/ble\.ir\/(?:s\/)?|^@|\/$/g, "").toLowerCase())).size !== baleChannels.length) return "invalid_bale_source";
   const filledFeeds = feedUrls.filter((value) => typeof value === "string" && value.trim());
-  if (!filledFeeds.length && !channels.length || feedUrls.length > 10 ||
+  if (!filledFeeds.length && !channels.length && !baleChannels.length || feedUrls.length > 10 ||
     feedUrls.some((value) => typeof value !== "string" || !value.trim()) && filledFeeds.length > 0 ||
     new Set(filledFeeds).size !== filledFeeds.length) return "invalid_rss_url";
   for (const value of filledFeeds) {
