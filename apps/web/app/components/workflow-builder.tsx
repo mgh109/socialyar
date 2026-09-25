@@ -8,7 +8,7 @@ import { apiFetch } from "../lib/session";
 
 type Step = { key: string; type: string; name: string; subtitle: string; config: Record<string, unknown> };
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
-type Activity = { run: { id: string; status: string; createdAt: string } | null; publication: { status: string; createdAt: string; publishedAt: string | null; externalUrl: string | null } | null };
+type Activity = { run: { id: string; status: string; createdAt: string } | null; publication: { status: string; createdAt: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
 const manualSteps: Step[] = [
   { key: "input", type: "manual_input", name: "متن ورودی", subtitle: "ورود دستی متن", config: {} },
   { key: "review", type: "human_approval", name: "تأیید انسانی", subtitle: "بررسی پیش از ادامه", config: {} },
@@ -17,10 +17,10 @@ const manualSteps: Step[] = [
 const autoSteps: Step[] = [
   { key: "rss", type: "rss_source", name: "منبع خبر", subtitle: "RSS و کانال عمومی ایتا و بله", config: { feedUrl: "", eitaaChannels: [], baleChannels: [] } },
   { key: "ai", type: "ai", name: "بازنویسی AI", subtitle: "مدل انتخاب‌شده در تنظیمات", config: {} },
-  { key: "publish", type: "publish", name: "انتشار ایتا", subtitle: "کانال متصل", config: { accountId: "" } },
+  { key: "publish", type: "publish", name: "انتشار ایتا", subtitle: "کانال متصل", config: { accountId: "", publishIntervalSeconds: 30 } },
 ];
 const labels: Record<string, string> = { rss_source: "RSS", manual_input: "ورودی", ai: "AI", human_approval: "تأیید", draft: "متن", publish: "ایتا" };
-const errors: Record<string, string> = { invalid_bale_source: "شناسهٔ کانال عمومی بله معتبر نیست", invalid_eitaa_source: "شناسهٔ کانال عمومی ایتا معتبر نیست", invalid_rss_url: "نشانی RSS باید HTTPS عمومی باشد", eitaa_account_required: "کانال ایتا را انتخاب کن", eitaa_account_not_found: "اتصال ایتا معتبر نیست", ai_token_not_configured: "توکن AI را تنظیم کن", auto_workflow_requires_rss_ai_and_eitaa_in_order: "ابتدا منبع خبر و سپس مرحله‌های موردنظر را اضافه کن" };
+const errors: Record<string, string> = { invalid_publish_interval: "فاصلهٔ انتشار معتبر نیست", invalid_bale_source: "شناسهٔ کانال عمومی بله معتبر نیست", invalid_eitaa_source: "شناسهٔ کانال عمومی ایتا معتبر نیست", invalid_rss_url: "نشانی RSS باید HTTPS عمومی باشد", eitaa_account_required: "کانال ایتا را انتخاب کن", eitaa_account_not_found: "اتصال ایتا معتبر نیست", ai_token_not_configured: "توکن AI را تنظیم کن", auto_workflow_requires_rss_ai_and_eitaa_in_order: "ابتدا منبع خبر و سپس مرحله‌های موردنظر را اضافه کن" };
 const availableTypes = ["rss_source", "manual_input", "ai", "human_approval", "draft", "publish"];
 const upcomingChannels = ["اینستاگرام", "تلگرام", "بله", "X"];
 
@@ -77,6 +77,8 @@ export function WorkflowBuilder() {
   const accountId = String(steps.find((step) => step.type === "publish")?.config.accountId ?? "");
   const updateConfig = (key: string, field: string, value: string) => setSteps((current) => current.map((step) =>
     step.key === key ? { ...step, config: { ...step.config, [field]: value } } : step));
+  const updatePublishInterval = (key: string, seconds: number) => setSteps((current) => current.map((step) =>
+    step.key === key ? { ...step, config: { ...step.config, publishIntervalSeconds: seconds } } : step));
   const updateFeeds = (key: string, urls: string[]) => setSteps((current) => current.map((step) =>
     step.key === key ? { ...step, config: { ...step.config, feedUrl: urls[0] ?? "", feedUrls: urls } } : step));
   const updateChannels = (key: string, channels: string[]) => setSteps((current) => current.map((step) =>
@@ -176,7 +178,7 @@ export function WorkflowBuilder() {
         <div className="builder-toolbar"><div><h1>میز کار جریان</h1></div>
           <div className="builder-toolbar-actions"><span className={`status-pill ${autoEnabled ? "is-live" : ""}`}>{statusText}</span>
             {steps.length && addOptions(steps.length - 1).length ? <button className="ghost-button" onClick={() => setInsertAt(insertAt === steps.length - 1 ? null : steps.length - 1)}>+ افزودن کارت</button> : null}</div></div>
-        <div className="builder-activity"><strong>{activityLabel}</strong><span>{activity?.publication ? `${activity.publication.status === "published" ? "منتشر شد" : activity.publication.status === "failed" ? "نیاز به بررسی" : "در صف انتشار"} · ${new Date(activity.publication.publishedAt ?? activity.publication.createdAt).toLocaleString("fa-IR")}` : activity?.run ? `${activity.run.status} · ${new Date(activity.run.createdAt).toLocaleString("fa-IR")}` : "هنوز خبری پردازش نشده است"}</span>
+        <div className="builder-activity"><strong>{activityLabel}</strong><span>{activity?.publication ? `${activity.publication.status === "published" ? "منتشر شد" : activity.publication.status === "failed" ? "نیاز به بررسی" : "در صف انتشار"} · ${new Date(activity.publication.publishedAt ?? activity.publication.createdAt).toLocaleString("fa-IR")}` : activity?.run ? `${activity.run.status} · ${new Date(activity.run.createdAt).toLocaleString("fa-IR")}` : "هنوز خبری پردازش نشده است"}{activity?.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
           {activity?.publication?.status === "failed" ? <Link href="/analytics">بررسی خطا ←</Link> : activity?.publication?.externalUrl ? <a href={activity.publication.externalUrl} target="_blank" rel="noreferrer">دیدن خبر ↗</a> : null}</div>
         <div className="builder-canvas">{!steps.length ? <div className="builder-empty"><div className="builder-empty-icon">+</div><h2>جریان خودت را بساز</h2><p>بوم خالی است. یکی از منابع را انتخاب کن؛ بعد می‌توانی AI، تأیید، پیش‌نویس یا انتشار را به مسیر اضافه کنی.</p>
           <div className="builder-empty-actions"><button onClick={() => add("rss_source", -1)}>+ خبر از RSS</button><button onClick={() => add("manual_input", -1)}>+ ورودی دستی</button></div></div> : <div className="builder-node-list">{steps.map((step, index) => <div className="builder-stage" key={step.key}>
@@ -219,6 +221,9 @@ export function WorkflowBuilder() {
           <small>فقط کانال عمومی قابل خواندن است. منابع هر ۵ دقیقه بررسی می‌شوند و خبر تکراری در همین جریان دوباره ارسال نمی‌شود.</small></div>
         : selected?.type === "publish" ? <><label><span>کانال ایتا</span><select value={accountId} onChange={(event) => updateConfig(selected.key, "accountId", event.target.value)}>
           <option value="">انتخاب کانال</option>{eitaaAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}</select></label>
+          <label><span>فاصلهٔ ارسال خبرهای صف</span><select value={Number(selected.config.publishIntervalSeconds ?? 30)} onChange={(event) => updatePublishInterval(selected.key, Number(event.target.value))}>
+            <option value={30}>هر ۳۰ ثانیه</option><option value={60}>هر ۱ دقیقه</option><option value={120}>هر ۲ دقیقه</option><option value={300}>هر ۵ دقیقه</option>
+          </select></label><small className="builder-note">پایش منابع هر ۵ دقیقه انجام می‌شود؛ خبرهای آماده با این فاصله به کانال فرستاده می‌شوند.</small>
           {!eitaaAccounts.length ? <Link className="builder-note" href="/connections">+ ابتدا کانال ایتا را وصل کن</Link> : null}</>
         : selected?.type === "ai" ? <><label><span>دستور بازنویسی این جریان</span><textarea value={String(selected.config.instructions ?? "")}
           onChange={(event) => updateConfig(selected.key, "instructions", event.target.value)} maxLength={3000}
