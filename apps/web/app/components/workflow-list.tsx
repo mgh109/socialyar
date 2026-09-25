@@ -20,6 +20,31 @@ export function WorkflowList() {
   const [latest, setLatest] = useState<Publication | null>(null);
   const [failed, setFailed] = useState(0);
   const [queued, setQueued] = useState(0);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function deleteWorkflow(workflow: Workflow) {
+    if (!window.confirm(`جریان «${workflow.name}» حذف شود؟ این کار قابل بازگشت نیست.`)) return;
+    setDeletingId(workflow.id);
+    setMessage("");
+    try {
+      const response = await apiFetch(`/workflows/${workflow.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        if (body.error === "workflow_active") throw new Error("برای حذف این جریان، ابتدا آن را غیرفعال کن.");
+        if (body.error === "workflow_has_runs") throw new Error("این جریان سابقهٔ اجرا دارد و برای حفظ گزارش‌ها قابل حذف نیست.");
+        throw new Error(`حذف جریان ناموفق بود (${response.status})`);
+      }
+      setItems((current) => {
+        const remaining = current.filter((item) => item.id !== workflow.id);
+        if (!remaining.length) setMessage("هنوز جریانی ذخیره نکرده‌ای.");
+        return remaining;
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "حذف جریان ناموفق بود.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   useEffect(() => {
     void apiFetch("/workflows")
@@ -56,15 +81,26 @@ export function WorkflowList() {
         </div>
         <Link className="primary-link" href="/workflows/new">+ جریان جدید</Link>
       </div>
+      <nav className="workflow-shortcuts" aria-label="بخش‌های هور+">
+        <Link href="/approvals">تأیید محتوا</Link>
+        <Link href="/calendar">تقویم انتشار</Link>
+        <Link href="/connections">اتصال کانال‌ها</Link>
+        <Link href="/analytics">گزارش‌ها</Link>
+      </nav>
       {message ? <p role="status" className="workflow-library-message">{message}</p> : null}
       <div className="workflow-library-grid">
         {items.map((workflow) => (
-          <Link className="card workflow-library-card" key={workflow.id} href={`/workflows/new?id=${workflow.id}`}>
+          <article className="card workflow-library-card" key={workflow.id}>
             <span className="index">نسخه {workflow.currentVersion} · {workflow.status}</span>
             <h2>{workflow.name}</h2>
             <p>{workflow.description || "توضیحی ثبت نشده"}</p>
-            <span className="workflow-library-action">باز کردن جریان ←</span>
-          </Link>
+            <div className="workflow-library-actions">
+              <Link className="workflow-library-action" href={`/workflows/new?id=${workflow.id}`}>باز کردن جریان ←</Link>
+              <button type="button" className="workflow-delete" disabled={deletingId !== null} onClick={() => void deleteWorkflow(workflow)} aria-label={`حذف جریان ${workflow.name}`}>
+                {deletingId === workflow.id ? "در حال حذف..." : "حذف"}
+              </button>
+            </div>
+          </article>
         ))}
       </div>
     </section>
