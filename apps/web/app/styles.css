@@ -1010,15 +1010,19 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .workflow-library-heading p, .workflow-library-message { color:var(--muted); margin:0; font-size:15px; }
 .workflow-library-message { margin-top:26px; }
 .workflow-library-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:16px; margin-top:28px; }
-.workflow-library-card { display:block; min-height:180px; }
+.workflow-library-card { display:flex; flex-direction:column; min-height:180px; }
 .workflow-library-card h2 { margin:12px 0 5px; }
 .workflow-library-card p { font-size:14px; margin:0 0 18px; }
+.workflow-library-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:auto; }
 .workflow-library-action { color:var(--accent-text); font-weight:700; font-size:14px; }
-.workflow-shortcuts { display:flex; flex-wrap:wrap; gap:10px; max-width:1280px; margin:0 auto; padding:20px 28px 80px; }
+.workflow-delete { border:0; background:transparent; color:var(--muted); font:inherit; font-size:13px; cursor:pointer; padding:5px; }
+.workflow-delete:hover, .workflow-delete:focus-visible { color:#bd3640; text-decoration:underline; }
+.workflow-delete:disabled { opacity:.5; cursor:wait; }
+.workflow-shortcuts { display:flex; flex-wrap:wrap; gap:10px; margin:22px 0 0; }
 .workflow-shortcuts a { border:1px solid var(--border); border-radius:8px; background:var(--panel); padding:9px 14px; font-size:14px; }
 .prompt-box input { background:transparent; color:var(--text); border:0; outline:0; font:inherit; font-size:15px; min-width:0; width:100%; }
 .prompt-box:focus-within { border-color:var(--accent-text); }
-@media (max-width:700px) { .workflow-library { padding:28px 16px 8px; } .workflow-library-heading { align-items:start; flex-direction:column; } .workflow-shortcuts { padding-inline:16px; } }
+@media (max-width:700px) { .workflow-library { padding:28px 16px 8px; } .workflow-library-heading { align-items:start; flex-direction:column; } }
 
 /* Workspace canvas and account dock */
 .builder-page { min-height: 100vh; }
