@@ -110,12 +110,17 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
     (publisher && types.at(-1) !== "publish")) {
     return "auto_workflow_requires_rss_ai_and_eitaa_in_order";
   }
-  try {
-    const url = new URL(String(source.config.feedUrl));
-    if (url.protocol !== "https:" || url.username || url.password || url.port ||
-      isIP(url.hostname.replace(/[\[\]]/g, "")) !== 0 ||
-      /^(localhost|.*\.local|.*\.internal)$/i.test(url.hostname)) return "invalid_rss_url";
-  } catch { return "invalid_rss_url"; }
+  const feedUrls = Array.isArray(source.config.feedUrls) ? source.config.feedUrls : [source.config.feedUrl];
+  if (!feedUrls.length || feedUrls.length > 10 || feedUrls.some((value) => typeof value !== "string" || !value.trim()) ||
+    new Set(feedUrls).size !== feedUrls.length) return "invalid_rss_url";
+  for (const value of feedUrls) {
+    try {
+      const url = new URL(value as string);
+      if (url.protocol !== "https:" || url.username || url.password || url.port ||
+        isIP(url.hostname.replace(/[\[\]]/g, "")) !== 0 ||
+        /^(localhost|.*\.local|.*\.internal)$/i.test(url.hostname)) return "invalid_rss_url";
+    } catch { return "invalid_rss_url"; }
+  }
   const db = getDb();
   if (publisher) {
     const accountId = publisher.config.accountId;

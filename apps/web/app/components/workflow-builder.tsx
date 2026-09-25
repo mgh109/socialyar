@@ -69,10 +69,14 @@ export function WorkflowBuilder() {
 
   const eitaaAccounts = useMemo(() => accounts.filter((account) => account.channel === "eitaa" && account.isActive), [accounts]);
   const selected = steps.find((step) => step.key === selectedKey) ?? steps[0];
-  const feedUrl = String(steps.find((step) => step.type === "rss_source")?.config.feedUrl ?? "");
+  const sourceConfig = steps.find((step) => step.type === "rss_source")?.config;
+  const feedUrls = Array.isArray(sourceConfig?.feedUrls) ? sourceConfig.feedUrls.map(String) : [String(sourceConfig?.feedUrl ?? "")];
+  const feedUrl = feedUrls[0] ?? "";
   const accountId = String(steps.find((step) => step.type === "publish")?.config.accountId ?? "");
   const updateConfig = (key: string, field: string, value: string) => setSteps((current) => current.map((step) =>
     step.key === key ? { ...step, config: { ...step.config, [field]: value } } : step));
+  const updateFeeds = (key: string, urls: string[]) => setSteps((current) => current.map((step) =>
+    step.key === key ? { ...step, config: { ...step.config, feedUrl: urls[0] ?? "", feedUrls: urls } } : step));
   const validOrder = (items: Step[]) => {
     const types = items.map((item) => item.type);
     if (!types.length) return true;
@@ -113,7 +117,8 @@ export function WorkflowBuilder() {
     try {
       if (!name.trim()) throw new Error("نام جریان را وارد کن");
       if (!validOrder(steps)) throw new Error("ترتیب مراحل جریان معتبر نیست");
-      if (active && (mode !== "auto" || steps.length < 2 || !feedUrl)) throw new Error("برای فعال‌سازی، منبع RSS و دست‌کم یک مرحلهٔ دیگر لازم است");
+      if (active && (mode !== "auto" || steps.length < 2 || feedUrls.some((url) => !url.trim()))) throw new Error("برای فعال‌سازی، آدرس همهٔ خوراک‌های RSS را وارد کن");
+      if (active && new Set(feedUrls.map((url) => url.trim())).size !== feedUrls.length) throw new Error("آدرس تکراری را از منابع حذف کن");
       if (active && steps.some((step) => step.type === "ai") && !aiReady) throw new Error("برای اجرای کارت AI، توکن هوش مصنوعی را تنظیم کن");
       if (active && steps.some((step) => step.type === "publish") && !accountId) throw new Error("برای انتشار، کانال ایتا را انتخاب کن");
       const connections = steps.slice(0, -1).map((step, index) => ({ sourceKey: step.key, targetKey: steps[index + 1].key }));
@@ -172,7 +177,7 @@ export function WorkflowBuilder() {
             onDrop={(event) => { event.preventDefault(); if (dragIndex !== null) move(dragIndex, index); setDragIndex(null); }}>
             <button className="builder-node-select" onClick={() => setSelectedKey(step.key)} aria-pressed={selected?.key === step.key}>
               <span className="builder-node-top"><span className="builder-node-icon">{labels[step.type] ?? "کارت"}</span><span>۰{index + 1}</span></span>
-              <strong>{step.name}</strong><small>{step.type === "rss_source" && feedUrl ? (() => { try { return new URL(feedUrl).hostname; } catch { return step.subtitle; } })() : step.type === "publish" && accountId ? eitaaAccounts.find((a) => a.id === accountId)?.displayName ?? step.subtitle : step.subtitle}</small>
+              <strong>{step.name}</strong><small>{step.type === "rss_source" && feedUrl ? feedUrls.length > 1 ? `${feedUrls.length} خوراک RSS` : (() => { try { return new URL(feedUrl).hostname; } catch { return step.subtitle; } })() : step.type === "publish" && accountId ? eitaaAccounts.find((a) => a.id === accountId)?.displayName ?? step.subtitle : step.subtitle}</small>
             </button><div className="builder-node-actions">
               <button onClick={() => move(index, index - 1)} disabled={!canMove(index, index - 1)} aria-label={`انتقال ${step.name} به راست`}>→</button>
               <button onClick={() => move(index, index + 1)} disabled={!canMove(index, index + 1)} aria-label={`انتقال ${step.name} به چپ`}>←</button>
@@ -187,8 +192,12 @@ export function WorkflowBuilder() {
       <aside className="builder-settings"><h2>تنظیمات جریان</h2><label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
         <div className="builder-help"><strong>روش اجرا</strong><p>{!steps.length ? "با انتخاب اولین کارت مشخص می‌شود." : mode === "auto" ? "خبر خودکار از RSS" : "ورودی دستی"}</p></div>
         {selected ? <div className="builder-selected-title"><small>تنظیمات کارت انتخاب‌شده</small><strong>{selected.name}</strong><p>{selected.subtitle}</p></div> : <div className="builder-help"><p>اولین کارت را از بوم انتخاب کن تا تنظیماتش اینجا نمایش داده شود.</p></div>}
-        {selected?.type === "rss_source" ? <label><span>آدرس خوراک RSS</span><input type="url" dir="ltr" placeholder="https://example.com/feed.xml" value={feedUrl}
-          onChange={(event) => updateConfig(selected.key, "feedUrl", event.target.value)} /></label>
+        {selected?.type === "rss_source" ? <div className="builder-feeds"><strong>خوراک‌های RSS</strong>{feedUrls.map((url, index) => <div className="builder-feed-row" key={index}>
+          <input type="url" dir="ltr" aria-label={`آدرس خوراک ${index + 1}`} placeholder="https://example.com/feed.xml" value={url}
+            onChange={(event) => updateFeeds(selected.key, feedUrls.map((item, i) => i === index ? event.target.value : item))} />
+          {feedUrls.length > 1 ? <button type="button" onClick={() => updateFeeds(selected.key, feedUrls.filter((_, i) => i !== index))} aria-label={`حذف خوراک ${index + 1}`}>×</button> : null}</div>)}
+          <button type="button" className="builder-add-feed" disabled={feedUrls.length >= 10} onClick={() => updateFeeds(selected.key, [...feedUrls, ""])}>+ افزودن منبع RSS</button>
+          <small>هر خوراک هر ۵ دقیقه بررسی می‌شود؛ خبر تکراری در همین جریان دوباره ارسال نمی‌شود.</small></div>
         : selected?.type === "publish" ? <><label><span>کانال ایتا</span><select value={accountId} onChange={(event) => updateConfig(selected.key, "accountId", event.target.value)}>
           <option value="">انتخاب کانال</option>{eitaaAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}</select></label>
           {!eitaaAccounts.length ? <Link className="builder-note" href="/connections">+ ابتدا کانال ایتا را وصل کن</Link> : null}</>
