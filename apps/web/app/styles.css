@@ -138,6 +138,7 @@ html[data-theme="dark"] .brand-logo-dark { display:block; }
 .execution-node.done span { color:var(--green); }
 .execution-node.active { border-color:rgba(133,215,144,.55); box-shadow:0 0 0 1px rgba(133,215,144,.12) inset; }
 .execution-node.active span { color:var(--accent-text); }
+.run-step-error { margin:9px 0 0; color:var(--red); font-size:12px; line-height:1.7; overflow-wrap:anywhere; }
 .current-detail { margin-top:18px; display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
 .current-detail > div { border:1px solid var(--border); border-radius:9px; padding:14px; background:var(--panel3); }
 .micro-label { display:block; color:var(--muted); font-size:12px; margin-bottom:8px; }
