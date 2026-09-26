@@ -140,6 +140,8 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
         eq(socialAccounts.channel, "eitaa"), eq(socialAccounts.isActive, true))).limit(1);
     if (!account) return "eitaa_account_not_found";
   }
+  const accountIds = sorted.filter((step) => step.type === "publish").map((step) => step.config.accountId);
+  if (new Set(accountIds).size !== accountIds.length) return "duplicate_publish_channel";
   for (const filter of sorted.filter((step) => step.type === "filter")) {
     if (typeof filter.config.keywords !== "string" || !filter.config.keywords.trim() ||
       !["include", "exclude"].includes(String(filter.config.mode ?? "include"))) return "graph_invalid_filter";
