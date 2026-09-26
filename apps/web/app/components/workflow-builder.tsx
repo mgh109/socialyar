@@ -36,6 +36,7 @@ const errors: Record<string, string> = {
   duplicate_publish_channel: "هر کانال خروجی را فقط به یک کارت انتشار وصل کن.",
 };
 const nodeWidth = 190;
+const nodeHeight = 150;
 const freshKey = () => `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 function migrate(loaded: Step[], edges: Edge[]) {
@@ -72,6 +73,8 @@ export function WorkflowBuilder() {
   const [selectedKey, setSelectedKey] = useState("");
   const [connecting, setConnecting] = useState<string | null>(null);
   const [pointer, setPointer] = useState<Position | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
+  const [viewport, setViewport] = useState({ width: 800, height: 520 });
   const [name, setName] = useState("جریان جدید");
   const [prompt, setPrompt] = useState("");
   const [workflowId, setWorkflowId] = useState<string | null>(null);
@@ -84,6 +87,25 @@ export function WorkflowBuilder() {
   const selected = steps.find((step) => step.key === selectedKey);
   const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => step.type === "rss_source");
   const eitaaAccounts = accounts.filter((account) => account.channel === "eitaa" && account.isActive);
+  const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
+  const edgeName = (key: string) => {
+    const step = steps.find((item) => item.key === key);
+    if (!step) return "کارت حذف‌شده";
+    const kind = step.type === "rss_source" ? ` · ${sourceNames[String(step.config.sourceKind ?? "rss")]}` : "";
+    return `${step.name}${kind}`;
+  };
+  const surfaceWidth = Math.max(viewport.width, ...steps.map((step) => step.position.x + nodeWidth + 48), 540);
+  const surfaceHeight = Math.max(viewport.height, ...steps.map((step) => step.position.y + nodeHeight + 48), 400);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const measure = () => setViewport({ width: canvas.clientWidth, height: canvas.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     void Promise.all([apiFetch("/social-accounts"), apiFetch("/settings/ai")]).then(async ([a, ai]) => {
@@ -120,8 +142,8 @@ export function WorkflowBuilder() {
     const move = (event: PointerEvent) => {
       const drag = dragRef.current;
       if (drag) {
-        const x = Math.max(20, Math.min(1700, drag.x + event.clientX - drag.startX));
-        const y = Math.max(20, Math.min(1050, drag.y + event.clientY - drag.startY));
+        const x = Math.max(20, drag.x + event.clientX - drag.startX);
+        const y = Math.max(20, drag.y + event.clientY - drag.startY);
         setSteps((current) => current.map((step) => step.key === drag.key ? { ...step, position: { x, y } } : step));
       }
       if (connecting && canvasRef.current) {
@@ -143,7 +165,7 @@ export function WorkflowBuilder() {
       type === "filter" ? { keywords: "", mode: "include" } : {};
     const step = { key, type, name: type === "rss_source" ? "منبع" :
       types.find((item) => item.type === type)?.label ?? "کارت", config,
-      position: { x: 80 + count % 5 * 250, y: 105 + Math.floor(count / 5) * 210 } };
+      position: { x: Math.max(35, 560 - count % 3 * 250), y: 75 + Math.floor(count / 3) * 190 } };
     setSteps((current) => [...current, step]); setSelectedKey(key);
   };
   const update = (key: string, field: string, value: unknown) => setSteps((current) => current.map((step) =>
@@ -151,6 +173,7 @@ export function WorkflowBuilder() {
   const remove = (key: string) => {
     setSteps((current) => current.filter((step) => step.key !== key));
     setEdges((current) => current.filter((edge) => edge.sourceKey !== key && edge.targetKey !== key));
+    setSelectedEdge(null);
     if (selectedKey === key) setSelectedKey("");
     setMessage("کارت حذف شد؛ تغییرات را ذخیره کن.");
   };
@@ -169,7 +192,30 @@ export function WorkflowBuilder() {
       return next.filter((edge) => edge.sourceKey === key).some((edge) => visit(edge.targetKey, seen));
     };
     if (visit(targetKey)) { setMessage("اتصال حلقه‌ای مجاز نیست."); return; }
-    setEdges(next); setMessage("اتصال اضافه شد؛ تغییرات را ذخیره کن.");
+    setEdges(next); setSelectedEdge(edgeId({ sourceKey, targetKey })); setMessage("اتصال اضافه شد؛ تغییرات را ذخیره کن.");
+  };
+  const removeEdge = (edge: Edge) => {
+    setEdges((current) => current.filter((item) => edgeId(item) !== edgeId(edge)));
+    setSelectedEdge(null); setMessage("اتصال حذف شد؛ تغییرات را ذخیره کن.");
+  };
+  const arrange = () => {
+    const rank = new Map<string, number>();
+    const walk = (key: string, depth: number, seen = new Set<string>()) => {
+      if (seen.has(key) || depth <= (rank.get(key) ?? -1)) return;
+      rank.set(key, depth);
+      const next = new Set(seen); next.add(key);
+      edges.filter((edge) => edge.sourceKey === key).forEach((edge) => walk(edge.targetKey, depth + 1, next));
+    };
+    steps.filter(isSource).forEach((step) => walk(step.key, 0));
+    steps.forEach((step) => { if (!rank.has(step.key)) walk(step.key, 0); });
+    const levels = new Map<number, number>();
+    const maxDepth = Math.max(0, ...rank.values());
+    setSteps((current) => current.map((step) => {
+      const depth = rank.get(step.key) ?? 0;
+      const row = levels.get(depth) ?? 0; levels.set(depth, row + 1);
+      return { ...step, position: { x: 36 + (maxDepth - depth) * 250, y: 35 + row * 185 } };
+    }));
+    setMessage("کارت‌ها مرتب شدند؛ تغییرات را ذخیره کن.");
   };
   const save = async (active = autoEnabled) => {
     setBusy(true); setMessage("در حال ذخیره...");
@@ -215,31 +261,41 @@ export function WorkflowBuilder() {
             {autoEnabled ? "توقف پایش" : "فعال‌سازی خودکار"}</button>}
       </div></header>
     <div className="builder-layout"><section className="builder-workspace" aria-label="بوم جریان">
-      <div className="graph-toolbar"><div><h1>میز کار جریان</h1><p>کارت را بکش؛ خروجی هر کارت را به ورودی کارت‌های مجاز وصل کن.</p></div>
-        <span className="status-pill">{autoEnabled ? "● پایش فعال · هر ۵ دقیقه" : "○ پیش‌نویس"}</span></div>
-      <div className="graph-palette">{types.map((item) => <button key={`${item.type}-${item.kind ?? ""}`} type="button" onClick={() => add(item.type, item.kind)}>
-        + {item.label}</button>)}</div>
-      {activity ? <div className="builder-activity"><strong>آخرین فعالیت</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
+      <div className="graph-toolbar"><div><h1>میز کار جریان</h1><p>کارت‌ها را بکش و از خروجی به ورودی وصل کن.</p></div>
+        <div className="graph-toolbar-actions"><span className="status-pill">{autoEnabled ? "● پایش فعال · هر ۵ دقیقه" : "○ پیش‌نویس"}</span>
+          <button type="button" onClick={arrange} disabled={!steps.length}>مرتب‌سازی کارت‌ها</button></div></div>
+      <div className="graph-palette"><details><summary>+ افزودن کارت</summary><div className="graph-palette-menu">
+        {types.map((item) => <button key={`${item.type}-${item.kind ?? ""}`} type="button" onClick={(event) => {
+          add(item.type, item.kind); event.currentTarget.closest("details")?.removeAttribute("open");
+        }}>{item.label}</button>)}</div></details><span>منبع، پردازش و خروجی را به دلخواه اضافه کن.</span></div>
+      {activity && (activity.publication || activity.queueCount || activity.run) ? <div className="builder-activity"><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
         activity.publication?.status === "failed" ? "ارسال ناموفق" : activity.publication ? "در صف انتشار" : activity.run?.status ?? "بدون خبر"}
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
         {activity.publication?.externalUrl ? <a href={activity.publication.externalUrl} target="_blank" rel="noreferrer">دیدن خبر ↗</a> : null}</div> : null}
       <div className="graph-scroll" ref={canvasRef} onPointerUp={(event) => {
         if (connecting && event.target === event.currentTarget) { setConnecting(null); setPointer(null); }
-      }}><div className="graph-surface">
-        <svg className="graph-lines" width="1900" height="1200" aria-hidden="true">
+      }}><div className="graph-surface" style={{ width: surfaceWidth, height: surfaceHeight }}>
+        <svg className="graph-lines" width={surfaceWidth} height={surfaceHeight} role="group" aria-label="اتصال‌های جریان">
+          <defs><marker id="graph-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M 1 1 L 7 4 L 1 7" /></marker></defs>
           {edges.map((edge) => {
             const from = steps.find((step) => step.key === edge.sourceKey), to = steps.find((step) => step.key === edge.targetKey);
             if (!from || !to) return null;
-            return <path key={`${edge.sourceKey}-${edge.targetKey}`} d={stroke({ x: from.position.x, y: from.position.y + 70 },
-              { x: to.position.x + nodeWidth, y: to.position.y + 70 })} />;
+            const path = stroke({ x: from.position.x, y: from.position.y + 70 },
+              { x: to.position.x + nodeWidth, y: to.position.y + 70 });
+            return <g key={edgeId(edge)} className={`graph-edge ${selectedEdge === edgeId(edge) ? "selected" : ""}`}>
+              <path className="edge-visible" d={path} markerEnd="url(#graph-arrow)" />
+              <path className="edge-hit" d={path} role="button" tabIndex={0} aria-label={`اتصال ${edgeName(edge.sourceKey)} به ${edgeName(edge.targetKey)}`}
+                onClick={() => { setSelectedEdge(edgeId(edge)); setSelectedKey(""); }}
+                onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedEdge(edgeId(edge)); setSelectedKey(""); } }} />
+            </g>;
           })}
           {connecting && pointer && steps.find((step) => step.key === connecting) ? <path className="preview" d={stroke({
             x: steps.find((step) => step.key === connecting)!.position.x,
             y: steps.find((step) => step.key === connecting)!.position.y + 70 }, pointer)} /> : null}
         </svg>
-        {!steps.length ? <div className="graph-empty">بوم خالی است. از نوار بالا یک «منبع» اضافه کن.</div> : null}
+        {!steps.length ? <div className="graph-empty">بوم خالی است. از «افزودن کارت» شروع کن.</div> : null}
         {steps.map((step) => <article key={step.key} className={`graph-node ${selectedKey === step.key ? "selected" : ""}`}
-          style={{ left: step.position.x, top: step.position.y }} onClick={() => setSelectedKey(step.key)}>
+          style={{ left: step.position.x, top: step.position.y }} onClick={() => { setSelectedKey(step.key); setSelectedEdge(null); }}>
           {!isSource(step) ? <button className="graph-port input" title="ورودی؛ خروجی یک کارت را اینجا رها کن"
             aria-label={`ورودی ${step.name}`} onPointerUp={(event) => { event.stopPropagation(); if (connecting) connect(connecting, step.key); }}
             onClick={() => { if (connecting) connect(connecting, step.key); }}>●</button> : null}
@@ -251,21 +307,22 @@ export function WorkflowBuilder() {
             step.type === "filter" ? "شرط" : step.type === "publish" ? "ایتا" : step.type === "ai" ? "AI" : "کارت"}</span>
             <button type="button" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => { event.stopPropagation(); remove(step.key); }}>×</button></div>
-          <strong>{step.name}</strong><small>{step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? sourceNames[String(step.config.sourceKind)]) :
+          <strong>{step.name}</strong><small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
+            String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
-            step.type === "publish" ? eitaaAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "کانال را انتخاب کن" :
+            step.type === "publish" ? eitaaAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "نیاز به انتخاب کانال" :
             step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>
-          {step.type === "rss_source" ? <div className="graph-source-footer">نوع منبع: {sourceNames[String(step.config.sourceKind ?? "rss")]}</div> : null}
+          {step.type === "rss_source" ? <div className="graph-source-footer">{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</div> : null}
           {!isTerminal(step) ? <button className={`graph-port output ${connecting === step.key ? "active" : ""}`}
             title="خروجی؛ به ورودی کارت بعدی بکش یا کلیک کن" aria-label={`خروجی ${step.name}`}
             onPointerDown={(event) => { event.stopPropagation(); setConnecting(step.key); setPointer(null); }}
             onClick={(event) => { event.stopPropagation(); setConnecting(step.key); }}>●</button> : null}
         </article>)}
       </div></div>
-      {edges.length ? <details className="graph-links"><summary>مدیریت اتصال‌ها ({edges.length})</summary><div>{edges.map((edge) => <button key={`${edge.sourceKey}-${edge.targetKey}`}
-        onClick={() => setEdges((current) => current.filter((item) => item !== edge))}>
-        {steps.find((step) => step.key === edge.sourceKey)?.name} ← {steps.find((step) => step.key === edge.targetKey)?.name} ×</button>)}</div></details> : null}
     </section><aside className="builder-settings"><h2>تنظیمات جریان</h2><label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
+      {selectedEdge ? <div className="graph-edge-settings"><strong>اتصال انتخاب‌شده</strong>
+        <p>{edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.sourceKey ?? "")} ← {edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.targetKey ?? "")}</p>
+        <button type="button" onClick={() => { const edge = edges.find((item) => edgeId(item) === selectedEdge); if (edge) removeEdge(edge); }}>حذف اتصال</button></div> : null}
       {selected ? <><div className="builder-selected-title"><small>کارت انتخاب‌شده</small><strong>{selected.name}</strong></div>
         {selected.type === "rss_source" ? <><label><span>نوع منبع</span><select value={String(selected.config.sourceKind ?? "rss")}
           onChange={(event) => { const kind = event.target.value; setSteps((current) => current.map((step) => step.key === selected.key ?
@@ -297,10 +354,9 @@ export function WorkflowBuilder() {
           onChange={(event) => setPrompt(event.target.value)} placeholder="متن خبر یا موضوع" /></label> : null}
         {selected.type === "human_approval" ? <div className="builder-help">این شاخه منتظر تأیید می‌ماند؛ شاخه‌های دیگر ادامه می‌دهند.</div> : null}
         <div className="graph-node-links"><strong>اتصال‌های این کارت</strong>{edges.filter((edge) => edge.sourceKey === selected.key || edge.targetKey === selected.key)
-          .map((edge) => <button key={`${edge.sourceKey}-${edge.targetKey}`}
-            onClick={() => setEdges((current) => current.filter((item) => item !== edge))}>
-            {steps.find((step) => step.key === edge.sourceKey)?.name} ← {steps.find((step) => step.key === edge.targetKey)?.name} · حذف ×</button>)}</div>
-      </> : <div className="builder-help">یک کارت را انتخاب کن تا تنظیماتش نمایش داده شود.</div>}
+          .map((edge) => <button key={edgeId(edge)} onClick={() => removeEdge(edge)}>
+            {edgeName(edge.sourceKey)} ← {edgeName(edge.targetKey)} · حذف ×</button>)}</div>
+      </> : !selectedEdge ? <div className="builder-help">یک کارت یا خط اتصال را انتخاب کن تا تنظیماتش نمایش داده شود.</div> : null}
     </aside></div>
   </main>;
 }
