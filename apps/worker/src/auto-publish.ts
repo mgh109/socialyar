@@ -53,7 +53,7 @@ export async function enqueueAutoPublication(runId: string) {
     }
     if (publication.status === "published" || publication.status === "publishing") continue;
     await publicationQueue.add("publish-content", { publicationId: publication.id }, {
-      jobId: `publication-${publication.id}`, attempts: 1, removeOnComplete: 1000,
+      jobId: `publication-${publication.id}`, attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: 1000,
     });
     } catch (error) {
       console.error(`Publication branch ${publishStep.key} failed for run ${runId}`, error);
