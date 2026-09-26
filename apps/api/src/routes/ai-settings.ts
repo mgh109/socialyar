@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { generateNewsDraft, type AIConnection } from "@socialyar/ai";
@@ -21,9 +21,35 @@ function isMissingSettingsTable(error: unknown): boolean {
   }
   return false;
 }
+function isProfileStorageProblem(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth++) {
+    const detail = current as { code?: string; cause?: unknown };
+    if (detail.code === "42P01" || detail.code === "42501") return true;
+    current = detail.cause;
+  }
+  return false;
+}
 
 export async function aiSettingsRoutes(app: FastifyInstance) {
   const db = getDb();
+  let profileStorageReady: Promise<void> | undefined;
+  const ensureProfileStorage = async () => {
+    profileStorageReady ??= (async () => {
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS "ai_profiles" (
+        "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "workspace_id" uuid NOT NULL REFERENCES "workspaces"("id") ON DELETE CASCADE,
+        "name" text NOT NULL,
+        "provider" text NOT NULL,
+        "model" text NOT NULL,
+        "encrypted_token" text NOT NULL,
+        "created_at" timestamptz NOT NULL DEFAULT now(),
+        "updated_at" timestamptz NOT NULL DEFAULT now()
+      )`);
+      await db.execute(sql`CREATE INDEX IF NOT EXISTS "ai_profiles_workspace_idx" ON "ai_profiles" ("workspace_id")`);
+    })();
+    try { await profileStorageReady; } catch (error) { profileStorageReady = undefined; throw error; }
+  };
   app.addHook("onRequest", app.authenticate);
 
   app.get("/settings/ai", async (request, reply) => {
@@ -40,6 +66,7 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
 
   app.get("/settings/ai/profiles", async (request, reply) => {
     try {
+      await ensureProfileStorage();
       const [legacy, profiles] = await Promise.all([
         db.select({ provider: aiSettings.provider, model: aiSettings.model }).from(aiSettings)
           .where(eq(aiSettings.workspaceId, request.auth.workspaceId)).limit(1),
@@ -51,7 +78,7 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
         ...profiles,
       ], configurationProblem: secretConfigurationProblem() };
     } catch (error) {
-      if (isMissingSettingsTable(error)) return reply.code(503).send({ error: "ai_profiles_migration_required" });
+      if (isProfileStorageProblem(error)) return reply.code(503).send({ error: "ai_profiles_migration_required" });
       throw error;
     }
   });
@@ -62,12 +89,13 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
     if (problem) return reply.code(503).send({ error: problem });
     if (!input.token) return reply.code(400).send({ error: "token_required_for_provider" });
     try {
+      await ensureProfileStorage();
       const [row] = await db.insert(aiProfiles).values({ workspaceId: request.auth.workspaceId,
         name: input.name, provider: input.provider, model: input.model, encryptedToken: encryptSecret(input.token) })
         .returning({ id: aiProfiles.id, name: aiProfiles.name, provider: aiProfiles.provider, model: aiProfiles.model });
       return reply.code(201).send(row);
     } catch (error) {
-      if (isMissingSettingsTable(error)) return reply.code(503).send({ error: "ai_profiles_migration_required" });
+      if (isProfileStorageProblem(error)) return reply.code(503).send({ error: "ai_profiles_migration_required" });
       throw error;
     }
   });
@@ -78,6 +106,7 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
     const problem = secretConfigurationProblem();
     if (problem) return reply.code(503).send({ error: problem });
     try {
+      await ensureProfileStorage();
       const [existing] = await db.select().from(aiProfiles).where(and(eq(aiProfiles.id, profileId),
         eq(aiProfiles.workspaceId, request.auth.workspaceId))).limit(1);
       if (!existing) return reply.code(404).send({ error: "ai_profile_not_found" });
@@ -88,7 +117,7 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
         .returning({ id: aiProfiles.id, name: aiProfiles.name, provider: aiProfiles.provider, model: aiProfiles.model });
       return row;
     } catch (error) {
-      if (isMissingSettingsTable(error)) return reply.code(503).send({ error: "ai_profiles_migration_required" });
+      if (isProfileStorageProblem(error)) return reply.code(503).send({ error: "ai_profiles_migration_required" });
       throw error;
     }
   });
@@ -96,6 +125,7 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
   app.delete("/settings/ai/profiles/:profileId", async (request, reply) => {
     const { profileId } = profileIdSchema.parse(request.params);
     try {
+      await ensureProfileStorage();
       const used = await db.select({ config: workflowSteps.config }).from(workflowSteps)
         .innerJoin(workflowVersions, eq(workflowSteps.workflowVersionId, workflowVersions.id))
         .innerJoin(workflows, eq(workflowVersions.workflowId, workflows.id))
@@ -106,7 +136,7 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
       if (!row) return reply.code(404).send({ error: "ai_profile_not_found" });
       return { deleted: true };
     } catch (error) {
-      if (isMissingSettingsTable(error)) return reply.code(503).send({ error: "ai_profiles_migration_required" });
+      if (isProfileStorageProblem(error)) return reply.code(503).send({ error: "ai_profiles_migration_required" });
       throw error;
     }
   });
