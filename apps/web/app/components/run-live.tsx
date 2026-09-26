@@ -37,35 +37,33 @@ const labels: Record<string, string> = {
 export function RunLive({ runId }: { runId: string }) {
   const [run, setRun] = useState<RunData | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
-  const [steps, setSteps] = useState<Array<{ key: string; name: string; type: string }>>([]);
+  const [steps, setSteps] = useState<Array<{ key: string; name: string; type: string; status: string | null; output: { text?: string } | null }>>([]);
   const [connected, setConnected] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
 
-  const resolve = async (action: "approve" | "reject") => {
+  const resolve = async (action: "approve" | "reject", stepKey: string) => {
     setActionBusy(true);
     setActionError("");
     try {
       const response = await apiFetch(`/runs/${runId}/approval`, {
-        method: "POST", body: JSON.stringify({ action }),
+        method: "POST", body: JSON.stringify({ action, stepKey }),
       });
       if (!response.ok) throw new Error(`تصمیم ثبت نشد (${response.status})`);
-      setRun((current) => current ? { ...current, status: action === "approve" ? "queued" : "cancelled" } : current);
+      setRun((current) => current ? { ...current, status: "queued" } : current);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "خطا در ثبت تصمیم");
     } finally { setActionBusy(false); }
   };
 
   useEffect(() => {
-    void apiFetch(`/runs/${runId}/steps`).then(async (response) => {
-      if (response.ok) setSteps(await response.json());
-    }).catch(() => {});
     let active = true;
     const refresh = async () => {
       try {
-        const [runResponse, eventResponse] = await Promise.all([
+        const [runResponse, eventResponse, stepsResponse] = await Promise.all([
           apiFetch(`/runs/${runId}`),
           apiFetch(`/runs/${runId}/events`),
+          apiFetch(`/runs/${runId}/steps`),
         ]);
         if (!runResponse.ok || !eventResponse.ok) throw new Error("دریافت وضعیت اجرا ناموفق بود");
         const [nextRun, nextEvents] = await Promise.all([
@@ -75,6 +73,7 @@ export function RunLive({ runId }: { runId: string }) {
         if (active) {
           setRun(nextRun);
           setEvents(nextEvents);
+          if (stepsResponse.ok) setSteps(await stepsResponse.json());
           setConnected(true);
         }
       } catch {
@@ -89,11 +88,7 @@ export function RunLive({ runId }: { runId: string }) {
     };
   }, [runId]);
 
-  const progress = useMemo(
-    () => events.filter((event) => event.type === "step_completed" ||
-      (event.type === "approval_resolved" && event.payload.action === "approve")).length,
-    [events],
-  );
+  const progress = useMemo(() => steps.filter((step) => step.status === "completed").length, [steps]);
 
   const canOpenStudio = run?.status === "completed";
 
@@ -128,9 +123,9 @@ export function RunLive({ runId }: { runId: string }) {
           </div>
 
           <div className="execution-strip">
-            {steps.map(({ name, key }, index) => {
-              const completed = index < progress;
-              const active = index === progress && run?.status === "running";
+            {steps.map(({ name, key, status }) => {
+              const completed = status === "completed";
+              const active = status === "running";
               return (
                 <article
                   className={`execution-node ${completed ? "done" : ""} ${active ? "active" : ""}`}
@@ -138,25 +133,23 @@ export function RunLive({ runId }: { runId: string }) {
                 >
                   <h3>{name}</h3>
                   <span>
-                    {completed
-                      ? "✓ انجام شد"
-                      : active
-                        ? "↻ در حال اجرا"
-                        : "○ منتظر"}
+                    {completed ? "✓ انجام شد" : status === "skipped" ? "○ عبور نکرد" :
+                      status === "failed" ? "! خطا" : active ? "↻ در حال اجرا" : "○ منتظر"}
                   </span>
                 </article>
               );
             })}
           </div>
 
-          {run?.status === "waiting_approval" ? (
-            <div className="run-output-ready">
-              <strong>این جریان منتظر تصمیم شماست.</strong>
-              <button className="primary-button" disabled={actionBusy} onClick={() => void resolve("approve")}>تأیید و ادامه</button>
-              <button className="ghost-button" disabled={actionBusy} onClick={() => void resolve("reject")}>رد کردن</button>
+          {run?.status === "waiting_approval" ? steps.filter((step) => step.status === "waiting_approval").map((step) => (
+            <div className="run-output-ready" key={step.key}>
+              <strong>{step.name} · منتظر تصمیم شما</strong>
+              {step.output?.text ? <p>{step.output.text.slice(0, 700)}</p> : null}
+              <button className="primary-button" disabled={actionBusy} onClick={() => void resolve("approve", step.key)}>تأیید این شاخه</button>
+              <button className="ghost-button" disabled={actionBusy} onClick={() => void resolve("reject", step.key)}>رد این شاخه</button>
               {actionError ? <span role="alert">{actionError}</span> : null}
             </div>
-          ) : null}
+          )) : null}
 
           {canOpenStudio ? (
             <div className="run-output-ready">
