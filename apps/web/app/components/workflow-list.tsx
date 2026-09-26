@@ -85,7 +85,7 @@ export function WorkflowList() {
         <Link href="/approvals">تأیید محتوا</Link>
         <Link href="/calendar">تقویم انتشار</Link>
         <Link href="/connections">اتصال کانال‌ها</Link>
-        <Link href="/analytics">گزارش‌ها</Link>
+        <Link href="/analytics">داشبورد انتشار و سلامت</Link>
       </nav>
       {message ? <p role="status" className="workflow-library-message">{message}</p> : null}
       <div className="workflow-library-grid">

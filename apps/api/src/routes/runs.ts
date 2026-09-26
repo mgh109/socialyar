@@ -23,6 +23,16 @@ export async function runRoutes(app: FastifyInstance) {
   const db = getDb();
   app.addHook("onRequest", app.authenticate);
 
+  app.get("/workflow-approvals", async (request) => {
+    return db.select({ runId: runs.id, workflowName: workflows.name, stepKey: workflowSteps.key,
+      stepName: workflowSteps.name, output: runSteps.output, createdAt: runSteps.startedAt })
+      .from(runSteps).innerJoin(runs, eq(runSteps.runId, runs.id))
+      .innerJoin(workflows, eq(runs.workflowId, workflows.id))
+      .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
+      .where(and(eq(workflows.workspaceId, request.auth.workspaceId), eq(runSteps.status, "waiting_approval"),
+        eq(runs.status, "waiting_approval"))).orderBy(desc(runSteps.startedAt));
+  });
+
   app.post("/workflows/:workflowId/runs", async (request, reply) => {
     const { workflowId } = z
       .object({ workflowId: z.string().uuid() })
@@ -194,7 +204,8 @@ export async function runRoutes(app: FastifyInstance) {
       try {
         await workflowQueue.add("execute-workflow", {
           runId, workflowId: owned.run.workflowId, workflowVersionId: owned.run.workflowVersionId,
-        }, { jobId: `${runId}-resume`, attempts: 3, backoff: { type: "exponential", delay: 2000 } });
+        }, { jobId: `${runId}-resume-${pending.step.id}-${Date.now()}`, attempts: 3,
+          backoff: { type: "exponential", delay: 2000 } });
       } catch (error) {
         await db.update(runs).set({ status: "failed", output: { error: { message: "Could not resume run" } }, finishedAt: new Date() })
           .where(eq(runs.id, runId));

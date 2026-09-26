@@ -35,6 +35,7 @@ const connectionSchema = z.object({
 
 const createWorkflowSchema = z.object({
   name: z.string().min(1),
+  pollIntervalMinutes: z.union([z.literal(1), z.literal(2), z.literal(5), z.literal(10), z.literal(15)]).default(5),
   status: z.enum(["draft", "active"]).default("draft"),
   description: z.string().nullable().optional(),
   autonomyMode: z.enum(["manual", "assisted", "semi_auto", "full_auto"]).default("assisted"),
@@ -44,6 +45,7 @@ const createWorkflowSchema = z.object({
 });
 
 const updateWorkflowSchema = z.object({
+  pollIntervalMinutes: z.union([z.literal(1), z.literal(2), z.literal(5), z.literal(10), z.literal(15)]).default(5),
   name: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
   autonomyMode: z.enum(["manual", "assisted", "semi_auto", "full_auto"]).optional(),
@@ -232,6 +234,7 @@ export async function workflowRoutes(app: FastifyInstance) {
           prompt: input.prompt ?? null,
           snapshot: {
             autonomyMode: input.autonomyMode,
+            pollIntervalMinutes: input.pollIntervalMinutes,
             stepCount: input.steps.length,
             connectionCount: input.connections.length,
           },
@@ -383,6 +386,7 @@ export async function workflowRoutes(app: FastifyInstance) {
           prompt: input.prompt ?? null,
           snapshot: {
             autonomyMode: input.autonomyMode ?? existing.autonomyMode,
+            pollIntervalMinutes: input.pollIntervalMinutes,
             stepCount: input.steps.length,
             connectionCount: input.connections.length,
           },

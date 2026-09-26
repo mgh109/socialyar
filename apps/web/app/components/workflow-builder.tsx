@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "./brand-logo";
+import { TopMenu } from "./top-menu";
 import { apiFetch } from "../lib/session";
 
 type Position = { x: number; y: number };
@@ -79,6 +80,7 @@ export function WorkflowBuilder() {
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [viewport, setViewport] = useState({ width: 800, height: 520 });
   const [name, setName] = useState("جریان جدید");
+  const [pollIntervalMinutes, setPollIntervalMinutes] = useState(5);
   const [prompt, setPrompt] = useState("");
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [autoEnabled, setAutoEnabled] = useState(false);
@@ -125,10 +127,11 @@ export function WorkflowBuilder() {
       if (!response.ok) throw new Error("جریان پیدا نشد");
       return response.json();
     }).then((data: { workflow: { id: string; name: string; autonomyMode: string; status: string };
-      version: { prompt: string | null } | null;
+      version: { prompt: string | null; snapshot?: { pollIntervalMinutes?: number } } | null;
       steps: Array<{ key: string; type: string; name: string; config: Record<string, unknown>; position: Position; order: number }>;
       connections: Array<{ sourceKey?: string; targetKey?: string; sourceStepId: string; targetStepId: string }> }) => {
       setWorkflowId(data.workflow.id); setName(data.workflow.name); setPrompt(data.version?.prompt ?? "");
+      setPollIntervalMinutes(data.version?.snapshot?.pollIntervalMinutes ?? 5);
       setAutoEnabled(data.workflow.status === "active");
       const byId = new Map(data.steps.map((step) => [(step as typeof step & { id: string }).id, step.key]));
       const links = data.connections.map((edge) => ({ sourceKey: edge.sourceKey ?? byId.get(edge.sourceStepId) ?? "",
@@ -231,7 +234,7 @@ export function WorkflowBuilder() {
       if (!name.trim()) throw new Error("نام جریان را وارد کن.");
       if (active && steps.some((step) => step.type === "ai" && !aiProfiles.some((profile) =>
         profile.id === String(step.config.profileId ?? "default")))) throw new Error("برای هر کارت AI یک مدل معتبر انتخاب کن.");
-      const body = { name: name.trim(), description: `${steps.length} کارت · ${edges.length} اتصال`,
+      const body = { name: name.trim(), pollIntervalMinutes, description: `${steps.length} کارت · ${edges.length} اتصال`,
         status: active ? "active" : "draft", autonomyMode: manual ? "assisted" : "full_auto", prompt,
         steps: steps.map((step, order) => ({ ...step, order })), connections: edges };
       const response = await apiFetch(workflowId ? `/workflows/${workflowId}` : "/workflows", {
@@ -262,7 +265,7 @@ export function WorkflowBuilder() {
   };
   const stroke = (from: Position, to: Position) => `M ${from.x} ${from.y} C ${from.x - 92} ${from.y}, ${to.x + 92} ${to.y}, ${to.x} ${to.y}`;
   return <main className="workflow-page builder-page">
-    <header className="app-header"><div className="brand-lockup"><BrandLogo /><span>میز کار / {name}</span></div>
+    <header className="app-header"><div className="brand-lockup"><BrandLogo /><TopMenu /><span>میز کار / {name}</span></div>
       <div className="header-actions"><span className="save-status" role="status">{message}</span>
         <button className="ghost-button" onClick={() => void save(autoEnabled)} disabled={busy}>ذخیره تغییرات</button>
         {manual ? <button className="primary-button" onClick={() => void run()} disabled={busy}>▶ اجرای دستی</button> :
@@ -276,7 +279,7 @@ export function WorkflowBuilder() {
           add(item.type, item.kind); event.currentTarget.closest("details")?.removeAttribute("open");
         }}>{item.label}</button>)}</div></details></div>
         <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
-        </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? "پایش فعال؛ هر ۵ دقیقه" : "پیش‌نویس"}>{autoEnabled ? "● فعال" : "○ پیش‌نویس"}</span>
+        </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ هر ${pollIntervalMinutes} دقیقه` : "پیش‌نویس"}>{autoEnabled ? `● هر ${pollIntervalMinutes} دقیقه` : "○ پیش‌نویس"}</span>
         {activity && (activity.publication || activity.queueCount || activity.run) ? <details className="graph-activity"><summary title="آخرین فعالیت همین جریان" aria-label="آخرین فعالیت همین جریان">فعالیت</summary><div><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
         activity.publication?.status === "failed" ? "ارسال ناموفق" : activity.publication ? "در صف انتشار" : activity.run?.status ?? "بدون خبر"}
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
@@ -316,7 +319,7 @@ export function WorkflowBuilder() {
           }}><span className="graph-kind">{step.type === "rss_source" ? sourceNames[String(step.config.sourceKind ?? "rss")] :
             step.type === "filter" ? "شرط" : step.type === "publish" ? "ایتا" : step.type === "ai" ? "AI" : "کارت"}</span>
             <button type="button" className="graph-delete" title="حذف کارت" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => { event.stopPropagation(); remove(step.key); }}>×</button></div>
+              onClick={(event) => { event.stopPropagation(); remove(step.key); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button></div>
           <strong>{step.name}</strong><small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
@@ -330,6 +333,10 @@ export function WorkflowBuilder() {
         </article>)}
       </div></div></div>
     </section><aside className="builder-settings"><h2>تنظیمات جریان</h2><label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label><span>فاصلهٔ پایش منابع</span><select value={pollIntervalMinutes} onChange={(event) => setPollIntervalMinutes(Number(event.target.value))}>
+        <option value={1}>هر ۱ دقیقه</option><option value={2}>هر ۲ دقیقه</option><option value={5}>هر ۵ دقیقه</option>
+        <option value={10}>هر ۱۰ دقیقه</option><option value={15}>هر ۱۵ دقیقه</option></select></label>
+      <small className="builder-note">فاصلهٔ ارسال خبر در کارت انتشار تنظیم می‌شود.</small>
       {selectedEdge ? <div className="graph-edge-settings"><strong>اتصال انتخاب‌شده</strong>
         <p>{edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.sourceKey ?? "")} ← {edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.targetKey ?? "")}</p>
         <button type="button" onClick={() => { const edge = edges.find((item) => edgeId(item) === selectedEdge); if (edge) removeEdge(edge); }}>حذف اتصال</button></div> : null}

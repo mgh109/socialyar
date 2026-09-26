@@ -133,7 +133,11 @@ async function poll() {
         const sources = await db.select().from(workflowSteps)
           .where(and(eq(workflowSteps.workflowVersionId, version.id), eq(workflowSteps.type, "rss_source")));
         if (!sources.length) continue;
-        const rotation = Math.floor(Date.now() / 300_000) % sources.length;
+        const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
+        const intervalMinutes = [1, 2, 5, 10, 15].includes(configured) ? configured : 5;
+        const reserved = await connection.set(`news-poll:${workflow.id}:${version.id}`, String(Date.now()), "EX", intervalMinutes * 60, "NX");
+        if (reserved !== "OK") continue;
+        const rotation = Math.floor(Date.now() / (intervalMinutes * 60_000)) % sources.length;
         const ordered = [...sources.slice(rotation), ...sources.slice(0, rotation)];
         const batches = await Promise.all(ordered.map(async (source) => ({ source, items: await sourceCandidates(source) })));
         let queuedCount = 0;
@@ -155,6 +159,6 @@ async function poll() {
 
 export function startNewsPoller() {
   void poll().catch(console.error);
-  const timer = setInterval(() => void poll().catch(console.error), 5 * 60_000);
+  const timer = setInterval(() => void poll().catch(console.error), 60_000);
   return async () => { clearInterval(timer); await queue.close(); };
 }
