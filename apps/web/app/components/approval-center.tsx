@@ -2,6 +2,7 @@
 import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
+import { TopMenu } from "./top-menu";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -26,6 +27,8 @@ type ApprovalRow = {
     title: string | null;
   };
 };
+type WorkflowApproval = { runId: string; workflowName: string; stepKey: string; stepName: string;
+  output: { title?: string | null; text?: string; imageUrl?: string | null } | null; createdAt: string | null };
 
 const channelLabels: Record<string, string> = {
   instagram: "Instagram",
@@ -39,6 +42,7 @@ const channelLabels: Record<string, string> = {
 export function ApprovalCenter() {
   const workspaceId = getWorkspaceId();
   const [rows, setRows] = useState<ApprovalRow[]>([]);
+  const [workflowApprovals, setWorkflowApprovals] = useState<WorkflowApproval[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [message, setMessage] = useState("در حال دریافت صف تأیید...");
   const [busy, setBusy] = useState(false);
@@ -62,12 +66,33 @@ export function ApprovalCenter() {
     setActiveId((current) => current ?? data[0]?.approval.id ?? null);
     setMessage(data.length ? "صف تأیید آماده است" : "موردی برای تأیید وجود ندارد");
   };
+  const loadWorkflowApprovals = async () => {
+    const response = await apiFetch("/workflow-approvals");
+    if (!response.ok) throw new Error("دریافت تأییدهای جریان ناموفق بود");
+    setWorkflowApprovals(await response.json());
+  };
+  const resolveWorkflow = async (item: WorkflowApproval, action: "approve" | "reject") => {
+    if (action === "reject" && !window.confirm("این شاخه رد شود؟ خبر از این مسیر منتشر نمی‌شود.")) return;
+    setBusy(true); setMessage("در حال ثبت تصمیم...");
+    try {
+      const response = await apiFetch(`/runs/${item.runId}/approval`, { method: "POST",
+        body: JSON.stringify({ action, stepKey: item.stepKey }) });
+      if (!response.ok) throw new Error(`ثبت تصمیم ناموفق بود (${response.status})`);
+      await loadWorkflowApprovals(); setMessage(action === "approve" ? "شاخه تأیید شد و ادامه می‌یابد." : "شاخه رد شد.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "ثبت تصمیم ناموفق بود"); }
+    finally { setBusy(false); }
+  };
 
   useEffect(() => {
     void load().catch((error) =>
       setMessage(error instanceof Error ? error.message : "خطا در دریافت Approval"),
     );
   }, [workspaceId]);
+  useEffect(() => {
+    void loadWorkflowApprovals().catch((error) => setMessage(error.message));
+    const timer = window.setInterval(() => void loadWorkflowApprovals().catch(() => {}), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const active = useMemo(
     () => rows.find((row) => row.approval.id === activeId) ?? null,
@@ -127,6 +152,7 @@ export function ApprovalCenter() {
       <header className="app-header">
         <div className="brand-lockup">
           <BrandLogo />
+          <TopMenu />
           <span>Approval Center</span>
         </div>
         <div className="header-actions">
@@ -136,6 +162,16 @@ export function ApprovalCenter() {
           </Link>
         </div>
       </header>
+
+      <section className="workflow-approval-section"><div><h1>تأیید انسانی جریان‌ها</h1><p>خبرهای این کارت‌ها تا تصمیم شما در همین شاخه متوقف می‌مانند.</p></div>
+        {workflowApprovals.length ? <div className="workflow-approval-grid">{workflowApprovals.map((item) => <article key={`${item.runId}-${item.stepKey}`}>
+          <small>{item.workflowName} · {item.stepName}</small><h2>{item.output?.title || "خبر بدون عنوان"}</h2>
+          {item.output?.imageUrl ? <img src={item.output.imageUrl} alt="تصویر خبر برای بررسی" loading="lazy" /> : null}
+          <p>{item.output?.text || "متنی ثبت نشده"}</p>
+          <div><button className="ghost-button" disabled={busy} onClick={() => void resolveWorkflow(item, "reject")}>رد این شاخه</button>
+            <button className="primary-button" disabled={busy} onClick={() => void resolveWorkflow(item, "approve")}>تأیید و ادامه</button>
+            <Link href={`/runs/${item.runId}`}>جزئیات اجرا</Link></div></article>)}</div> : <p className="workflow-approval-empty">در حال حاضر خبری منتظر تأیید انسانی نیست.</p>}
+      </section>
 
       <section className="approval-shell">
         <aside className="approval-queue">
