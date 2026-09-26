@@ -1276,3 +1276,28 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .ai-profile-list small { color:var(--muted); direction:ltr; }
 .ai-profile-list .ai-profile-delete { color:var(--red); }
 .ai-profile-actions { display:flex; flex-wrap:wrap; gap:8px; }
+
+.graph-node-head .graph-delete { width:24px; height:24px; overflow:visible; }
+.graph-delete svg { display:block; width:13px; height:13px; overflow:visible; }
+.graph-delete svg path { fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; }
+.top-menu { position:relative; z-index:30; flex:none; font-size:12px; }
+.top-menu summary { list-style:none; display:flex; align-items:center; gap:5px; padding:7px 9px; border:1px solid var(--border); border-radius:8px; color:var(--text); background:var(--panel); cursor:pointer; white-space:nowrap; }
+.top-menu summary::-webkit-details-marker { display:none; }
+.top-menu[open] summary,.top-menu summary:hover { border-color:var(--green); }
+.top-menu nav { position:absolute; top:calc(100% + 7px); right:0; min-width:205px; display:grid; gap:2px; padding:7px; border:1px solid var(--border); border-radius:10px; background:var(--panel); box-shadow:0 14px 34px rgba(0,0,0,.16); }
+.top-menu nav a { color:var(--text); padding:9px 10px; border-radius:6px; text-decoration:none; }
+.top-menu nav a:hover { background:var(--panel2); color:var(--accent-text); }
+.brand-lockup { gap:13px; }
+.workflow-approval-section { margin:18px auto 24px; max-width:1300px; padding:0 22px; }
+.workflow-approval-section h1 { margin:0 0 4px; font-size:20px; }
+.workflow-approval-section > div > p { margin:0 0 14px; color:var(--muted); font-size:12px; }
+.workflow-approval-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(290px,1fr)); gap:12px; }
+.workflow-approval-grid article { border:1px solid var(--border); border-radius:11px; background:var(--panel); padding:15px; min-width:0; }
+.workflow-approval-grid small { color:var(--muted); }
+.workflow-approval-grid h2 { font-size:16px; line-height:1.7; margin:7px 0; }
+.workflow-approval-grid img { width:100%; max-height:180px; object-fit:cover; border-radius:7px; }
+.workflow-approval-grid p { line-height:1.9; max-height:190px; overflow:auto; white-space:pre-wrap; font-size:13px; }
+.workflow-approval-grid article > div { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+.workflow-approval-grid article > div a { font-size:12px; color:var(--accent-text); }
+.workflow-approval-empty { padding:15px; border:1px dashed var(--border); border-radius:9px; color:var(--muted); font-size:13px; }
+@media(max-width:700px) { .top-menu summary span { display:none; } .top-menu nav { right:-65px; } .workflow-approval-section { padding:0 12px; } }
