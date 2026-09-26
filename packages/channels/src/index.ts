@@ -10,6 +10,7 @@ export type PublishRequest = {
   title?: string | null;
   content: string;
   imageUrl?: string | null;
+  videoUrl?: string | null;
   credentials: ChannelCredentials;
   externalAccountId?: string | null;
 };
@@ -144,10 +145,12 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
   const botToken = requiredString(request.credentials, "botToken");
   const chatId = requiredString(request.credentials, "chatId");
   const message = request.title ? `${request.title}\n\n${request.content}` : request.content;
-  let image: Blob | null = null;
-  if (request.imageUrl) {
+  let media: Blob | null = null;
+  const mediaUrl = request.videoUrl || request.imageUrl;
+  const isVideo = Boolean(request.videoUrl);
+  if (mediaUrl) {
     try {
-      let url = new URL(request.imageUrl);
+      let url = new URL(mediaUrl);
       let response: Response | undefined;
       for (let redirects = 0; redirects <= 3; redirects++) {
         if (url.protocol !== "https:" || url.username || url.password || url.port || isIP(url.hostname)) throw new Error("Invalid image URL");
@@ -169,8 +172,9 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
       const length = Number(response.headers.get("content-length") ?? 0);
       const declaredType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
       if (!response.ok) throw new Error(`Image server returned HTTP ${response.status}`);
-      if (length > 5_000_000) throw new Error("Image is too large");
-      if (!response.body) throw new Error("Image has no body");
+      const maxBytes = isVideo ? 20_000_000 : 5_000_000;
+      if (length > maxBytes) throw new Error(`${isVideo ? "Video" : "Image"} is too large`);
+      if (!response.body) throw new Error("Media has no body");
       const reader = response.body.getReader();
       const chunks: ArrayBuffer[] = [];
       let size = 0;
@@ -178,25 +182,29 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.byteLength;
-        if (size > 5_000_000) { await reader.cancel(); throw new Error("Image is too large"); }
+        if (size > maxBytes) { await reader.cancel(); throw new Error(`${isVideo ? "Video" : "Image"} is too large`); }
         chunks.push(Uint8Array.from(value).buffer as ArrayBuffer);
       }
       const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
-      const type = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? "image/jpeg" :
+      const type = isVideo ?
+        (String.fromCharCode(...bytes.slice(4, 8)) === "ftyp" ? "video/mp4" :
+          bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3 ? "video/webm" : null) :
+        bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? "image/jpeg" :
         bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 ? "image/png" :
         String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" && String.fromCharCode(...bytes.slice(8, 12)) === "WEBP" ? "image/webp" :
         ["GIF87a", "GIF89a"].includes(String.fromCharCode(...bytes.slice(0, 6))) ? "image/gif" : null;
-      if (!type) throw new Error(`Image URL did not return a supported image (HTTP ${response.status}, Content-Type: ${declaredType || "unknown"})`);
-      image = new Blob([bytes], { type });
+      if (!type) throw new Error(`${isVideo ? "Video" : "Image"} URL did not return a supported file (HTTP ${response.status}, Content-Type: ${declaredType || "unknown"})`);
+      media = new Blob([bytes], { type });
     } catch (error) {
-      throw new Error(`Eitaa image could not be fetched: ${error instanceof Error ? error.message : "unknown error"}`);
+      throw new Error(`Eitaa ${isVideo ? "video" : "image"} could not be fetched: ${error instanceof Error ? error.message : "unknown error"}`);
     }
   }
   const form = new FormData();
   form.set("chat_id", chatId);
-  form.set(image ? "caption" : "text", message);
-  if (image) form.set("file", image, image.type === "image/png" ? "news.png" : image.type === "image/webp" ? "news.webp" : image.type === "image/gif" ? "news.gif" : "news.jpg");
-  const response = await fetch(`https://eitaayar.ir/api/${encodeURIComponent(botToken)}/${image ? "sendFile" : "sendMessage"}`, {
+  form.set(media ? "caption" : "text", message);
+  if (media) form.set("file", media, media.type === "video/mp4" ? "news.mp4" : media.type === "video/webm" ? "news.webm" :
+    media.type === "image/png" ? "news.png" : media.type === "image/webp" ? "news.webp" : media.type === "image/gif" ? "news.gif" : "news.jpg");
+  const response = await fetch(`https://eitaayar.ir/api/${encodeURIComponent(botToken)}/${media ? "sendFile" : "sendMessage"}`, {
     method: "POST",
     body: form,
     signal: AbortSignal.timeout(20000),
