@@ -1204,3 +1204,36 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .graph-links button,.graph-node-links button { border:1px solid var(--border); background:var(--panel); color:var(--text); border-radius:7px; padding:7px; text-align:right; cursor:pointer; }
 .graph-node-links strong { font-size:12px; }
 @media(max-width:700px) { .graph-toolbar { align-items:start; flex-direction:column; } .graph-scroll { height:470px; } }
+
+/* Compact, interactive workflow canvas */
+.builder-workspace { padding:14px clamp(12px,2vw,26px); min-width:0; }
+.graph-toolbar { margin-bottom:8px; }
+.graph-toolbar h1 { font-size:16px; }
+.graph-toolbar p { margin-top:2px; }
+.graph-toolbar-actions { display:flex; align-items:center; gap:9px; }
+.graph-toolbar-actions button { border:1px solid var(--border); background:var(--panel); color:var(--text); padding:6px 9px; border-radius:8px; font:inherit; font-size:11px; cursor:pointer; }
+.graph-toolbar-actions button:disabled { opacity:.5; cursor:default; }
+.graph-palette { overflow:visible; align-items:center; gap:11px; padding:0 0 9px; color:var(--muted); font-size:11px; }
+.graph-palette details { position:relative; z-index:5; }
+.graph-palette summary { list-style:none; border:1px solid var(--green); border-radius:8px; padding:7px 11px; background:var(--accent-soft); color:var(--accent-text); cursor:pointer; white-space:nowrap; }
+.graph-palette summary::-webkit-details-marker { display:none; }
+.graph-palette-menu { position:absolute; right:0; top:calc(100% + 5px); width:190px; display:grid; gap:3px; padding:7px; border:1px solid var(--border); border-radius:10px; background:var(--panel); box-shadow:0 12px 30px rgba(0,0,0,.15); }
+.graph-palette-menu button { width:100%; text-align:right; border:0; background:transparent; }
+.graph-palette-menu button:hover { background:var(--panel2); }
+.graph-scroll { height:max(440px,calc(100vh - 185px)); }
+.graph-surface { background-position:10px 10px; }
+.graph-lines { pointer-events:auto; }
+.graph-lines path.edge-visible { stroke:var(--muted); stroke-width:2; opacity:.85; pointer-events:none; }
+.graph-lines marker path { fill:none; stroke:var(--muted); stroke-width:1.5; }
+.graph-edge.selected path.edge-visible { stroke:var(--green); stroke-width:3; opacity:1; }
+.graph-lines path.edge-hit { stroke:transparent; stroke-width:20; cursor:pointer; pointer-events:stroke; }
+.graph-lines path.edge-hit:hover + path { stroke:var(--green); }
+.graph-lines path.preview { pointer-events:none; }
+.graph-empty { top:44%; left:15px; right:15px; text-align:center; }
+.graph-node { box-shadow:0 3px 12px rgba(18,20,32,.07); }
+.graph-node small { direction:ltr; text-align:right; }
+.graph-source-footer { color:var(--muted); }
+.graph-edge-settings { border:1px solid var(--border); border-radius:9px; background:var(--panel); padding:12px; font-size:12px; }
+.graph-edge-settings p { overflow-wrap:anywhere; color:var(--muted); line-height:1.8; }
+.graph-edge-settings button { border:1px solid var(--border); border-radius:7px; color:var(--red); background:var(--panel); padding:7px 10px; cursor:pointer; }
+@media(max-width:700px) { .graph-toolbar-actions { width:100%; justify-content:space-between; } .graph-palette > span { display:none; } .graph-scroll { height:calc(100vh - 245px); min-height:420px; } }
