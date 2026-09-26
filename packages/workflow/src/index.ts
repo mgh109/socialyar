@@ -119,6 +119,9 @@ export async function executeRun(input: ExecuteRunInput) {
         }
         let output: News;
         if (["source", "manual_input", "rss_source"].includes(step.type)) {
+          if (run.input.videoUnavailable === true) {
+            throw new Error("این پست ویدیو دارد، اما صفحهٔ عمومی ایتا فایل ویدیو را در اختیار نمی‌گذارد. انتشار بدون ویدیو متوقف شد.");
+          }
           const text = run.input.text ?? run.input.prompt;
           if (typeof text !== "string" || !text.trim()) throw new Error("A text input is required");
           output = { text: text.trim(), title: run.input.title as string ?? null,
