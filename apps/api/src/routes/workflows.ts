@@ -148,6 +148,21 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
       !["include", "exclude"].includes(String(filter.config.mode ?? "include"))) return "graph_invalid_filter";
   }
   for (const step of sorted.filter((item) => item.type === "ai")) {
+    const titleMode = String(step.config.titleMode ?? "keep");
+    const imageMode = String(step.config.imageMode ?? "keep");
+    if (!["keep", "rewrite", "custom"].includes(titleMode) ||
+      !["keep", "remove", "custom"].includes(imageMode)) return "ai_output_invalid";
+    if (titleMode === "custom" && (typeof step.config.customTitle !== "string" ||
+      !step.config.customTitle.trim() || step.config.customTitle.length > 180)) return "ai_output_invalid";
+    if (imageMode === "custom") {
+      if (typeof step.config.customImageUrl !== "string") return "ai_output_invalid";
+      try {
+        const url = new URL(step.config.customImageUrl);
+        if (url.protocol !== "https:" || url.username || url.password || url.port ||
+          isIP(url.hostname.replace(/[\[\]]/g, "")) !== 0 ||
+          /^(localhost|.*\.local|.*\.internal)$/i.test(url.hostname)) return "ai_output_invalid";
+      } catch { return "ai_output_invalid"; }
+    }
     const profileId = step.config.profileId;
     if (profileId !== undefined && profileId !== "default" &&
       (typeof profileId !== "string" || !z.string().uuid().safeParse(profileId).success)) return "ai_profile_not_found";
