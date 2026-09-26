@@ -52,7 +52,8 @@ function publicFeedUrl(value: string) {
 }
 
 async function queueItem(workflowId: string, versionId: string, title: string, summary: string,
-  link: string, imageUrl: string | null, legacyId?: string, uniqueId?: string, sourceKey?: string): Promise<boolean> {
+  link: string, imageUrl: string | null, legacyId?: string, uniqueId?: string, sourceKey?: string,
+  videoUrl?: string | null): Promise<boolean> {
   const db = getDb();
   const itemKey = createHash("sha256").update(uniqueId ?? link).digest("hex");
   const legacyKey = createHash("sha256").update(legacyId || link).digest("hex");
@@ -64,7 +65,7 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
   const [claimed] = await db.insert(newsItems).values({ workflowId, itemKey }).onConflictDoNothing().returning();
   if (!claimed) return false;
   const [run] = await db.insert(runs).values({ workflowId, workflowVersionId: versionId,
-    trigger: "rss", input: { title, text: summary || title, url: link, imageUrl, sourceKey }, status: "queued" }).returning();
+    trigger: "rss", input: { title, text: summary || title, url: link, imageUrl, videoUrl, sourceKey }, status: "queued" }).returning();
   await db.update(newsItems).set({ runId: run.id }).where(eq(newsItems.id, claimed.id));
   await db.insert(runEvents).values({ runId: run.id, type: "run_started", message: "Source item queued" });
   try {
@@ -79,7 +80,8 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
   return true;
 }
 
-type NewsCandidate = { title: string; text: string; url: string; imageUrl: string | null; legacyId?: string; uniqueId?: string };
+type NewsCandidate = { title: string; text: string; url: string; imageUrl: string | null;
+  videoUrl?: string | null; legacyId?: string; uniqueId?: string };
 
 async function sourceCandidates(source: typeof workflowSteps.$inferSelect): Promise<NewsCandidate[]> {
   const kind = source.config.sourceKind;
@@ -153,7 +155,7 @@ async function poll() {
             if (!item || queuedCount >= 15) continue;
             try {
               if (await queueItem(workflow.id, version.id, item.title, item.text, item.url,
-                item.imageUrl, item.legacyId, item.uniqueId, batch.source.key)) queuedCount++;
+                item.imageUrl, item.legacyId, item.uniqueId, batch.source.key, item.videoUrl)) queuedCount++;
             } catch (error) { console.error(`Queue failed for ${workflow.id}`, error); }
           }
         }
