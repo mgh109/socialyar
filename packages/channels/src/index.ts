@@ -147,14 +147,22 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
   let image: Blob | null = null;
   if (request.imageUrl) {
     try {
-      const url = new URL(request.imageUrl);
-      if (url.protocol !== "https:" || url.username || url.password || url.port || isIP(url.hostname)) throw new Error("Invalid image URL");
-      const addresses = await lookup(url.hostname, { all: true });
-      if (!addresses.length || addresses.some(({ address, family }) => family !== 4 ||
-        /^(?:0\.|10\.|127\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|198\.18\.|198\.19\.|22[4-9]\.|23\d\.|24\d\.|25\d\.)/.test(address))) {
-        throw new Error("Image host is not public IPv4");
+      let url = new URL(request.imageUrl);
+      let response: Response | undefined;
+      for (let redirects = 0; redirects <= 3; redirects++) {
+        if (url.protocol !== "https:" || url.username || url.password || url.port || isIP(url.hostname)) throw new Error("Invalid image URL");
+        const addresses = await lookup(url.hostname, { all: true });
+        if (!addresses.length || addresses.some(({ address, family }) => family !== 4 ||
+          /^(?:0\.|10\.|127\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|198\.18\.|198\.19\.|22[4-9]\.|23\d\.|24\d\.|25\d\.)/.test(address))) {
+          throw new Error("Image host is not public IPv4");
+        }
+        response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10000) });
+        if (![301, 302, 303, 307, 308].includes(response.status)) break;
+        const location = response.headers.get("location");
+        if (!location || redirects === 3) throw new Error("Too many image redirects");
+        url = new URL(location, url);
       }
-      const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(10000) });
+      if (!response) throw new Error("Image response missing");
       const length = Number(response.headers.get("content-length") ?? 0);
       const type = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
       if (!response.ok || !["image/jpeg", "image/png", "image/webp"].includes(type) || length > 5_000_000) throw new Error("Unsupported image");
@@ -170,7 +178,9 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
         chunks.push(Uint8Array.from(value).buffer as ArrayBuffer);
       }
       image = new Blob(chunks, { type });
-    } catch (error) { console.warn("Eitaa image unavailable; sending text", error); }
+    } catch (error) {
+      throw new Error(`Eitaa image could not be fetched: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
   }
   const form = new FormData();
   form.set("chat_id", chatId);
