@@ -93,6 +93,17 @@ export const aiSettings = pgTable("ai_settings", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export const aiProfiles = pgTable("ai_profiles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  encryptedToken: text("encrypted_token").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ workspaceIdx: index("ai_profiles_workspace_idx").on(t.workspaceId) }));
+
 export const newsItems = pgTable("news_items", {
   id: uuid("id").defaultRandom().primaryKey(),
   workflowId: uuid("workflow_id").notNull().references(() => workflows.id, { onDelete: "cascade" }),
