@@ -1,6 +1,7 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { graphProblem } from "@socialyar/workflow/graph";
 import {
   getDb,
   runEvents,
@@ -9,6 +10,7 @@ import {
   workflowVersions,
   workflows,
   workflowSteps,
+  workflowConnections,
 } from "@socialyar/db";
 import { workflowQueue } from "../queue";
 
@@ -47,6 +49,17 @@ export async function runRoutes(app: FastifyInstance) {
     if (!version) {
       return reply.code(409).send({ error: "workflow_has_no_version" });
     }
+
+    const graphSteps = await db.select({ id: workflowSteps.id, key: workflowSteps.key, type: workflowSteps.type })
+      .from(workflowSteps).where(eq(workflowSteps.workflowVersionId, version.id));
+    const graphEdges = await db.select({ sourceStepId: workflowConnections.sourceStepId,
+      targetStepId: workflowConnections.targetStepId }).from(workflowConnections)
+      .where(eq(workflowConnections.workflowVersionId, version.id));
+    const keys = new Map(graphSteps.map((step) => [step.id, step.key]));
+    const problem = graphProblem(graphSteps, graphEdges.map((edge) => ({
+      sourceKey: keys.get(edge.sourceStepId) ?? "", targetKey: keys.get(edge.targetStepId) ?? "",
+    })), true);
+    if (problem) return reply.code(409).send({ error: problem });
 
     const run = await db.transaction(async (tx) => {
       const [created] = await tx
@@ -148,13 +161,15 @@ export async function runRoutes(app: FastifyInstance) {
       .innerJoin(workflows, eq(runs.workflowId, workflows.id))
       .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
     if (!owned) return reply.code(404).send({ error: "run_not_found" });
-    return db.select({ key: workflowSteps.key, name: workflowSteps.name, type: workflowSteps.type })
-      .from(workflowSteps).where(eq(workflowSteps.workflowVersionId, owned.versionId)).orderBy(asc(workflowSteps.order));
+    return db.select({ key: workflowSteps.key, name: workflowSteps.name, type: workflowSteps.type,
+      status: runSteps.status, output: runSteps.output })
+      .from(workflowSteps).leftJoin(runSteps, and(eq(runSteps.workflowStepId, workflowSteps.id), eq(runSteps.runId, runId)))
+      .where(eq(workflowSteps.workflowVersionId, owned.versionId)).orderBy(asc(workflowSteps.order));
   });
 
   app.post("/runs/:runId/approval", async (request, reply) => {
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
-    const { action } = z.object({ action: z.enum(["approve", "reject"]) }).parse(request.body);
+    const { action, stepKey } = z.object({ action: z.enum(["approve", "reject"]), stepKey: z.string().optional() }).parse(request.body);
     const [owned] = await db.select({ run: runs }).from(runs)
       .innerJoin(workflows, eq(runs.workflowId, workflows.id))
       .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
@@ -163,18 +178,19 @@ export async function runRoutes(app: FastifyInstance) {
 
     const [pending] = await db.select({ step: runSteps }).from(runSteps)
       .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
-      .where(and(eq(runSteps.runId, runId), eq(runSteps.status, "waiting_approval"))).limit(1);
+      .where(and(eq(runSteps.runId, runId), eq(runSteps.status, "waiting_approval"),
+        ...(stepKey ? [eq(workflowSteps.key, stepKey)] : []))).limit(1);
     if (!pending) return reply.code(409).send({ error: "approval_step_not_found" });
-    const next = action === "approve" ? "queued" : "cancelled";
-    const [claimed] = await db.update(runs).set({ status: next, finishedAt: action === "reject" ? new Date() : null })
+    const next = "queued";
+    const [claimed] = await db.update(runs).set({ status: next, finishedAt: null })
       .where(and(eq(runs.id, runId), eq(runs.status, "waiting_approval"))).returning();
     if (!claimed) return reply.code(409).send({ error: "approval_already_resolved" });
     await db.update(runSteps).set({ status: action === "approve" ? "completed" : "skipped",
-      output: { approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
+      output: { ...(pending.step.output ?? {}), approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
       .where(eq(runSteps.id, pending.step.id));
     await db.insert(runEvents).values({ runId, runStepId: pending.step.id, type: "approval_resolved",
       payload: { action, resolvedBy: request.auth.userId } });
-    if (action === "approve") {
+    {
       try {
         await workflowQueue.add("execute-workflow", {
           runId, workflowId: owned.run.workflowId, workflowVersionId: owned.run.workflowVersionId,

@@ -34,7 +34,7 @@ export function parseEitaaPosts(html: string, handle: string): EitaaPost[] {
     posts.push({ title: text.split("\n")[0].slice(0, 180), text,
       url: `https://eitaa.com/s/${handle}/${wraps[index][1]}`, imageUrl });
   }
-  return posts.slice(-3);
+  return posts.slice(-10);
 }
 
 export async function fetchEitaaPosts(handle: string): Promise<EitaaPost[]> {

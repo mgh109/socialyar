@@ -29,7 +29,7 @@ export function parseBalePosts(html: string, handle: string) {
     posts.push({ id: starts[index][1], title: text.split("\n")[0].slice(0, 180), text,
       url: `https://ble.ir/s/${handle}`, imageUrl: image ? image.replace(/&amp;/g, "&") : null });
   }
-  return posts.slice(-3);
+  return posts.slice(-10);
 }
 
 export async function fetchBalePosts(handle: string) {
