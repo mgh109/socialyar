@@ -28,7 +28,7 @@ type ApprovalRow = {
   };
 };
 type WorkflowApproval = { runId: string; workflowName: string; stepKey: string; stepName: string;
-  output: { title?: string | null; text?: string; imageUrl?: string | null } | null; createdAt: string | null };
+  output: { title?: string | null; text?: string; imageUrl?: string | null; videoUrl?: string | null } | null; createdAt: string | null };
 
 const channelLabels: Record<string, string> = {
   instagram: "Instagram",
@@ -48,6 +48,7 @@ function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowApproval;
     <label className="workflow-approval-field"><span>عنوان خبر</span>
       <input value={title} maxLength={300} onChange={(event) => setTitle(event.target.value)} /></label>
     {item.output?.imageUrl ? <img src={item.output.imageUrl} alt="تصویر خبر برای بررسی" loading="lazy" /> : null}
+    {item.output?.videoUrl ? <video src={item.output.videoUrl} controls preload="metadata" aria-label="ویدئوی خبر برای بررسی" /> : null}
     <label className="workflow-approval-field"><span>متن خبر</span>
       <textarea value={text} maxLength={20000} onChange={(event) => setText(event.target.value)} rows={8} /></label>
     <div><button className="ghost-button" disabled={busy} onClick={() => void resolve(item, "reject")}>رد این شاخه</button>

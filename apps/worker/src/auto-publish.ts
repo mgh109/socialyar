@@ -14,7 +14,8 @@ export async function enqueueAutoPublication(runId: string) {
   const publishSteps = await db.select().from(workflowSteps)
     .where(and(eq(workflowSteps.workflowVersionId, row.run.workflowVersionId), eq(workflowSteps.type, "publish")));
   for (const publishStep of publishSteps) {
-    const generated = row.run.output?.[publishStep.key] as { text?: string; title?: string; url?: string; imageUrl?: string } | undefined;
+    const generated = row.run.output?.[publishStep.key] as { text?: string; title?: string; url?: string;
+      imageUrl?: string; videoUrl?: string } | undefined;
     if (!generated?.text) continue;
     try {
     const accountId = publishStep.config.accountId;
@@ -33,14 +34,16 @@ export async function enqueueAutoPublication(runId: string) {
     if (!content) {
       [content] = await db.insert(contentItems).values({ workspaceId: row.workspaceId, runId,
         title: generated.title ?? "خبر جدید", body: generated.text,
-        metadata: { sourceUrl: generated.url ?? null, imageUrl: generated.imageUrl ?? null, automated: true, publishStepKey: publishStep.key }, status: "approved" }).returning();
+        metadata: { sourceUrl: generated.url ?? null, imageUrl: generated.imageUrl ?? null,
+          videoUrl: generated.videoUrl ?? null, automated: true, publishStepKey: publishStep.key }, status: "approved" }).returning();
     }
     let [variant] = await db.select().from(contentVariants).where(and(
       eq(contentVariants.contentItemId, content.id), eq(contentVariants.channel, "eitaa"))).limit(1);
     if (!variant) {
       [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: "eitaa",
         title: content.title, body: generated.text,
-        settings: { imageUrl: generated.imageUrl ?? null, publishIntervalSeconds }, status: "approved", generatedBy: "ai" }).returning();
+        settings: { imageUrl: generated.imageUrl ?? null, videoUrl: generated.videoUrl ?? null,
+          publishIntervalSeconds }, status: "approved", generatedBy: "ai" }).returning();
     } else if (variant.settings.publishIntervalSeconds !== publishIntervalSeconds) {
       [variant] = await db.update(contentVariants).set({ settings: { ...variant.settings, publishIntervalSeconds } })
         .where(eq(contentVariants.id, variant.id)).returning();
