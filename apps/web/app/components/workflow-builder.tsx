@@ -261,29 +261,33 @@ export function WorkflowBuilder() {
             {autoEnabled ? "توقف پایش" : "فعال‌سازی خودکار"}</button>}
       </div></header>
     <div className="builder-layout"><section className="builder-workspace" aria-label="بوم جریان">
-      <div className="graph-toolbar"><div><h1>میز کار جریان</h1><p>کارت‌ها را بکش و از خروجی به ورودی وصل کن.</p></div>
-        <div className="graph-toolbar-actions"><span className="status-pill">{autoEnabled ? "● پایش فعال · هر ۵ دقیقه" : "○ پیش‌نویس"}</span>
-          <button type="button" onClick={arrange} disabled={!steps.length}>مرتب‌سازی کارت‌ها</button></div></div>
-      <div className="graph-palette"><details><summary>+ افزودن کارت</summary><div className="graph-palette-menu">
+      <div className="graph-frame"><div className="graph-canvas-controls"><div className="graph-canvas-actions">
+        <div className="graph-palette"><details><summary>+ افزودن کارت</summary><div className="graph-palette-menu">
         {types.map((item) => <button key={`${item.type}-${item.kind ?? ""}`} type="button" onClick={(event) => {
           add(item.type, item.kind); event.currentTarget.closest("details")?.removeAttribute("open");
-        }}>{item.label}</button>)}</div></details><span>منبع، پردازش و خروجی را به دلخواه اضافه کن.</span></div>
-      {activity && (activity.publication || activity.queueCount || activity.run) ? <div className="builder-activity"><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
+        }}>{item.label}</button>)}</div></details></div>
+        <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
+        </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? "پایش فعال؛ هر ۵ دقیقه" : "پیش‌نویس"}>{autoEnabled ? "● فعال" : "○ پیش‌نویس"}</span>
+        {activity && (activity.publication || activity.queueCount || activity.run) ? <details className="graph-activity"><summary title="آخرین فعالیت همین جریان" aria-label="آخرین فعالیت همین جریان">فعالیت</summary><div><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
         activity.publication?.status === "failed" ? "ارسال ناموفق" : activity.publication ? "در صف انتشار" : activity.run?.status ?? "بدون خبر"}
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
-        {activity.publication?.externalUrl ? <a href={activity.publication.externalUrl} target="_blank" rel="noreferrer">دیدن خبر ↗</a> : null}</div> : null}
+        {activity.publication?.externalUrl ? <a href={activity.publication.externalUrl} target="_blank" rel="noreferrer">دیدن خبر ↗</a> : null}</div></details> : null}</div></div>
       <div className="graph-scroll" ref={canvasRef} onPointerUp={(event) => {
         if (connecting && event.target === event.currentTarget) { setConnecting(null); setPointer(null); }
       }}><div className="graph-surface" style={{ width: surfaceWidth, height: surfaceHeight }}>
         <svg className="graph-lines" width={surfaceWidth} height={surfaceHeight} role="group" aria-label="اتصال‌های جریان">
-          <defs><marker id="graph-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M 1 1 L 7 4 L 1 7" /></marker></defs>
           {edges.map((edge) => {
             const from = steps.find((step) => step.key === edge.sourceKey), to = steps.find((step) => step.key === edge.targetKey);
             if (!from || !to) return null;
-            const path = stroke({ x: from.position.x, y: from.position.y + 70 },
-              { x: to.position.x + nodeWidth, y: to.position.y + 70 });
+            const start = { x: from.position.x, y: from.position.y + 70 };
+            const end = { x: to.position.x + nodeWidth, y: to.position.y + 70 };
+            const path = stroke(start, end);
+            const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+            const angle = Math.atan2(1.5 * (end.y - start.y), 1.5 * (end.x - start.x) + 138) * 180 / Math.PI;
             return <g key={edgeId(edge)} className={`graph-edge ${selectedEdge === edgeId(edge) ? "selected" : ""}`}>
-              <path className="edge-visible" d={path} markerEnd="url(#graph-arrow)" />
+              <path className="edge-visible" d={path} />
+              <circle className="edge-direction-bg" cx={midpoint.x} cy={midpoint.y} r="11" />
+              <path className="edge-direction" d="M -6 -5 L 1 0 L -6 5" transform={`translate(${midpoint.x} ${midpoint.y}) rotate(${angle})`} />
               <path className="edge-hit" d={path} role="button" tabIndex={0} aria-label={`اتصال ${edgeName(edge.sourceKey)} به ${edgeName(edge.targetKey)}`}
                 onClick={() => { setSelectedEdge(edgeId(edge)); setSelectedKey(""); }}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedEdge(edgeId(edge)); setSelectedKey(""); } }} />
@@ -318,7 +322,7 @@ export function WorkflowBuilder() {
             onPointerDown={(event) => { event.stopPropagation(); setConnecting(step.key); setPointer(null); }}
             onClick={(event) => { event.stopPropagation(); setConnecting(step.key); }}>●</button> : null}
         </article>)}
-      </div></div>
+      </div></div></div>
     </section><aside className="builder-settings"><h2>تنظیمات جریان</h2><label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
       {selectedEdge ? <div className="graph-edge-settings"><strong>اتصال انتخاب‌شده</strong>
         <p>{edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.sourceKey ?? "")} ← {edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.targetKey ?? "")}</p>
