@@ -276,14 +276,18 @@ export function WorkflowBuilder() {
         if (connecting && event.target === event.currentTarget) { setConnecting(null); setPointer(null); }
       }}><div className="graph-surface" style={{ width: surfaceWidth, height: surfaceHeight }}>
         <svg className="graph-lines" width={surfaceWidth} height={surfaceHeight} role="group" aria-label="اتصال‌های جریان">
-          <defs><marker id="graph-arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M 1 1 L 7 4 L 1 7" /></marker></defs>
           {edges.map((edge) => {
             const from = steps.find((step) => step.key === edge.sourceKey), to = steps.find((step) => step.key === edge.targetKey);
             if (!from || !to) return null;
-            const path = stroke({ x: from.position.x, y: from.position.y + 70 },
-              { x: to.position.x + nodeWidth, y: to.position.y + 70 });
+            const start = { x: from.position.x, y: from.position.y + 70 };
+            const end = { x: to.position.x + nodeWidth, y: to.position.y + 70 };
+            const path = stroke(start, end);
+            const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+            const angle = Math.atan2(1.5 * (end.y - start.y), 1.5 * (end.x - start.x) + 138) * 180 / Math.PI;
             return <g key={edgeId(edge)} className={`graph-edge ${selectedEdge === edgeId(edge) ? "selected" : ""}`}>
-              <path className="edge-visible" d={path} markerEnd="url(#graph-arrow)" />
+              <path className="edge-visible" d={path} />
+              <circle className="edge-direction-bg" cx={midpoint.x} cy={midpoint.y} r="11" />
+              <path className="edge-direction" d="M -6 -5 L 1 0 L -6 5" transform={`translate(${midpoint.x} ${midpoint.y}) rotate(${angle})`} />
               <path className="edge-hit" d={path} role="button" tabIndex={0} aria-label={`اتصال ${edgeName(edge.sourceKey)} به ${edgeName(edge.targetKey)}`}
                 onClick={() => { setSelectedEdge(edgeId(edge)); setSelectedKey(""); }}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedEdge(edgeId(edge)); setSelectedKey(""); } }} />
