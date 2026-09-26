@@ -2,6 +2,9 @@
   rules:
     - changes:
         - apps/api/**/*
+        - packages/db/**/*
+        - packages/workflow/**/*
+        - packages/ai/**/*
         - .env.example
         - .gitlab-ci.yml
 
@@ -15,6 +18,9 @@
   rules:
     - changes:
         - apps/worker/**/*
+        - packages/db/**/*
+        - packages/workflow/**/*
+        - packages/ai/**/*
         - .env.example
         - .gitlab-ci.yml
 
