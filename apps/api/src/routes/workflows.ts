@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { graphProblem } from "@socialyar/workflow/graph";
 import {
   getDb,
   aiSettings,
@@ -99,20 +100,16 @@ async function insertGraph(
   }
 }
 
-async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspaceId: string): Promise<string | null> {
+async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connections: z.infer<typeof connectionSchema>[], workspaceId: string): Promise<string | null> {
   const sorted = [...steps].sort((a, b) => a.order - b.order);
-  const types = sorted.map((step) => step.type);
   const source = sorted.find((step) => step.type === "rss_source");
-  const publisher = sorted.find((step) => step.type === "publish");
-  if (!source || types.length < 2 || types[0] !== "rss_source" ||
-    types.some((type) => !["rss_source", "ai", "human_approval", "draft", "publish"].includes(type) ||
-      types.filter((item) => item === type).length !== 1) ||
-    (publisher && types.at(-1) !== "publish")) {
-    return "auto_workflow_requires_rss_ai_and_eitaa_in_order";
-  }
+  const graphError = graphProblem(steps, connections, true);
+  if (graphError) return graphError;
+  if (!source || steps.some((step) => step.type === "manual_input")) return "graph_missing_input";
+  for (const source of sorted.filter((step) => step.type === "rss_source")) {
   const feedUrls = Array.isArray(source.config.feedUrls) ? source.config.feedUrls : [source.config.feedUrl];
-  const channels = source.config.eitaaChannels ?? [];
-  const baleChannels = source.config.baleChannels ?? [];
+  const channels = source.config.eitaaChannels ?? (source.config.sourceKind === "eitaa" ? [source.config.channel] : []);
+  const baleChannels = source.config.baleChannels ?? (source.config.sourceKind === "bale" ? [source.config.channel] : []);
   if (!Array.isArray(channels) || channels.length > 10 || channels.some((value) => typeof value !== "string" ||
     !/^(?:https:\/\/eitaa\.com\/(?:s\/)?|@)?[a-zA-Z0-9_]{4,32}\/?$/.test(value.trim())) ||
     new Set(channels.map((value) => String(value).trim().replace(/^https:\/\/eitaa\.com\/(?:s\/)?|^@|\/$/g, "").toLowerCase())).size !== channels.length) return "invalid_eitaa_source";
@@ -131,8 +128,9 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
         /^(localhost|.*\.local|.*\.internal)$/i.test(url.hostname)) return "invalid_rss_url";
     } catch { return "invalid_rss_url"; }
   }
+  }
   const db = getDb();
-  if (publisher) {
+  for (const publisher of sorted.filter((step) => step.type === "publish")) {
     const interval = publisher.config.publishIntervalSeconds ?? 30;
     if (typeof interval !== "number" || ![30, 60, 120, 300].includes(interval)) return "invalid_publish_interval";
     const accountId = publisher.config.accountId;
@@ -142,7 +140,11 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], workspac
         eq(socialAccounts.channel, "eitaa"), eq(socialAccounts.isActive, true))).limit(1);
     if (!account) return "eitaa_account_not_found";
   }
-  if (types.includes("ai")) {
+  for (const filter of sorted.filter((step) => step.type === "filter")) {
+    if (typeof filter.config.keywords !== "string" || !filter.config.keywords.trim() ||
+      !["include", "exclude"].includes(String(filter.config.mode ?? "include"))) return "graph_invalid_filter";
+  }
+  if (sorted.some((step) => step.type === "ai")) {
     const [settings] = await db.select().from(aiSettings)
       .where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
     if (!settings) return "ai_token_not_configured";
@@ -178,8 +180,10 @@ export async function workflowRoutes(app: FastifyInstance) {
 
   app.post("/workflows", async (request, reply) => {
     const input = createWorkflowSchema.parse(request.body);
+    const graphError = graphProblem(input.steps, input.connections, input.status === "active");
+    if (graphError) return reply.code(409).send({ error: graphError });
     if (input.status === "active" && input.autonomyMode === "full_auto") {
-      const problem = await autoWorkflowProblem(input.steps, request.auth.workspaceId);
+      const problem = await autoWorkflowProblem(input.steps, input.connections, request.auth.workspaceId);
       if (problem) return reply.code(409).send({ error: problem });
     }
 
@@ -324,8 +328,10 @@ export async function workflowRoutes(app: FastifyInstance) {
     if (!existing) {
       return reply.code(404).send({ error: "workflow_not_found" });
     }
+    const graphError = graphProblem(input.steps, input.connections, (input.status ?? existing.status) === "active");
+    if (graphError) return reply.code(409).send({ error: graphError });
     if ((input.status ?? existing.status) === "active" && (input.autonomyMode ?? existing.autonomyMode) === "full_auto") {
-      const problem = await autoWorkflowProblem(input.steps, request.auth.workspaceId);
+      const problem = await autoWorkflowProblem(input.steps, input.connections, request.auth.workspaceId);
       if (problem) return reply.code(409).send({ error: problem });
     }
 
