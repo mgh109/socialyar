@@ -1262,9 +1262,11 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 @media(max-width:700px) { .builder-workspace { padding:7px; } .graph-scroll { height:calc(100vh - 84px); min-height:450px; } .graph-canvas-controls { top:10px; right:10px; left:10px; } .graph-canvas-status { display:none; } }
 
 .graph-lines path.edge-visible { stroke-dasharray:5 5; stroke-width:1.8; }
-.graph-lines .edge-direction-bg { fill:var(--panel); stroke:var(--border); stroke-width:1; pointer-events:none; }
-.graph-lines path.edge-direction { fill:none; stroke:var(--accent-text); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
-.graph-edge.selected .edge-direction-bg { stroke:var(--green); }
+.graph-lines .edge-glow { fill:var(--green); filter:drop-shadow(0 0 4px var(--green)) drop-shadow(0 0 8px var(--green)); pointer-events:none; }
+.graph-edge.selected .edge-glow { r:5; }
+.graph-node-head .graph-delete { flex:none; display:grid; place-items:center; width:21px; height:21px; padding:0; line-height:1; font:inherit; font-size:16px; border-radius:5px; }
+.graph-node-head .graph-delete:hover { color:var(--red); background:var(--panel2); }
+@media(prefers-reduced-motion:reduce) { .graph-lines .edge-glow { display:none; } }
 
 .ai-profile-list { display:grid; gap:8px; }
 .ai-profile-list > div { display:flex; align-items:stretch; gap:7px; }
