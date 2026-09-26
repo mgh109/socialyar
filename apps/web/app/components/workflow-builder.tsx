@@ -10,6 +10,7 @@ type Position = { x: number; y: number };
 type Step = { key: string; type: string; name: string; config: Record<string, unknown>; position: Position };
 type Edge = { sourceKey: string; targetKey: string };
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
+type AIProfile = { id: string; name: string; provider: string; model: string };
 type Activity = { run: { status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
 const isSource = (step: Step) => step.type === "rss_source" || step.type === "manual_input";
 const isTerminal = (step: Step) => step.type === "publish" || step.type === "draft";
@@ -32,6 +33,7 @@ const errors: Record<string, string> = {
   invalid_rss_url: "آدرس RSS باید HTTPS عمومی باشد.", invalid_eitaa_source: "شناسهٔ کانال ایتا معتبر نیست.",
   invalid_bale_source: "شناسهٔ کانال بله معتبر نیست.", eitaa_account_required: "کانال خروجی ایتا را انتخاب کن.",
   eitaa_account_not_found: "اتصال کانال ایتا معتبر نیست.", ai_token_not_configured: "توکن AI را تنظیم کن.",
+  ai_profile_not_found: "مدل AI انتخاب‌شده موجود نیست؛ یک مدل معتبر انتخاب کن.",
   invalid_publish_interval: "فاصلهٔ انتشار معتبر نیست.",
   duplicate_publish_channel: "هر کانال خروجی را فقط به یک کارت انتشار وصل کن.",
 };
@@ -81,6 +83,7 @@ export function WorkflowBuilder() {
   const [autoEnabled, setAutoEnabled] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [aiReady, setAiReady] = useState(false);
+  const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([]);
   const [activity, setActivity] = useState<Activity | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
@@ -108,9 +111,9 @@ export function WorkflowBuilder() {
   }, []);
 
   useEffect(() => {
-    void Promise.all([apiFetch("/social-accounts"), apiFetch("/settings/ai")]).then(async ([a, ai]) => {
+    void Promise.all([apiFetch("/social-accounts"), apiFetch("/settings/ai/profiles")]).then(async ([a, ai]) => {
       if (a.ok) setAccounts(await a.json());
-      if (ai.ok) setAiReady((await ai.json()).configured);
+      if (ai.ok) { const data = await ai.json(); setAiProfiles(data.profiles); setAiReady(data.profiles.length > 0); }
     }).catch(() => {});
     const id = new URLSearchParams(window.location.search).get("id");
     if (!id) return;
@@ -162,7 +165,8 @@ export function WorkflowBuilder() {
     const count = steps.length;
     const config = type === "rss_source" ? kind === "rss" ? { sourceKind: "rss", feedUrl: "" } :
       { sourceKind: kind, channel: "" } : type === "publish" ? { accountId: "", publishIntervalSeconds: 30 } :
-      type === "filter" ? { keywords: "", mode: "include" } : {};
+      type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
+      { profileId: aiProfiles[0]?.id ?? "default" } : {};
     const step = { key, type, name: type === "rss_source" ? "منبع" :
       types.find((item) => item.type === type)?.label ?? "کارت", config,
       position: { x: Math.max(35, 560 - count % 3 * 250), y: 75 + Math.floor(count / 3) * 190 } };
@@ -221,7 +225,8 @@ export function WorkflowBuilder() {
     setBusy(true); setMessage("در حال ذخیره...");
     try {
       if (!name.trim()) throw new Error("نام جریان را وارد کن.");
-      if (active && steps.some((step) => step.type === "ai") && !aiReady) throw new Error("برای اجرای AI، توکن را تنظیم کن.");
+      if (active && steps.some((step) => step.type === "ai" && !aiProfiles.some((profile) =>
+        profile.id === String(step.config.profileId ?? "default")))) throw new Error("برای هر کارت AI یک مدل معتبر انتخاب کن.");
       const body = { name: name.trim(), description: `${steps.length} کارت · ${edges.length} اتصال`,
         status: active ? "active" : "draft", autonomyMode: manual ? "assisted" : "full_auto", prompt,
         steps: steps.map((step, order) => ({ ...step, order })), connections: edges };
@@ -351,7 +356,12 @@ export function WorkflowBuilder() {
             onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))}>
             <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={120}>۲ دقیقه</option><option value={300}>۵ دقیقه</option></select></label>
           {!eitaaAccounts.length ? <Link href="/connections">+ اتصال کانال ایتا</Link> : null}</> : null}
-        {selected.type === "ai" ? <><label><span>دستور بازنویسی</span><textarea value={String(selected.config.instructions ?? "")}
+        {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
+          onChange={(event) => update(selected.key, "profileId", event.target.value)}>
+          {!aiProfiles.some((profile) => profile.id === String(selected.config.profileId ?? "default")) ?
+            <option value={String(selected.config.profileId ?? "default")}>مدل انتخاب‌شده موجود نیست</option> : null}
+          {aiProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider} / {profile.model}</option>)}
+          </select></label><label><span>دستور بازنویسی</span><textarea value={String(selected.config.instructions ?? "")}
           onChange={(event) => update(selected.key, "instructions", event.target.value)} placeholder="خبر را کوتاه و دقیق بازنویسی کن." /></label>
           <Link href="/settings/ai">{aiReady ? "✓ مدل AI تنظیم شده" : "+ تنظیم مدل و توکن AI"}</Link></> : null}
         {selected.type === "manual_input" ? <label><span>متن ورودی</span><textarea value={prompt}
