@@ -6,6 +6,7 @@ import { graphProblem } from "@socialyar/workflow/graph";
 import {
   getDb,
   aiSettings,
+  aiProfiles,
   contentItems,
   contentVariants,
   publications,
@@ -146,10 +147,15 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     if (typeof filter.config.keywords !== "string" || !filter.config.keywords.trim() ||
       !["include", "exclude"].includes(String(filter.config.mode ?? "include"))) return "graph_invalid_filter";
   }
-  if (sorted.some((step) => step.type === "ai")) {
-    const [settings] = await db.select().from(aiSettings)
-      .where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
-    if (!settings) return "ai_token_not_configured";
+  for (const step of sorted.filter((item) => item.type === "ai")) {
+    const profileId = step.config.profileId;
+    if (profileId !== undefined && profileId !== "default" &&
+      (typeof profileId !== "string" || !z.string().uuid().safeParse(profileId).success)) return "ai_profile_not_found";
+    const [settings] = profileId && profileId !== "default" ? await db.select({ id: aiProfiles.id }).from(aiProfiles)
+      .where(and(eq(aiProfiles.id, profileId as string), eq(aiProfiles.workspaceId, workspaceId))).limit(1) :
+      await db.select({ id: aiSettings.workspaceId }).from(aiSettings)
+        .where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
+    if (!settings) return profileId && profileId !== "default" ? "ai_profile_not_found" : "ai_token_not_configured";
   }
   return null;
 }
