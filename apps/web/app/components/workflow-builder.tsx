@@ -33,6 +33,7 @@ const errors: Record<string, string> = {
   invalid_bale_source: "شناسهٔ کانال بله معتبر نیست.", eitaa_account_required: "کانال خروجی ایتا را انتخاب کن.",
   eitaa_account_not_found: "اتصال کانال ایتا معتبر نیست.", ai_token_not_configured: "توکن AI را تنظیم کن.",
   invalid_publish_interval: "فاصلهٔ انتشار معتبر نیست.",
+  duplicate_publish_channel: "هر کانال خروجی را فقط به یک کارت انتشار وصل کن.",
 };
 const nodeWidth = 190;
 const freshKey = () => `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
