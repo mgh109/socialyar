@@ -156,7 +156,10 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
           /^(?:0\.|10\.|127\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|198\.18\.|198\.19\.|22[4-9]\.|23\d\.|24\d\.|25\d\.)/.test(address))) {
           throw new Error("Image host is not public IPv4");
         }
-        response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10000) });
+        response = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10000),
+          headers: url.hostname === "eitaa.com" ? {
+            "User-Agent": "Mozilla/5.0 (compatible; HoorNewsBot/1.0)", Referer: "https://eitaa.com/",
+          } : {} });
         if (![301, 302, 303, 307, 308].includes(response.status)) break;
         const location = response.headers.get("location");
         if (!location || redirects === 3) throw new Error("Too many image redirects");
@@ -164,8 +167,9 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
       }
       if (!response) throw new Error("Image response missing");
       const length = Number(response.headers.get("content-length") ?? 0);
-      const type = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
-      if (!response.ok || !["image/jpeg", "image/png", "image/webp"].includes(type) || length > 5_000_000) throw new Error("Unsupported image");
+      const declaredType = response.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+      if (!response.ok) throw new Error(`Image server returned HTTP ${response.status}`);
+      if (length > 5_000_000) throw new Error("Image is too large");
       if (!response.body) throw new Error("Image has no body");
       const reader = response.body.getReader();
       const chunks: ArrayBuffer[] = [];
@@ -177,7 +181,13 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
         if (size > 5_000_000) { await reader.cancel(); throw new Error("Image is too large"); }
         chunks.push(Uint8Array.from(value).buffer as ArrayBuffer);
       }
-      image = new Blob(chunks, { type });
+      const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+      const type = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? "image/jpeg" :
+        bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 ? "image/png" :
+        String.fromCharCode(...bytes.slice(0, 4)) === "RIFF" && String.fromCharCode(...bytes.slice(8, 12)) === "WEBP" ? "image/webp" :
+        ["GIF87a", "GIF89a"].includes(String.fromCharCode(...bytes.slice(0, 6))) ? "image/gif" : null;
+      if (!type) throw new Error(`Image URL did not return a supported image (HTTP ${response.status}, Content-Type: ${declaredType || "unknown"})`);
+      image = new Blob([bytes], { type });
     } catch (error) {
       throw new Error(`Eitaa image could not be fetched: ${error instanceof Error ? error.message : "unknown error"}`);
     }
@@ -185,7 +195,7 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
   const form = new FormData();
   form.set("chat_id", chatId);
   form.set(image ? "caption" : "text", message);
-  if (image) form.set("file", image, image.type === "image/png" ? "news.png" : image.type === "image/webp" ? "news.webp" : "news.jpg");
+  if (image) form.set("file", image, image.type === "image/png" ? "news.png" : image.type === "image/webp" ? "news.webp" : image.type === "image/gif" ? "news.gif" : "news.jpg");
   const response = await fetch(`https://eitaayar.ir/api/${encodeURIComponent(botToken)}/${image ? "sendFile" : "sendMessage"}`, {
     method: "POST",
     body: form,
