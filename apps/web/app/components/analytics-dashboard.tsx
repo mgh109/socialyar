@@ -48,12 +48,15 @@ type PublicationRow = {
 };
 
 const channelLabels: Record<string, string> = {
-  instagram: "Instagram",
-  telegram: "Telegram",
+  instagram: "اینستاگرام",
+  telegram: "تلگرام",
   eitaa: "ایتا",
-  website: "Website",
-  x: "X",
-  linkedin: "LinkedIn",
+  website: "وب‌سایت",
+  x: "ایکس",
+  linkedin: "لینکدین",
+};
+const statusLabels: Record<string, string> = {
+  queued: "در صف", publishing: "در حال انتشار", published: "منتشرشده", failed: "ناموفق", cancelled: "لغوشده",
 };
 
 export function AnalyticsDashboard() {
@@ -63,6 +66,17 @@ export function AnalyticsDashboard() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [message, setMessage] = useState("در حال دریافت آمار...");
   const [retrying, setRetrying] = useState<string | null>(null);
+
+  const cancel = async (id: string) => {
+    if (!window.confirm("این خبر از صف انتشار حذف شود؟")) return;
+    setRetrying(id);
+    try {
+      const response = await apiFetch(`/publications/${id}/cancel`, { method: "POST" });
+      if (!response.ok) throw new Error(response.status === 409 ? "انتشار شروع شده یا قبلاً لغو شده است" : "لغو انتشار ناموفق بود");
+      await load(); setMessage("انتشار این خبر لغو شد");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "لغو انتشار ناموفق بود"); }
+    finally { setRetrying(null); }
+  };
 
   const retry = async (id: string) => {
     setRetrying(id);
@@ -87,7 +101,7 @@ export function AnalyticsDashboard() {
     ]);
 
     if (!summaryResponse.ok || !historyResponse.ok) {
-      throw new Error("Analytics data could not be loaded");
+      throw new Error("دریافت آمار و تاریخچه انتشار ناموفق بود");
     }
 
     setSummary(await summaryResponse.json());
@@ -97,7 +111,7 @@ export function AnalyticsDashboard() {
 
   useEffect(() => {
     void load().catch((error) =>
-      setMessage(error instanceof Error ? error.message : "خطا در Analytics"),
+      setMessage(error instanceof Error ? error.message : "خطا در دریافت آمار"),
     );
   }, [workspaceId]);
 
@@ -118,7 +132,7 @@ export function AnalyticsDashboard() {
           <div className="brand-lockup">
             <BrandLogo />
             <TopMenu />
-            <span>Analytics</span>
+            <span>آمار انتشار</span>
           </div>
         </header>
         <div className="studio-loading">{message}</div>
@@ -132,15 +146,15 @@ export function AnalyticsDashboard() {
         <div className="brand-lockup">
           <BrandLogo />
           <TopMenu />
-          <span>Analytics & Publication History</span>
+          <span>آمار و تاریخچه انتشار</span>
         </div>
         <div className="header-actions">
           <span className="save-status">{message}</span>
           <Link className="ghost-link" href="/connections">
-            Connections
+            اتصال کانال‌ها
           </Link>
           <Link className="ghost-link" href="/calendar">
-            Calendar
+            تقویم
           </Link>
         </div>
       </header>
@@ -150,7 +164,7 @@ export function AnalyticsDashboard() {
           <span className="micro-label">عملکرد انتشار</span>
           <h1>داشبورد انتشار و سلامت کانال‌ها</h1>
           <p>
-            آمار این صفحه مستقیماً از publicationها و analytics eventهای ثبت‌شده محاسبه می‌شود.
+            آمار این صفحه از انتشارها و رویدادهای ثبت‌شده محاسبه می‌شود.
           </p>
         </div>
 
@@ -172,7 +186,7 @@ export function AnalyticsDashboard() {
             <strong>{summary.totals.queued}</strong>
           </article>
           <article className="metric-card">
-            <span>Success Rate</span>
+            <span>نرخ موفقیت</span>
             <strong>{summary.totals.successRate}%</strong>
           </article>
           <article className="metric-card">
@@ -219,8 +233,8 @@ export function AnalyticsDashboard() {
         <section className="history-section">
           <div className="section-title-row">
             <div>
-              <h2>Publication History</h2>
-              <p>تاریخچه واقعی صف، موفقیت، خطا و Retryها</p>
+              <h2>تاریخچه انتشار</h2>
+              <p>وضعیت صف، انتشار و تلاش‌های دوباره</p>
             </div>
 
             <select
@@ -229,23 +243,19 @@ export function AnalyticsDashboard() {
               onChange={(event) => setStatusFilter(event.target.value)}
             >
               <option value="all">همه وضعیت‌ها</option>
-              <option value="queued">Queued</option>
-              <option value="publishing">Publishing</option>
-              <option value="published">Published</option>
-              <option value="failed">Failed</option>
-              <option value="cancelled">Cancelled</option>
+              {Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </div>
 
           <div className="history-list">
             {filtered.length === 0 ? (
-              <div className="empty-state">Publicationی با این وضعیت وجود ندارد.</div>
+              <div className="empty-state">انتشاری با این وضعیت وجود ندارد.</div>
             ) : (
               filtered.map((row) => (
                 <article className="history-row" key={row.publication.id}>
                   <div className="history-status">
                     <span className={`publication-state ${row.publication.status}`}>
-                      {row.publication.status}
+                      {statusLabels[row.publication.status] ?? row.publication.status}
                     </span>
                   </div>
 
@@ -258,7 +268,7 @@ export function AnalyticsDashboard() {
                     <span>
                       {channelLabels[row.variant.channel] ?? row.variant.channel}
                       {" · "}
-                      Attempt {row.publication.attempt || 0}
+                      {`تلاش ${row.publication.attempt || 0}`}
                     </span>
                   </div>
 
@@ -277,6 +287,8 @@ export function AnalyticsDashboard() {
                   <div className="history-action">
                     {row.publication.status === "failed" ? <button className="ghost-button" disabled={retrying === row.publication.id}
                       onClick={() => void retry(row.publication.id)}>تلاش دوباره</button> : null}
+                    {row.publication.status === "queued" ? <button className="danger-button" disabled={retrying === row.publication.id}
+                      onClick={() => void cancel(row.publication.id)}>لغو انتشار</button> : null}
                     {row.publication.externalUrl ? (
                       <a
                         className="ghost-link"
@@ -290,7 +302,7 @@ export function AnalyticsDashboard() {
                       <span className="history-error">
                         {String(
                           (row.publication.error as { message?: unknown }).message ??
-                            "Publication failed",
+                            "انتشار ناموفق بود",
                         )}
                       </span>
                     ) : (
@@ -306,14 +318,14 @@ export function AnalyticsDashboard() {
         <section className="event-summary">
           <div className="section-title-row">
             <div>
-              <h2>Engagement Events</h2>
-              <p>رویدادهایی که از کانال‌ها یا webhookهای تحلیل ثبت شده‌اند</p>
+              <h2>رویدادهای تعامل</h2>
+              <p>رویدادهایی که از کانال‌ها یا وب‌هوک‌های تحلیل ثبت شده‌اند</p>
             </div>
           </div>
           <div className="event-metric-grid">
             {summary.events.length === 0 ? (
               <div className="empty-state">
-                هنوز analytics event خارجی ثبت نشده.
+                هنوز رویدادی از کانال‌ها ثبت نشده است.
               </div>
             ) : (
               summary.events.map((event) => (
