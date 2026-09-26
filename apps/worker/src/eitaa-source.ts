@@ -1,5 +1,5 @@
 /** Reads the publicly visible Eitaa channel page. Eitaayar's API only supports sending. */
-export type EitaaPost = { title: string; text: string; url: string; imageUrl: string | null };
+export type EitaaPost = { title: string; text: string; url: string; imageUrl: string | null; videoUrl: string | null };
 
 export function channelHandle(value: string): string {
   const match = value.trim().match(/^(?:https:\/\/eitaa\.com\/(?:s\/)?|@)?([a-zA-Z0-9_]{4,32})\/?$/);
@@ -25,10 +25,8 @@ export function parseEitaaPosts(html: string, handle: string): EitaaPost[] {
     const section = html.slice(wraps[index].index, wraps[index + 1]?.index ?? html.length);
     if (!section.includes(`data-post="${handle}/${wraps[index][1]}"`)) continue;
     const raw = section.match(/<div\s+class="[^"]*\bjs-message_text\b[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1];
-    if (!raw) continue;
-    const text = decode(raw.replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]*>/g, " "))
-      .replace(/[ \t]+/g, " ").trim().slice(0, 9000);
-    if (!text) continue;
+    const text = raw ? decode(raw.replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]*>/g, " "))
+      .replace(/[ \t]+/g, " ").trim().slice(0, 9000) : "";
     const photoTag = section.match(/<[^>]*\b(?:etme_widget_message_photo_wrap|tgme_widget_message_photo_wrap)\b[^>]*>/)?.[0];
     const rawImage = photoTag && decode(photoTag).match(/background-image\s*:\s*url\(\s*['"]?([^'"\s)]+)['"]?\s*\)/i)?.[1];
     let imageUrl: string | null = null;
@@ -37,8 +35,17 @@ export function parseEitaaPosts(html: string, handle: string): EitaaPost[] {
         if (url.protocol === "https:" && url.hostname === "eitaa.com") imageUrl = url.href;
       } catch { /* Ignore an unusable photo URL. */ }
     }
-    posts.push({ title: text.split("\n")[0].slice(0, 180), text,
-      url: `https://eitaa.com/s/${handle}/${wraps[index][1]}`, imageUrl });
+    const videoTag = section.match(/<video\b[^>]*>/i)?.[0];
+    const rawVideo = videoTag?.match(/\b(?:src|data-src)=["']([^"']+)["']/i)?.[1] ??
+      section.match(/<source\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/i)?.[1] ??
+      section.match(/<a\b[^>]*\bclass=["'][^"']*\b(?:etme_widget_message_video|tgme_widget_message_video)\b[^"']*["'][^>]*\bhref=["']([^"']+)["']/i)?.[1];
+    let videoUrl: string | null = null;
+    if (rawVideo) try { const url = new URL(decode(rawVideo), "https://eitaa.com");
+      if (url.protocol === "https:" && url.hostname === "eitaa.com") videoUrl = url.href;
+    } catch { /* Ignore an unusable video URL. */ }
+    if (!text && !videoUrl) continue;
+    posts.push({ title: text.split("\n")[0].slice(0, 180) || "ویدئو", text: text || "ویدئو",
+      url: `https://eitaa.com/s/${handle}/${wraps[index][1]}`, imageUrl, videoUrl });
   }
   return posts.slice(-10);
 }
