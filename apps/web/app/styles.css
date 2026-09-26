@@ -1265,3 +1265,12 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .graph-lines .edge-direction-bg { fill:var(--panel); stroke:var(--border); stroke-width:1; pointer-events:none; }
 .graph-lines path.edge-direction { fill:none; stroke:var(--accent-text); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
 .graph-edge.selected .edge-direction-bg { stroke:var(--green); }
+
+.ai-profile-list { display:grid; gap:8px; }
+.ai-profile-list > div { display:flex; align-items:stretch; gap:7px; }
+.ai-profile-list button { border:1px solid var(--border); background:var(--panel2); color:var(--text); border-radius:8px; padding:9px 12px; cursor:pointer; text-align:right; }
+.ai-profile-list button:first-child { flex:1; display:flex; justify-content:space-between; gap:12px; align-items:center; }
+.ai-profile-list button:hover { border-color:var(--green); }
+.ai-profile-list small { color:var(--muted); direction:ltr; }
+.ai-profile-list .ai-profile-delete { color:var(--red); }
+.ai-profile-actions { display:flex; flex-wrap:wrap; gap:8px; }
