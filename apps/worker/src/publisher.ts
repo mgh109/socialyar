@@ -77,7 +77,7 @@ export async function executePublication(input: {
     if (waitMs) await pause(waitMs);
   }
 
-  await db
+  const [claimed] = await db
     .update(publications)
     .set({
       status: "publishing",
@@ -86,7 +86,8 @@ export async function executePublication(input: {
       socialAccountId: account?.id ?? null,
       updatedAt: new Date(),
     })
-    .where(eq(publications.id, publication.id));
+    .where(and(eq(publications.id, publication.id), eq(publications.status, "queued"))).returning();
+  if (!claimed) return;
 
   try {
     if (!account) throw new Error(`No active social account configured for ${variant.channel}`);
