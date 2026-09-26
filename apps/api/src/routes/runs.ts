@@ -179,7 +179,9 @@ export async function runRoutes(app: FastifyInstance) {
 
   app.post("/runs/:runId/approval", async (request, reply) => {
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
-    const { action, stepKey } = z.object({ action: z.enum(["approve", "reject"]), stepKey: z.string().optional() }).parse(request.body);
+    const { action, stepKey, edit } = z.object({ action: z.enum(["approve", "reject"]), stepKey: z.string().optional(),
+      edit: z.object({ title: z.string().trim().max(300).nullable().optional(),
+        text: z.string().trim().min(1).max(20000) }).optional() }).parse(request.body);
     const [owned] = await db.select({ run: runs }).from(runs)
       .innerJoin(workflows, eq(runs.workflowId, workflows.id))
       .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
@@ -196,7 +198,8 @@ export async function runRoutes(app: FastifyInstance) {
       .where(and(eq(runs.id, runId), eq(runs.status, "waiting_approval"))).returning();
     if (!claimed) return reply.code(409).send({ error: "approval_already_resolved" });
     await db.update(runSteps).set({ status: action === "approve" ? "completed" : "skipped",
-      output: { ...(pending.step.output ?? {}), approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
+      output: { ...(pending.step.output ?? {}), ...(action === "approve" ? edit : {}),
+        approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
       .where(eq(runSteps.id, pending.step.id));
     await db.insert(runEvents).values({ runId, runStepId: pending.step.id, type: "approval_resolved",
       payload: { action, resolvedBy: request.auth.userId } });

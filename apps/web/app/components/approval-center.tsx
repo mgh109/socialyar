@@ -39,6 +39,23 @@ const channelLabels: Record<string, string> = {
   linkedin: "LinkedIn",
 };
 
+function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowApproval; busy: boolean;
+  resolve: (item: WorkflowApproval, action: "approve" | "reject", edit?: { title: string; text: string }) => Promise<void> }) {
+  const [title, setTitle] = useState(item.output?.title ?? "");
+  const [text, setText] = useState(item.output?.text ?? "");
+  return <article>
+    <small>{item.workflowName} · {item.stepName}</small>
+    <label className="workflow-approval-field"><span>عنوان خبر</span>
+      <input value={title} maxLength={300} onChange={(event) => setTitle(event.target.value)} /></label>
+    {item.output?.imageUrl ? <img src={item.output.imageUrl} alt="تصویر خبر برای بررسی" loading="lazy" /> : null}
+    <label className="workflow-approval-field"><span>متن خبر</span>
+      <textarea value={text} maxLength={20000} onChange={(event) => setText(event.target.value)} rows={8} /></label>
+    <div><button className="ghost-button" disabled={busy} onClick={() => void resolve(item, "reject")}>رد این شاخه</button>
+      <button className="primary-button" disabled={busy || !text.trim()} onClick={() => void resolve(item, "approve", { title: title.trim(), text: text.trim() })}>تأیید و ادامه</button>
+      <Link href={`/runs/${item.runId}`}>جزئیات اجرا</Link></div>
+  </article>;
+}
+
 export function ApprovalCenter() {
   const workspaceId = getWorkspaceId();
   const [rows, setRows] = useState<ApprovalRow[]>([]);
@@ -71,12 +88,12 @@ export function ApprovalCenter() {
     if (!response.ok) throw new Error("دریافت تأییدهای جریان ناموفق بود");
     setWorkflowApprovals(await response.json());
   };
-  const resolveWorkflow = async (item: WorkflowApproval, action: "approve" | "reject") => {
+  const resolveWorkflow = async (item: WorkflowApproval, action: "approve" | "reject", edit?: { title: string; text: string }) => {
     if (action === "reject" && !window.confirm("این شاخه رد شود؟ خبر از این مسیر منتشر نمی‌شود.")) return;
     setBusy(true); setMessage("در حال ثبت تصمیم...");
     try {
       const response = await apiFetch(`/runs/${item.runId}/approval`, { method: "POST",
-        body: JSON.stringify({ action, stepKey: item.stepKey }) });
+        body: JSON.stringify({ action, stepKey: item.stepKey, edit }) });
       if (!response.ok) throw new Error(`ثبت تصمیم ناموفق بود (${response.status})`);
       await loadWorkflowApprovals(); setMessage(action === "approve" ? "شاخه تأیید شد و ادامه می‌یابد." : "شاخه رد شد.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "ثبت تصمیم ناموفق بود"); }
@@ -164,13 +181,9 @@ export function ApprovalCenter() {
       </header>
 
       <section className="workflow-approval-section"><div><h1>تأیید انسانی جریان‌ها</h1><p>خبرهای این کارت‌ها تا تصمیم شما در همین شاخه متوقف می‌مانند.</p></div>
-        {workflowApprovals.length ? <div className="workflow-approval-grid">{workflowApprovals.map((item) => <article key={`${item.runId}-${item.stepKey}`}>
-          <small>{item.workflowName} · {item.stepName}</small><h2>{item.output?.title || "خبر بدون عنوان"}</h2>
-          {item.output?.imageUrl ? <img src={item.output.imageUrl} alt="تصویر خبر برای بررسی" loading="lazy" /> : null}
-          <p>{item.output?.text || "متنی ثبت نشده"}</p>
-          <div><button className="ghost-button" disabled={busy} onClick={() => void resolveWorkflow(item, "reject")}>رد این شاخه</button>
-            <button className="primary-button" disabled={busy} onClick={() => void resolveWorkflow(item, "approve")}>تأیید و ادامه</button>
-            <Link href={`/runs/${item.runId}`}>جزئیات اجرا</Link></div></article>)}</div> : <p className="workflow-approval-empty">در حال حاضر خبری منتظر تأیید انسانی نیست.</p>}
+        {workflowApprovals.length ? <div className="workflow-approval-grid">{workflowApprovals.map((item) =>
+          <WorkflowApprovalCard key={`${item.runId}-${item.stepKey}`} item={item} busy={busy} resolve={resolveWorkflow} />)}</div> :
+          <p className="workflow-approval-empty">در حال حاضر خبری منتظر تأیید انسانی نیست.</p>}
       </section>
 
       <section className="approval-shell">
