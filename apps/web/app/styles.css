@@ -1260,3 +1260,8 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .graph-activity a { color:var(--accent-text); }
 .graph-palette-menu { max-height:min(70vh,400px); overflow-y:auto; }
 @media(max-width:700px) { .builder-workspace { padding:7px; } .graph-scroll { height:calc(100vh - 84px); min-height:450px; } .graph-canvas-controls { top:10px; right:10px; left:10px; } .graph-canvas-status { display:none; } }
+
+.graph-lines path.edge-visible { stroke-dasharray:5 5; stroke-width:1.8; }
+.graph-lines .edge-direction-bg { fill:var(--panel); stroke:var(--border); stroke-width:1; pointer-events:none; }
+.graph-lines path.edge-direction { fill:none; stroke:var(--accent-text); stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
+.graph-edge.selected .edge-direction-bg { stroke:var(--green); }
