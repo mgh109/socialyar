@@ -2,6 +2,7 @@
 import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
+import { TopMenu } from "./top-menu";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -116,6 +117,7 @@ export function AnalyticsDashboard() {
         <header className="app-header">
           <div className="brand-lockup">
             <BrandLogo />
+            <TopMenu />
             <span>Analytics</span>
           </div>
         </header>
@@ -129,6 +131,7 @@ export function AnalyticsDashboard() {
       <header className="app-header">
         <div className="brand-lockup">
           <BrandLogo />
+          <TopMenu />
           <span>Analytics & Publication History</span>
         </div>
         <div className="header-actions">
