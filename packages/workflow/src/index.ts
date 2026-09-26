@@ -7,7 +7,8 @@ import {
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
 type Step = typeof workflowSteps.$inferSelect;
 type Edge = typeof workflowConnections.$inferSelect;
-type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null; queuedForPublication?: boolean };
+type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
+  videoUrl?: string | null; queuedForPublication?: boolean };
 
 function transientAIError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -121,7 +122,8 @@ export async function executeRun(input: ExecuteRunInput) {
           const text = run.input.text ?? run.input.prompt;
           if (typeof text !== "string" || !text.trim()) throw new Error("A text input is required");
           output = { text: text.trim(), title: run.input.title as string ?? null,
-            url: run.input.url as string ?? null, imageUrl: run.input.imageUrl as string ?? null };
+            url: run.input.url as string ?? null, imageUrl: run.input.imageUrl as string ?? null,
+            videoUrl: run.input.videoUrl as string ?? null };
         } else if (step.type === "filter") {
           if (!upstream?.text) throw new Error("Filter needs an incoming news item");
           const words = String(step.config.keywords ?? "").split(/[،,\n]/).map((word) => word.trim().toLocaleLowerCase()).filter(Boolean);
