@@ -8,7 +8,7 @@ const setupErrors: Record<string, string> = {
   secret_key_missing: "کلید رمزنگاری HOOR_SECRET_KEY روی سرویس API تنظیم نشده است. مدیر سامانه باید آن را روی API و worker با مقدار یکسان تنظیم کند.",
   secret_key_invalid: "مقدار HOOR_SECRET_KEY معتبر نیست؛ باید خروجی base64 مربوط به ۳۲ بایت تصادفی باشد.",
   ai_settings_migration_required: "جدول تنظیمات هوش مصنوعی در پایگاه داده وجود ندارد. مدیر سامانه باید migration شمارهٔ 0002 را اجرا کند.",
-  ai_profiles_migration_required: "جدول مدل‌های هوش مصنوعی وجود ندارد. migration شمارهٔ 0003_ai_profiles.sql را اجرا کن.",
+  ai_profiles_migration_required: "جدول مدل‌های هوش مصنوعی ساخته نشد. دسترسی ساخت جدول برای حساب دیتابیس API را بررسی کن یا migration شمارهٔ 0003_ai_profiles.sql را اجرا کن.",
   ai_profile_in_use: "این مدل در یک جریان استفاده می‌شود. ابتدا مدل آن کارت را تغییر بده.",
   token_required_for_provider: "برای تغییر سرویس، کلید API همان سرویس را وارد کن.",
 };
