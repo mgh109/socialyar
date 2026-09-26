@@ -1280,11 +1280,12 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .graph-node-head .graph-delete { width:24px; height:24px; overflow:visible; }
 .graph-delete svg { display:block; width:13px; height:13px; overflow:visible; }
 .graph-delete svg path { fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; }
-.top-menu { position:relative; z-index:30; flex:none; font-size:12px; }
+.app-header, .topbar { position:relative; z-index:50; }
+.top-menu { position:relative; z-index:51; flex:none; font-size:12px; }
 .top-menu summary { list-style:none; display:flex; align-items:center; gap:5px; padding:7px 9px; border:1px solid var(--border); border-radius:8px; color:var(--text); background:var(--panel); cursor:pointer; white-space:nowrap; }
 .top-menu summary::-webkit-details-marker { display:none; }
 .top-menu[open] summary,.top-menu summary:hover { border-color:var(--green); }
-.top-menu nav { position:absolute; top:calc(100% + 7px); right:0; min-width:205px; display:grid; gap:2px; padding:7px; border:1px solid var(--border); border-radius:10px; background:var(--panel); box-shadow:0 14px 34px rgba(0,0,0,.16); }
+.top-menu nav { position:absolute; z-index:52; top:calc(100% + 7px); right:0; min-width:205px; display:grid; gap:2px; padding:7px; border:1px solid var(--border); border-radius:10px; background:var(--panel); box-shadow:0 14px 34px rgba(0,0,0,.16); }
 .top-menu nav a { color:var(--text); padding:9px 10px; border-radius:6px; text-decoration:none; }
 .top-menu nav a:hover { background:var(--panel2); color:var(--accent-text); }
 .brand-lockup { gap:13px; }
