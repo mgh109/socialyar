@@ -26,7 +26,7 @@ export function parseEitaaPosts(html: string, handle: string): EitaaPost[] {
     if (!section.includes(`data-post="${handle}/${wraps[index][1]}"`)) continue;
     const raw = section.match(/<div\s+class="[^"]*\bjs-message_text\b[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1];
     const text = raw ? decode(raw.replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]*>/g, " "))
-      .replace(/[ \t]+/g, " ").trim().slice(0, 9000) : "";
+      .replace(/[ \t]+/g, " ").trim().replace(/\n\s*@[A-Za-z0-9_]{4,32}\s*$/, "").trim().slice(0, 9000) : "";
     const photoTag = section.match(/<[^>]*\b(?:etme_widget_message_photo_wrap|tgme_widget_message_photo_wrap)\b[^>]*>/)?.[0];
     const rawImage = photoTag && decode(photoTag).match(/background-image\s*:\s*url\(\s*['"]?([^'"\s)]+)['"]?\s*\)/i)?.[1];
     let imageUrl: string | null = null;
@@ -38,11 +38,18 @@ export function parseEitaaPosts(html: string, handle: string): EitaaPost[] {
     const videoTag = section.match(/<video\b[^>]*>/i)?.[0];
     const rawVideo = videoTag?.match(/\b(?:src|data-src)=["']([^"']+)["']/i)?.[1] ??
       section.match(/<source\b[^>]*\bsrc=["']([^"']+)["'][^>]*>/i)?.[1] ??
-      section.match(/<a\b[^>]*\bclass=["'][^"']*\b(?:etme_widget_message_video|tgme_widget_message_video)\b[^"']*["'][^>]*\bhref=["']([^"']+)["']/i)?.[1];
+      section.match(/<[^>]*\b(?:data-video|data-video-url|data-mp4)=["']([^"']+)["'][^>]*>/i)?.[1] ??
+      [...section.matchAll(/<a\b[^>]*>/gi)].map(([tag]) =>
+        /\b(?:video|media|document)\b/i.test(tag) ? tag.match(/\bhref=["']([^"']+)["']/i)?.[1] : null).find(Boolean);
     let videoUrl: string | null = null;
     if (rawVideo) try { const url = new URL(decode(rawVideo), "https://eitaa.com");
-      if (url.protocol === "https:" && url.hostname === "eitaa.com") videoUrl = url.href;
+      if (url.protocol === "https:" && !url.username && !url.password) videoUrl = url.href;
     } catch { /* Ignore an unusable video URL. */ }
+    const hasVideo = /<(?:video|source)\b|\b(?:etme|tgme)_widget_message_video\b|\bdata-video(?:-url)?=|\bvideo_duration\b/i.test(section);
+    if (hasVideo && !videoUrl) {
+      console.warn(`Eitaa post ${handle}/${wraps[index][1]} contains video without a usable file URL`);
+      continue;
+    }
     if (!text && !videoUrl) continue;
     posts.push({ title: text.split("\n")[0].slice(0, 180) || "ویدئو", text: text || "ویدئو",
       url: `https://eitaa.com/s/${handle}/${wraps[index][1]}`, imageUrl, videoUrl });
