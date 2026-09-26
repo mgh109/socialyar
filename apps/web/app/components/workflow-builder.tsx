@@ -10,6 +10,7 @@ type Position = { x: number; y: number };
 type Step = { key: string; type: string; name: string; config: Record<string, unknown>; position: Position };
 type Edge = { sourceKey: string; targetKey: string };
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
+type AIProfile = { id: string; name: string; provider: string; model: string };
 type Activity = { run: { status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
 const isSource = (step: Step) => step.type === "rss_source" || step.type === "manual_input";
 const isTerminal = (step: Step) => step.type === "publish" || step.type === "draft";
@@ -29,9 +30,11 @@ const errors: Record<string, string> = {
   graph_invalid_step: "یک کارت نامعتبر است.", graph_invalid_connection: "اتصال نامعتبر یا تکراری است.",
   graph_cycle: "اتصال حلقه‌ای مجاز نیست.", graph_missing_input: "همهٔ کارت‌های پردازش باید از یک منبع ورودی بگیرند.",
   graph_unfinished_branch: "هر شاخه باید به انتشار یا پیش‌نویس برسد.", graph_invalid_filter: "برای شرط، واژه‌های کلیدی وارد کن.",
+  ai_output_invalid: "تنظیم عنوان یا نشانی تصویر کارت AI معتبر نیست.",
   invalid_rss_url: "آدرس RSS باید HTTPS عمومی باشد.", invalid_eitaa_source: "شناسهٔ کانال ایتا معتبر نیست.",
   invalid_bale_source: "شناسهٔ کانال بله معتبر نیست.", eitaa_account_required: "کانال خروجی ایتا را انتخاب کن.",
   eitaa_account_not_found: "اتصال کانال ایتا معتبر نیست.", ai_token_not_configured: "توکن AI را تنظیم کن.",
+  ai_profile_not_found: "مدل AI انتخاب‌شده موجود نیست؛ یک مدل معتبر انتخاب کن.",
   invalid_publish_interval: "فاصلهٔ انتشار معتبر نیست.",
   duplicate_publish_channel: "هر کانال خروجی را فقط به یک کارت انتشار وصل کن.",
 };
@@ -81,6 +84,7 @@ export function WorkflowBuilder() {
   const [autoEnabled, setAutoEnabled] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [aiReady, setAiReady] = useState(false);
+  const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([]);
   const [activity, setActivity] = useState<Activity | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
@@ -108,9 +112,9 @@ export function WorkflowBuilder() {
   }, []);
 
   useEffect(() => {
-    void Promise.all([apiFetch("/social-accounts"), apiFetch("/settings/ai")]).then(async ([a, ai]) => {
+    void Promise.all([apiFetch("/social-accounts"), apiFetch("/settings/ai/profiles")]).then(async ([a, ai]) => {
       if (a.ok) setAccounts(await a.json());
-      if (ai.ok) setAiReady((await ai.json()).configured);
+      if (ai.ok) { const data = await ai.json(); setAiProfiles(data.profiles); setAiReady(data.profiles.length > 0); }
     }).catch(() => {});
     const id = new URLSearchParams(window.location.search).get("id");
     if (!id) return;
@@ -162,7 +166,8 @@ export function WorkflowBuilder() {
     const count = steps.length;
     const config = type === "rss_source" ? kind === "rss" ? { sourceKind: "rss", feedUrl: "" } :
       { sourceKind: kind, channel: "" } : type === "publish" ? { accountId: "", publishIntervalSeconds: 30 } :
-      type === "filter" ? { keywords: "", mode: "include" } : {};
+      type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
+      { profileId: aiProfiles[0]?.id ?? "default" } : {};
     const step = { key, type, name: type === "rss_source" ? "منبع" :
       types.find((item) => item.type === type)?.label ?? "کارت", config,
       position: { x: Math.max(35, 560 - count % 3 * 250), y: 75 + Math.floor(count / 3) * 190 } };
@@ -171,6 +176,8 @@ export function WorkflowBuilder() {
   const update = (key: string, field: string, value: unknown) => setSteps((current) => current.map((step) =>
     step.key === key ? { ...step, config: { ...step.config, [field]: value } } : step));
   const remove = (key: string) => {
+    const step = steps.find((item) => item.key === key);
+    if (!step || !window.confirm(`کارت «${step.name}» و اتصال‌هایش حذف شود؟`)) return;
     setSteps((current) => current.filter((step) => step.key !== key));
     setEdges((current) => current.filter((edge) => edge.sourceKey !== key && edge.targetKey !== key));
     setSelectedEdge(null);
@@ -195,6 +202,7 @@ export function WorkflowBuilder() {
     setEdges(next); setSelectedEdge(edgeId({ sourceKey, targetKey })); setMessage("اتصال اضافه شد؛ تغییرات را ذخیره کن.");
   };
   const removeEdge = (edge: Edge) => {
+    if (!window.confirm(`اتصال «${edgeName(edge.sourceKey)}» به «${edgeName(edge.targetKey)}» حذف شود؟`)) return;
     setEdges((current) => current.filter((item) => edgeId(item) !== edgeId(edge)));
     setSelectedEdge(null); setMessage("اتصال حذف شد؛ تغییرات را ذخیره کن.");
   };
@@ -221,7 +229,8 @@ export function WorkflowBuilder() {
     setBusy(true); setMessage("در حال ذخیره...");
     try {
       if (!name.trim()) throw new Error("نام جریان را وارد کن.");
-      if (active && steps.some((step) => step.type === "ai") && !aiReady) throw new Error("برای اجرای AI، توکن را تنظیم کن.");
+      if (active && steps.some((step) => step.type === "ai" && !aiProfiles.some((profile) =>
+        profile.id === String(step.config.profileId ?? "default")))) throw new Error("برای هر کارت AI یک مدل معتبر انتخاب کن.");
       const body = { name: name.trim(), description: `${steps.length} کارت · ${edges.length} اتصال`,
         status: active ? "active" : "draft", autonomyMode: manual ? "assisted" : "full_auto", prompt,
         steps: steps.map((step, order) => ({ ...step, order })), connections: edges };
@@ -282,12 +291,9 @@ export function WorkflowBuilder() {
             const start = { x: from.position.x, y: from.position.y + 70 };
             const end = { x: to.position.x + nodeWidth, y: to.position.y + 70 };
             const path = stroke(start, end);
-            const midpoint = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
-            const angle = Math.atan2(1.5 * (end.y - start.y), 1.5 * (end.x - start.x) + 138) * 180 / Math.PI;
             return <g key={edgeId(edge)} className={`graph-edge ${selectedEdge === edgeId(edge) ? "selected" : ""}`}>
               <path className="edge-visible" d={path} />
-              <circle className="edge-direction-bg" cx={midpoint.x} cy={midpoint.y} r="11" />
-              <path className="edge-direction" d="M -6 -5 L 1 0 L -6 5" transform={`translate(${midpoint.x} ${midpoint.y}) rotate(${angle})`} />
+              <circle className="edge-glow" r="3.5"><animateMotion dur="2.6s" repeatCount="indefinite" path={path} /></circle>
               <path className="edge-hit" d={path} role="button" tabIndex={0} aria-label={`اتصال ${edgeName(edge.sourceKey)} به ${edgeName(edge.targetKey)}`}
                 onClick={() => { setSelectedEdge(edgeId(edge)); setSelectedKey(""); }}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedEdge(edgeId(edge)); setSelectedKey(""); } }} />
@@ -309,7 +315,7 @@ export function WorkflowBuilder() {
               x: step.position.x, y: step.position.y }; setSelectedKey(step.key);
           }}><span className="graph-kind">{step.type === "rss_source" ? sourceNames[String(step.config.sourceKind ?? "rss")] :
             step.type === "filter" ? "شرط" : step.type === "publish" ? "ایتا" : step.type === "ai" ? "AI" : "کارت"}</span>
-            <button type="button" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
+            <button type="button" className="graph-delete" title="حذف کارت" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => { event.stopPropagation(); remove(step.key); }}>×</button></div>
           <strong>{step.name}</strong><small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
@@ -351,8 +357,29 @@ export function WorkflowBuilder() {
             onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))}>
             <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={120}>۲ دقیقه</option><option value={300}>۵ دقیقه</option></select></label>
           {!eitaaAccounts.length ? <Link href="/connections">+ اتصال کانال ایتا</Link> : null}</> : null}
-        {selected.type === "ai" ? <><label><span>دستور بازنویسی</span><textarea value={String(selected.config.instructions ?? "")}
+        {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
+          onChange={(event) => update(selected.key, "profileId", event.target.value)}>
+          {!aiProfiles.some((profile) => profile.id === String(selected.config.profileId ?? "default")) ?
+            <option value={String(selected.config.profileId ?? "default")}>مدل انتخاب‌شده موجود نیست</option> : null}
+          {aiProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider} / {profile.model}</option>)}
+          </select></label><label><span>دستور بازنویسی متن</span><textarea value={String(selected.config.instructions ?? "")}
           onChange={(event) => update(selected.key, "instructions", event.target.value)} placeholder="خبر را کوتاه و دقیق بازنویسی کن." /></label>
+          <label><span>عنوان خبر</span><select value={String(selected.config.titleMode ?? "keep")}
+            onChange={(event) => update(selected.key, "titleMode", event.target.value)}>
+            <option value="keep">عنوان اصلی را نگه دار</option><option value="rewrite">عنوان را با AI بازنویسی کن</option>
+            <option value="custom">عنوان ثابت دلخواه</option></select></label>
+          {selected.config.titleMode === "rewrite" ? <label><span>راهنمای عنوان (اختیاری)</span><input
+            value={String(selected.config.titleInstructions ?? "")} onChange={(event) => update(selected.key, "titleInstructions", event.target.value)}
+            placeholder="مثلاً کوتاه و بدون اغراق" /></label> : null}
+          {selected.config.titleMode === "custom" ? <label><span>عنوان ثابت</span><input maxLength={180}
+            value={String(selected.config.customTitle ?? "")} onChange={(event) => update(selected.key, "customTitle", event.target.value)} /></label> : null}
+          <label><span>تصویر خبر</span><select value={String(selected.config.imageMode ?? "keep")}
+            onChange={(event) => update(selected.key, "imageMode", event.target.value)}>
+            <option value="keep">تصویر منبع را نگه دار</option><option value="remove">بدون تصویر منتشر کن</option>
+            <option value="custom">از نشانی تصویر دلخواه استفاده کن</option></select></label>
+          {selected.config.imageMode === "custom" ? <label><span>نشانی تصویر (HTTPS)</span><input dir="ltr" type="url"
+            value={String(selected.config.customImageUrl ?? "")} onChange={(event) => update(selected.key, "customImageUrl", event.target.value)}
+            placeholder="https://example.com/news.jpg" /></label> : null}
           <Link href="/settings/ai">{aiReady ? "✓ مدل AI تنظیم شده" : "+ تنظیم مدل و توکن AI"}</Link></> : null}
         {selected.type === "manual_input" ? <label><span>متن ورودی</span><textarea value={prompt}
           onChange={(event) => setPrompt(event.target.value)} placeholder="متن خبر یا موضوع" /></label> : null}

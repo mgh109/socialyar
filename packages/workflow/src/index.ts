@@ -1,7 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
-import { generateNewsDraft, type AIConnection } from "@socialyar/ai";
+import { generateNewsDraft, generateNewsTitle, type AIConnection } from "@socialyar/ai";
 import {
-  aiSettings, decryptSecret, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
+  aiProfiles, aiSettings, decryptSecret, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
 } from "@socialyar/db";
 
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
@@ -121,14 +121,26 @@ export async function executeRun(input: ExecuteRunInput) {
           if (!upstream?.text) throw new Error("AI step needs text from a connected step");
           const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows)
             .where(eq(workflows.id, run.workflowId)).limit(1);
-          const [settings] = workflow ? await db.select().from(aiSettings)
-            .where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
-          if (!settings) throw new Error("AI token is not configured for this workspace");
-          const text = await generateNewsDraft({ provider: settings.provider as AIConnection["provider"],
-            model: settings.model, token: decryptSecret(settings.encryptedToken) },
-          { title: upstream.title || "خبر", text: upstream.text, url: upstream.url ?? undefined },
-          typeof step.config.instructions === "string" ? step.config.instructions : undefined);
-          output = { ...upstream, text };
+          const profileId = step.config.profileId;
+          const [settings] = workflow ? typeof profileId === "string" && profileId !== "default" ?
+            await db.select().from(aiProfiles).where(and(eq(aiProfiles.id, profileId),
+              eq(aiProfiles.workspaceId, workflow.workspaceId))).limit(1) :
+            await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
+          if (!settings) throw new Error("Selected AI profile is not available");
+          const connection = { provider: settings.provider as AIConnection["provider"],
+            model: settings.model, token: decryptSecret(settings.encryptedToken) };
+          const instructions = typeof step.config.instructions === "string" ? step.config.instructions : undefined;
+          const text = await generateNewsDraft(connection,
+            { title: upstream.title || "خبر", text: upstream.text, url: upstream.url ?? undefined }, instructions);
+          const titleMode = step.config.titleMode ?? "keep";
+          const title = titleMode === "rewrite" ? await generateNewsTitle(connection,
+            { title: upstream.title || "خبر", text: upstream.text },
+            typeof step.config.titleInstructions === "string" ? step.config.titleInstructions : undefined) :
+            titleMode === "custom" ? String(step.config.customTitle).trim() : upstream.title;
+          const imageMode = step.config.imageMode ?? "keep";
+          const imageUrl = imageMode === "remove" ? null : imageMode === "custom" ?
+            String(step.config.customImageUrl).trim() : upstream.imageUrl;
+          output = { ...upstream, text, title, imageUrl };
         } else if (step.type === "publish" || step.type === "draft") {
           if (!upstream?.text) throw new Error(`${step.type} needs text from a connected step`);
           output = step.type === "publish" ? { ...upstream, queuedForPublication: true } : upstream;

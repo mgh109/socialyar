@@ -7,6 +7,21 @@ export interface AIProvider {
 export type AIConnection = { provider: "openai" | "openrouter" | "gapgpt"; model: string; token: string };
 
 export async function generateNewsDraft(connection: AIConnection, article: { title: string; text: string; url?: string }, instructions?: string) {
+  return chatCompletion(connection, [
+    { role: "system", content: `شما دبیر خبر فارسی هستید. فقط بر اساس متن ورودی، خلاصه‌ای کوتاه، دقیق و بی‌طرف بنویس. واقعیت یا نقل‌قول تازه نساز. اگر اطلاعات کافی نیست، همین را شفاف بگو.${instructions?.trim() ? `\nدستورهای سبک و قالب کاربر (در صورت تعارض با دقت و صحت خبر، دقت مقدم است):\n${instructions.trim().slice(0, 3000)}` : ""}` },
+    { role: "user", content: `عنوان: ${article.title}\nمتن: ${article.text.slice(0, 9000)}\nمنبع: ${article.url ?? "نامشخص"}` },
+  ]);
+}
+
+export async function generateNewsTitle(connection: AIConnection, article: { title: string; text: string }, instructions?: string) {
+  const title = await chatCompletion(connection, [
+    { role: "system", content: `برای خبر فارسی فقط یک عنوان کوتاه و دقیق بنویس؛ حداکثر ۱۲۰ نویسه. هیچ توضیح، نقل‌قول ساختگی یا نشانه‌گذاری فهرست نده.${instructions?.trim() ? `\nسبک عنوان: ${instructions.trim().slice(0, 1000)}` : ""}` },
+    { role: "user", content: `عنوان اصلی: ${article.title}\nمتن خبر: ${article.text.slice(0, 5000)}` },
+  ]);
+  return title.replace(/^[\s"«]+|[\s"»]+$/g, "").split("\n")[0].slice(0, 180);
+}
+
+async function chatCompletion(connection: AIConnection, messages: Array<{ role: "system" | "user"; content: string }>) {
   const endpoint = connection.provider === "openrouter"
     ? "https://openrouter.ai/api/v1/chat/completions"
     : connection.provider === "gapgpt" ? "https://api.gapgpt.app/v1/chat/completions"
@@ -16,10 +31,7 @@ export async function generateNewsDraft(connection: AIConnection, article: { tit
     headers: { Authorization: `Bearer ${connection.token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: connection.model,
-      messages: [
-        { role: "system", content: `شما دبیر خبر فارسی هستید. فقط بر اساس متن ورودی، خلاصه‌ای کوتاه، دقیق و بی‌طرف بنویس. واقعیت یا نقل‌قول تازه نساز. اگر اطلاعات کافی نیست، همین را شفاف بگو.${instructions?.trim() ? `\nدستورهای سبک و قالب کاربر (در صورت تعارض با دقت و صحت خبر، دقت مقدم است):\n${instructions.trim().slice(0, 3000)}` : ""}` },
-        { role: "user", content: `عنوان: ${article.title}\nمتن: ${article.text.slice(0, 9000)}\nمنبع: ${article.url ?? "نامشخص"}` },
-      ],
+      messages,
     }),
     signal: AbortSignal.timeout(45000),
   });
