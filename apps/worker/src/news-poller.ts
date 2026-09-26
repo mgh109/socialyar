@@ -24,16 +24,21 @@ function stringValue(value: unknown): string {
 }
 
 function imageFromEntry(item: Record<string, any>): string | null {
-  const candidates = [item["media:content"], item["media:thumbnail"], item.enclosure, item.image];
+  const candidates = [item["media:content"], item["media:thumbnail"], item.enclosure, item.image,
+    item["media:group"]?.["media:content"], item["media:group"]?.["media:thumbnail"]];
   for (const candidate of candidates) {
-    const entry = Array.isArray(candidate) ? candidate[0] : candidate;
-    const mediaType = entry?.["@_type"] ?? entry?.type;
-    if (typeof mediaType === "string" && !mediaType.startsWith("image/")) continue;
-    const value = stringValue(entry?.["@_url"] ?? entry?.url ?? entry);
-    try {
-      if (new URL(value).protocol === "https:") return value;
-    } catch { /* No usable image in this field. */ }
+    for (const entry of Array.isArray(candidate) ? candidate : [candidate]) {
+      const mediaType = entry?.["@_type"] ?? entry?.type;
+      if (typeof mediaType === "string" && !mediaType.startsWith("image/")) continue;
+      const value = stringValue(entry?.["@_url"] ?? entry?.url ?? entry);
+      try { if (new URL(value).protocol === "https:") return value; }
+      catch { /* Try the next media field. */ }
+    }
   }
+  const html = stringValue(item["content:encoded"] ?? item.description ?? item.summary);
+  const embedded = html.match(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/i)?.[1];
+  if (embedded) try { const url = new URL(embedded.replace(/&amp;/g, "&")); if (url.protocol === "https:") return url.href; }
+  catch { /* No usable embedded image. */ }
   return null;
 }
 

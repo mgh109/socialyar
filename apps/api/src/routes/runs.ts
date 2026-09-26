@@ -172,7 +172,7 @@ export async function runRoutes(app: FastifyInstance) {
       .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
     if (!owned) return reply.code(404).send({ error: "run_not_found" });
     return db.select({ key: workflowSteps.key, name: workflowSteps.name, type: workflowSteps.type,
-      status: runSteps.status, output: runSteps.output })
+      status: runSteps.status, output: runSteps.output, error: runSteps.error, attempt: runSteps.attempt })
       .from(workflowSteps).leftJoin(runSteps, and(eq(runSteps.workflowStepId, workflowSteps.id), eq(runSteps.runId, runId)))
       .where(eq(workflowSteps.workflowVersionId, owned.versionId)).orderBy(asc(workflowSteps.order));
   });

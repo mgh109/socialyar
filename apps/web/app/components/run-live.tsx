@@ -37,7 +37,8 @@ const labels: Record<string, string> = {
 export function RunLive({ runId }: { runId: string }) {
   const [run, setRun] = useState<RunData | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
-  const [steps, setSteps] = useState<Array<{ key: string; name: string; type: string; status: string | null; output: { text?: string } | null }>>([]);
+  const [steps, setSteps] = useState<Array<{ key: string; name: string; type: string; status: string | null;
+    output: { text?: string } | null; error: { message?: string } | null; attempt: number | null }>>([]);
   const [connected, setConnected] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -123,7 +124,7 @@ export function RunLive({ runId }: { runId: string }) {
           </div>
 
           <div className="execution-strip">
-            {steps.map(({ name, key, status }) => {
+            {steps.map(({ name, key, status, error, attempt }) => {
               const completed = status === "completed";
               const active = status === "running";
               return (
@@ -134,8 +135,10 @@ export function RunLive({ runId }: { runId: string }) {
                   <h3>{name}</h3>
                   <span>
                     {completed ? "✓ انجام شد" : status === "skipped" ? "○ عبور نکرد" :
-                      status === "failed" ? "! خطا" : active ? "↻ در حال اجرا" : "○ منتظر"}
+                      status === "failed" ? "! خطا" : status === "retrying" ? `↻ تلاش دوباره ${attempt ?? ""}/۳` :
+                      status === "waiting_approval" ? "در انتظار تأیید شما" : active ? "↻ در حال اجرا" : "○ منتظر"}
                   </span>
+                  {status === "failed" && error?.message ? <p className="run-step-error" role="alert">{error.message}</p> : null}
                 </article>
               );
             })}

@@ -29,8 +29,14 @@ export function parseEitaaPosts(html: string, handle: string): EitaaPost[] {
     const text = decode(raw.replace(/<br\s*\/?\s*>/gi, "\n").replace(/<[^>]*>/g, " "))
       .replace(/[ \t]+/g, " ").trim().slice(0, 9000);
     if (!text) continue;
-    const rawImage = section.match(/class="[^"]*\betme_widget_message_photo_wrap\b[^"]*"[^>]*style="[^"]*background-image:\s*url\('([^']+)'\)/)?.[1];
-    const imageUrl = rawImage?.startsWith("/download_") ? `https://eitaa.com${decode(rawImage)}` : null;
+    const photoTag = section.match(/<[^>]*\b(?:etme_widget_message_photo_wrap|tgme_widget_message_photo_wrap)\b[^>]*>/)?.[0];
+    const rawImage = photoTag && decode(photoTag).match(/background-image\s*:\s*url\(\s*['"]?([^'"\s)]+)['"]?\s*\)/i)?.[1];
+    let imageUrl: string | null = null;
+    if (rawImage) {
+      try { const url = new URL(decode(rawImage), "https://eitaa.com");
+        if (url.protocol === "https:" && url.hostname === "eitaa.com") imageUrl = url.href;
+      } catch { /* Ignore an unusable photo URL. */ }
+    }
     posts.push({ title: text.split("\n")[0].slice(0, 180), text,
       url: `https://eitaa.com/s/${handle}/${wraps[index][1]}`, imageUrl });
   }
