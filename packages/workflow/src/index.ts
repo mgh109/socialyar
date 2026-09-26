@@ -135,6 +135,7 @@ export async function executeRun(input: ExecuteRunInput) {
           output = upstream;
         } else if (step.type === "ai") {
           if (!upstream?.text) throw new Error("AI step needs text from a connected step");
+          const sourceText = upstream.text;
           const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows)
             .where(eq(workflows.id, run.workflowId)).limit(1);
           const profileId = step.config.profileId;
@@ -153,10 +154,10 @@ export async function executeRun(input: ExecuteRunInput) {
               payload: { error: error instanceof Error ? error.message : String(error), attempt } });
           };
           const text = await retryAI(() => generateNewsDraft(connection,
-            { title: upstream.title || "خبر", text: upstream.text, url: upstream.url ?? undefined }, instructions), retry);
+            { title: upstream.title || "خبر", text: sourceText, url: upstream.url ?? undefined }, instructions), retry);
           const titleMode = step.config.titleMode ?? "keep";
           const title = titleMode === "rewrite" ? await retryAI(() => generateNewsTitle(connection,
-            { title: upstream.title || "خبر", text: upstream.text },
+            { title: upstream.title || "خبر", text: sourceText },
             typeof step.config.titleInstructions === "string" ? step.config.titleInstructions : undefined), retry) :
             titleMode === "custom" ? String(step.config.customTitle).trim() : upstream.title;
           const imageMode = step.config.imageMode ?? "keep";
