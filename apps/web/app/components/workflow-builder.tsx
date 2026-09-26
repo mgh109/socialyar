@@ -267,6 +267,14 @@ export function WorkflowBuilder() {
   return <main className="workflow-page builder-page">
     <header className="app-header"><div className="brand-lockup"><BrandLogo /><TopMenu /><span>میز کار / {name}</span></div>
       <div className="header-actions"><span className="save-status" role="status">{message}</span>
+        <details className="workflow-settings-menu"><summary>تنظیمات جریان</summary><div className="workflow-settings-popover">
+          <strong>تنظیمات عمومی</strong>
+          <label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label><span>فاصلهٔ پایش منابع</span><select value={pollIntervalMinutes} onChange={(event) => setPollIntervalMinutes(Number(event.target.value))}>
+            <option value={1}>هر ۱ دقیقه</option><option value={2}>هر ۲ دقیقه</option><option value={5}>هر ۵ دقیقه</option>
+            <option value={10}>هر ۱۰ دقیقه</option><option value={15}>هر ۱۵ دقیقه</option></select></label>
+          <small>فاصلهٔ ارسال خبر در کارت انتشار تنظیم می‌شود.</small>
+        </div></details>
         <button className="ghost-button" onClick={() => void save(autoEnabled)} disabled={busy}>ذخیره تغییرات</button>
         {manual ? <button className="primary-button" onClick={() => void run()} disabled={busy}>▶ اجرای دستی</button> :
           <button className="primary-button" onClick={() => void save(!autoEnabled)} disabled={busy || !steps.length}>
@@ -332,11 +340,7 @@ export function WorkflowBuilder() {
             onClick={(event) => { event.stopPropagation(); setConnecting(step.key); }}>●</button> : null}
         </article>)}
       </div></div></div>
-    </section><aside className="builder-settings"><h2>تنظیمات جریان</h2><label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-      <label><span>فاصلهٔ پایش منابع</span><select value={pollIntervalMinutes} onChange={(event) => setPollIntervalMinutes(Number(event.target.value))}>
-        <option value={1}>هر ۱ دقیقه</option><option value={2}>هر ۲ دقیقه</option><option value={5}>هر ۵ دقیقه</option>
-        <option value={10}>هر ۱۰ دقیقه</option><option value={15}>هر ۱۵ دقیقه</option></select></label>
-      <small className="builder-note">فاصلهٔ ارسال خبر در کارت انتشار تنظیم می‌شود.</small>
+    </section><aside className="builder-settings"><h2>{selected ? "تنظیمات کارت" : selectedEdge ? "تنظیمات اتصال" : "کارت‌ها"}</h2>
       {selectedEdge ? <div className="graph-edge-settings"><strong>اتصال انتخاب‌شده</strong>
         <p>{edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.sourceKey ?? "")} ← {edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.targetKey ?? "")}</p>
         <button type="button" onClick={() => { const edge = edges.find((item) => edgeId(item) === selectedEdge); if (edge) removeEdge(edge); }}>حذف اتصال</button></div> : null}
