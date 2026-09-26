@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { Queue } from "bullmq";
-import { contentItems, contentVariants, getDb, publications, runEvents, runs, socialAccounts, workflowSteps, workflows } from "@socialyar/db";
+import { contentItems, contentVariants, getDb, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows } from "@socialyar/db";
 import { connection } from "./queue";
 
 const publicationQueue = new Queue("publication-jobs", { connection });
@@ -13,11 +13,28 @@ export async function enqueueAutoPublication(runId: string) {
   if (!row || !["completed", "waiting_approval", "failed"].includes(row.run.status)) return;
   const publishSteps = await db.select().from(workflowSteps)
     .where(and(eq(workflowSteps.workflowVersionId, row.run.workflowVersionId), eq(workflowSteps.type, "publish")));
+  const steps = await db.select().from(workflowSteps)
+    .where(eq(workflowSteps.workflowVersionId, row.run.workflowVersionId));
+  const executed = await db.select().from(runSteps).where(eq(runSteps.runId, runId));
+  const stepByKey = new Map(steps.map((step) => [step.key, step]));
+  const parentByKey = new Map(executed.map((record) => {
+    const step = steps.find((item) => item.id === record.workflowStepId);
+    return [step?.key, record.input.parentKey] as const;
+  }));
   for (const publishStep of publishSteps) {
     const generated = row.run.output?.[publishStep.key] as { text?: string; title?: string; url?: string;
       imageUrl?: string; videoUrl?: string } | undefined;
     if (!generated?.text) continue;
     try {
+    const path: string[] = [];
+    const visited = new Set<string>();
+    let key: unknown = publishStep.key;
+    while (typeof key === "string" && !visited.has(key)) {
+      visited.add(key);
+      const step = stepByKey.get(key);
+      if (step) path.unshift(step.name);
+      key = parentByKey.get(key);
+    }
     const accountId = publishStep.config.accountId;
     const publishIntervalSeconds = publishStep.config.publishIntervalSeconds ?? 30;
     if (typeof publishIntervalSeconds !== "number" || ![30, 60, 120, 300].includes(publishIntervalSeconds))
@@ -35,7 +52,8 @@ export async function enqueueAutoPublication(runId: string) {
       [content] = await db.insert(contentItems).values({ workspaceId: row.workspaceId, runId,
         title: generated.title ?? "خبر جدید", body: generated.text,
         metadata: { sourceUrl: generated.url ?? null, imageUrl: generated.imageUrl ?? null,
-          videoUrl: generated.videoUrl ?? null, automated: true, publishStepKey: publishStep.key }, status: "approved" }).returning();
+          videoUrl: generated.videoUrl ?? null, automated: true, publishStepKey: publishStep.key,
+          routePath: path }, status: "approved" }).returning();
     }
     let [variant] = await db.select().from(contentVariants).where(and(
       eq(contentVariants.contentItemId, content.id), eq(contentVariants.channel, "eitaa"))).limit(1);

@@ -798,6 +798,10 @@ html[data-theme="dark"] .brand-logo-dark { display:block; }
 .history-main span,
 .history-time span,
 .history-muted { color:var(--muted); font-size:12px; }
+.history-main details { font-size:12px; color:var(--muted); max-width:100%; }
+.history-main details summary { cursor:pointer; color:var(--green); }
+.history-main details span { display:block; white-space:normal; margin-top:5px; }
+.history-main details a { display:inline-block; margin-top:5px; color:var(--green); }
 .history-action {
   display:flex;
   justify-content:flex-end;

@@ -44,6 +44,7 @@ type PublicationRow = {
   content: {
     id: string;
     title: string | null;
+    metadata: { sourceUrl?: unknown; routePath?: unknown };
   };
 };
 
@@ -270,6 +271,15 @@ export function AnalyticsDashboard() {
                       {" · "}
                       {`تلاش ${row.publication.attempt || 0}`}
                     </span>
+                    {Array.isArray(row.content.metadata?.routePath) && row.content.metadata.routePath.length > 0 ? (
+                      <details>
+                        <summary>مسیر این خبر</summary>
+                        <span>{row.content.metadata.routePath.filter((part): part is string => typeof part === "string").join(" ← ")}</span>
+                        {typeof row.content.metadata.sourceUrl === "string" ? (
+                          <a href={row.content.metadata.sourceUrl} target="_blank" rel="noreferrer">مشاهده منبع</a>
+                        ) : null}
+                      </details>
+                    ) : null}
                   </div>
 
                   <div className="history-time">
