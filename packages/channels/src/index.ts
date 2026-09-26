@@ -144,7 +144,12 @@ async function publishWebsite(
 async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
   const botToken = requiredString(request.credentials, "botToken");
   const chatId = requiredString(request.credentials, "chatId");
-  const message = request.title ? `${request.title}\n\n${request.content}` : request.content;
+  const title = request.title?.trim();
+  const body = request.content.trim();
+  // Public channel posts often use their first line as the title. Do not repeat it.
+  const normalized = (value: string) => value.replace(/\s+/g, " ").trim();
+  const message = title && normalized(body.split("\n")[0]) !== normalized(title) &&
+    !normalized(body).startsWith(normalized(title)) ? `${title}\n\n${body}` : body;
   let media: Blob | null = null;
   const mediaUrl = request.videoUrl || request.imageUrl;
   const isVideo = Boolean(request.videoUrl);
