@@ -9,6 +9,22 @@ type Step = typeof workflowSteps.$inferSelect;
 type Edge = typeof workflowConnections.$inferSelect;
 type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null; queuedForPublication?: boolean };
 
+function transientAIError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\(429\)|\(50[0234]\)|\(52\d\)|timeout|timed out|fetch failed|network/i.test(message);
+}
+
+async function retryAI<T>(operation: () => Promise<T>, onRetry: (attempt: number, error: unknown) => Promise<void>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      if (attempt >= 3 || !transientAIError(error)) throw error;
+      await onRetry(attempt + 1, error);
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+    }
+  }
+}
+
 function orderedGraph(steps: Step[], edges: Edge[]): Step[] {
   const byId = new Map(steps.map((step) => [step.id, step]));
   const degree = new Map(steps.map((step) => [step.id, 0]));
@@ -130,12 +146,18 @@ export async function executeRun(input: ExecuteRunInput) {
           const connection = { provider: settings.provider as AIConnection["provider"],
             model: settings.model, token: decryptSecret(settings.encryptedToken) };
           const instructions = typeof step.config.instructions === "string" ? step.config.instructions : undefined;
-          const text = await generateNewsDraft(connection,
-            { title: upstream.title || "خبر", text: upstream.text, url: upstream.url ?? undefined }, instructions);
+          const retry = async (attempt: number, error: unknown) => {
+            await db.update(runSteps).set({ status: "retrying", attempt }).where(eq(runSteps.id, record.id));
+            await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "retry",
+              message: `${step.name}: تلاش ${attempt} از ۳ پس از خطای موقت سرویس هوش مصنوعی`,
+              payload: { error: error instanceof Error ? error.message : String(error), attempt } });
+          };
+          const text = await retryAI(() => generateNewsDraft(connection,
+            { title: upstream.title || "خبر", text: upstream.text, url: upstream.url ?? undefined }, instructions), retry);
           const titleMode = step.config.titleMode ?? "keep";
-          const title = titleMode === "rewrite" ? await generateNewsTitle(connection,
+          const title = titleMode === "rewrite" ? await retryAI(() => generateNewsTitle(connection,
             { title: upstream.title || "خبر", text: upstream.text },
-            typeof step.config.titleInstructions === "string" ? step.config.titleInstructions : undefined) :
+            typeof step.config.titleInstructions === "string" ? step.config.titleInstructions : undefined), retry) :
             titleMode === "custom" ? String(step.config.customTitle).trim() : upstream.title;
           const imageMode = step.config.imageMode ?? "keep";
           const imageUrl = imageMode === "remove" ? null : imageMode === "custom" ?
