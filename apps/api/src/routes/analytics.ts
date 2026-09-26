@@ -7,6 +7,7 @@ import {
   contentVariants,
   getDb,
   publications,
+  schedules,
 } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 
@@ -221,11 +222,34 @@ export async function analyticsRoutes(app: FastifyInstance) {
     const jobId = `publication-${publication.id}`;
     const previousJob = await publicationQueue.getJob(jobId);
     if (previousJob) await previousJob.remove();
-    await publicationQueue.add("publish-content", { publicationId }, {
-      jobId, attempts: 1, removeOnComplete: 1000, removeOnFail: 1000,
-    });
-    await db.update(publications).set({ status: "queued", error: null, updatedAt: new Date() })
-      .where(eq(publications.id, publication.id));
+    const [queued] = await db.update(publications).set({ status: "queued", error: null, updatedAt: new Date() })
+      .where(and(eq(publications.id, publication.id), eq(publications.status, "failed"))).returning();
+    if (!queued) return reply.code(409).send({ error: "publication_not_failed" });
+    try {
+      await publicationQueue.add("publish-content", { publicationId }, {
+        jobId, attempts: 1, removeOnComplete: 1000, removeOnFail: 1000,
+      });
+    } catch (error) {
+      await db.update(publications).set({ status: "failed", updatedAt: new Date() })
+        .where(and(eq(publications.id, publicationId), eq(publications.status, "queued")));
+      throw error;
+    }
     return reply.code(202).send({ status: "queued" });
+  });
+
+  app.post("/publications/:publicationId/cancel", async (request, reply) => {
+    const { publicationId } = z.object({ publicationId: z.string().uuid() }).parse(request.params);
+    const [cancelled] = await db.update(publications).set({ status: "cancelled", updatedAt: new Date() })
+      .where(and(eq(publications.id, publicationId), eq(publications.workspaceId, request.auth.workspaceId),
+        eq(publications.status, "queued"))).returning();
+    if (!cancelled) return reply.code(409).send({ error: "publication_not_queued" });
+    if (cancelled.scheduleId) {
+      await db.update(schedules).set({ status: "cancelled", updatedAt: new Date() })
+        .where(and(eq(schedules.id, cancelled.scheduleId), eq(schedules.workspaceId, request.auth.workspaceId),
+          eq(schedules.status, "scheduled")));
+    }
+    const job = await publicationQueue.getJob(`publication-${publicationId}`);
+    if (job) try { await job.remove(); } catch { /* Active workers check the cancelled state before sending. */ }
+    return { status: "cancelled" };
   });
 }
