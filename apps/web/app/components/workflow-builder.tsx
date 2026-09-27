@@ -10,7 +10,7 @@ import { apiFetch } from "../lib/session";
 type Position = { x: number; y: number };
 type Step = { key: string; type: string; name: string; config: Record<string, unknown>; position: Position };
 type Edge = { sourceKey: string; targetKey: string; condition?: { decision?: string } | null };
-type ApiConnection = { id: string; name: string; baseUrl: string };
+type ApiConnection = { id: string; name: string; baseUrl: string; authType: "bearer" | "api_key"; headerName: string | null };
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 type AIProfile = { id: string; name: string; provider: string; model: string };
 type Activity = { run: { id: string; status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
@@ -91,6 +91,15 @@ export function WorkflowBuilder() {
   const [aiReady, setAiReady] = useState(false);
   const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([]);
   const [apiConnections, setApiConnections] = useState<ApiConnection[]>([]);
+  const [connectionFormOpen, setConnectionFormOpen] = useState(false);
+  const [connectionEditingId, setConnectionEditingId] = useState<string | null>(null);
+  const [connectionName, setConnectionName] = useState("");
+  const [connectionBaseUrl, setConnectionBaseUrl] = useState("");
+  const [connectionAuthType, setConnectionAuthType] = useState<"bearer" | "api_key">("bearer");
+  const [connectionHeaderName, setConnectionHeaderName] = useState("X-API-Key");
+  const [connectionToken, setConnectionToken] = useState("");
+  const [connectionBusy, setConnectionBusy] = useState(false);
+  const [connectionError, setConnectionError] = useState("");
   const [activity, setActivity] = useState<Activity | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
@@ -106,6 +115,10 @@ export function WorkflowBuilder() {
   };
   const surfaceWidth = Math.max(viewport.width, ...steps.map((step) => step.position.x + nodeWidth + 48), 540);
   const surfaceHeight = Math.max(viewport.height, ...steps.map((step) => step.position.y + nodeHeight + 48), 400);
+
+  useEffect(() => {
+    setConnectionFormOpen(false); setConnectionEditingId(null); setConnectionToken(""); setConnectionError("");
+  }, [selectedKey]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -189,6 +202,35 @@ export function WorkflowBuilder() {
   };
   const update = (key: string, field: string, value: unknown) => setSteps((current) => current.map((step) =>
     step.key === key ? { ...step, config: { ...step.config, [field]: value } } : step));
+  const openConnectionForm = (connection?: ApiConnection) => {
+    setConnectionEditingId(connection?.id ?? null);
+    setConnectionName(connection?.name ?? ""); setConnectionBaseUrl(connection?.baseUrl ?? "");
+    setConnectionAuthType(connection?.authType ?? "bearer"); setConnectionHeaderName(connection?.headerName ?? "X-API-Key");
+    setConnectionToken(""); setConnectionError(""); setConnectionFormOpen(true);
+  };
+  const saveConnection = async (cardKey: string) => {
+    if (!connectionName.trim() || !connectionBaseUrl.trim() || (!connectionEditingId && !connectionToken.trim())) {
+      setConnectionError("نام، نشانی و توکن اتصال جدید را وارد کن."); return;
+    }
+    setConnectionBusy(true); setConnectionError("");
+    try {
+      const response = await apiFetch(connectionEditingId ? `/api-connections/${connectionEditingId}` : "/api-connections", {
+        method: connectionEditingId ? "PUT" : "POST",
+        body: JSON.stringify({ name: connectionName.trim(), baseUrl: connectionBaseUrl.trim(), authType: connectionAuthType,
+          headerName: connectionAuthType === "api_key" ? connectionHeaderName.trim() : null,
+          ...(connectionToken.trim() ? { token: connectionToken.trim() } : {}) }),
+      });
+      const data = await response.json().catch(() => ({})) as ApiConnection & { error?: string };
+      if (!response.ok) throw new Error(data.error === "secret_key_missing" ?
+        "کلید رمزنگاری HOOR_SECRET_KEY روی سرویس API تنظیم نشده است." : data.error === "invalid_api_connection" ?
+        "نشانی باید HTTPS عمومی و نام هدر باید با X- شروع شود." : `ذخیره اتصال ناموفق بود (${data.error ?? response.status}).`);
+      setApiConnections((current) => [...current.filter((item) => item.id !== data.id), data].sort((a, b) => a.name.localeCompare(b.name)));
+      update(cardKey, "connectionId", data.id);
+      setConnectionFormOpen(false); setConnectionToken(""); setConnectionEditingId(null);
+      setMessage("اتصال API ذخیره و به کارت انتخاب شد؛ تغییرات جریان را ذخیره کن.");
+    } catch (error) { setConnectionError(error instanceof Error ? error.message : "اتصال ذخیره نشد."); }
+    finally { setConnectionBusy(false); }
+  };
   const switchSource = (key: string, kind: string) => {
     const type = kind === "api" ? "api_source" : kind === "manual" ? "manual_input" : "rss_source";
     const config = kind === "api" ? { connectionId: apiConnections[0]?.id ?? "", path: "/comments",
@@ -405,9 +447,31 @@ export function WorkflowBuilder() {
           <small className="builder-note">برای شاخه‌های ورزشی و عمومی، دو کارت شرط جدا وصل کن.</small></> : null}
         {selected.type === "api_source" || selected.type === "api_action" ? <>
           <label><span>اتصال API</span><select value={String(selected.config.connectionId ?? "")}
-            onChange={(event) => update(selected.key, "connectionId", event.target.value)}><option value="">انتخاب اتصال</option>
+            onChange={(event) => { update(selected.key, "connectionId", event.target.value); setConnectionFormOpen(false); setConnectionToken(""); }}><option value="">انتخاب اتصال</option>
             {apiConnections.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}</select></label>
-          <Link href="/settings/api">مدیریت اتصال‌ها و توکن‌ها</Link>
+          <div className="api-connection-actions">
+            <button type="button" onClick={() => openConnectionForm()}>+ اتصال جدید</button>
+            {apiConnections.find((connection) => connection.id === selected.config.connectionId) ? <button type="button"
+              onClick={() => openConnectionForm(apiConnections.find((connection) => connection.id === selected.config.connectionId))}>ویرایش اتصال</button> : null}
+          </div>
+          {connectionFormOpen ? <div className="api-connection-inline">
+            <strong>{connectionEditingId ? "ویرایش اتصال مشترک" : "اتصال API جدید"}</strong>
+            {connectionEditingId ? <small>تغییر این اتصال روی همهٔ کارت‌هایی که از آن استفاده می‌کنند اثر می‌گذارد.</small> : null}
+            <label><span>نام اتصال</span><input value={connectionName} onChange={(event) => setConnectionName(event.target.value)} placeholder="API کامنت‌ها" /></label>
+            <label><span>نشانی پایهٔ HTTPS</span><input dir="ltr" type="url" value={connectionBaseUrl}
+              onChange={(event) => setConnectionBaseUrl(event.target.value)} placeholder="https://api.example.com" /></label>
+            <label><span>روش احراز هویت</span><select value={connectionAuthType}
+              onChange={(event) => setConnectionAuthType(event.target.value as "bearer" | "api_key")}>
+              <option value="bearer">Bearer Token</option><option value="api_key">کلید در هدر X-API-Key</option></select></label>
+            {connectionAuthType === "api_key" ? <label><span>نام هدر</span><input dir="ltr" value={connectionHeaderName}
+              onChange={(event) => setConnectionHeaderName(event.target.value)} placeholder="X-API-Key" /></label> : null}
+            <label><span>{connectionEditingId ? "توکن تازه (اختیاری)" : "توکن API"}</span><input type="password" autoComplete="new-password"
+              value={connectionToken} onChange={(event) => setConnectionToken(event.target.value)} placeholder={connectionEditingId ? "توکن قبلی حفظ می‌شود" : "توکن را وارد کن"} /></label>
+            {connectionError ? <small role="alert" className="api-connection-error">{connectionError}</small> : null}
+            <div className="api-connection-actions"><button type="button" disabled={connectionBusy}
+              onClick={() => void saveConnection(selected.key)}>{connectionBusy ? "در حال ذخیره..." : "ذخیره و انتخاب اتصال"}</button>
+              <button type="button" disabled={connectionBusy} onClick={() => { setConnectionFormOpen(false); setConnectionToken(""); setConnectionError(""); }}>انصراف</button></div>
+          </div> : null}
           <label><span>مسیر نسبی روی همان میزبان</span><input dir="ltr" value={String(selected.config.path ?? "")}
             onChange={(event) => update(selected.key, "path", event.target.value)} placeholder="/comments" /></label>
           {selected.type === "api_source" ? <>

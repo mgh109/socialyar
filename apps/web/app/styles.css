@@ -1057,6 +1057,13 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .builder-settings textarea, .settings-card textarea { min-height:120px; resize:vertical; }
 .builder-settings input:focus, .builder-settings select:focus, .settings-card input:focus { border-color:var(--green); }
 .builder-note { color:var(--accent-text); font-size:13px; }
+.api-connection-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.api-connection-actions button { border:1px solid var(--border); border-radius:8px; background:var(--panel); color:var(--text); font:inherit; font-size:12px; padding:8px 10px; cursor:pointer; }
+.api-connection-actions button:hover { border-color:var(--green); color:var(--accent-text); }
+.api-connection-actions button:disabled { opacity:.6; cursor:wait; }
+.api-connection-inline { display:flex; flex-direction:column; gap:12px; border:1px solid var(--border); border-radius:10px; background:var(--panel); padding:14px; }
+.api-connection-inline > small { color:var(--muted); line-height:1.6; }
+.api-connection-inline .api-connection-error { color:#b42318; }
 .builder-help { border:1px solid var(--border); border-radius:10px; background:var(--panel); padding:14px; font-size:13px; }
 .builder-help p { margin:6px 0 0; color:var(--muted); }
 .account-dock { position:fixed; z-index:110; left:15px; bottom:15px; direction:rtl; }
