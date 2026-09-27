@@ -18,20 +18,13 @@ const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].in
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "RSS", eitaa: "ایتا", bale: "بله" };
 const types = [
-  { type: "rss_source", kind: "rss", label: "منبع · RSS" },
-  { type: "rss_source", kind: "eitaa", label: "منبع · ایتا" },
-  { type: "rss_source", kind: "bale", label: "منبع · بله" },
-  { type: "manual_input", label: "ورودی دستی" },
-  { type: "api_source", label: "منبع · کامنت API" },
-  { type: "comment_decision", label: "تصمیم کامنت · AI" },
-  { type: "api_action", kind: "approve", label: "API · تأیید کامنت" },
-  { type: "api_action", kind: "reject", label: "API · رد کامنت" },
-  { type: "api_action", kind: "reply", label: "API · پاسخ کامنت" },
-  { type: "filter", label: "شرط خبر" },
-  { type: "ai", label: "بازنویسی AI" },
+  { type: "source", label: "منبع" },
+  { type: "filter", label: "شرط" },
+  { type: "ai", label: "هوش مصنوعی" },
   { type: "human_approval", label: "تأیید انسانی" },
   { type: "draft", label: "پیش‌نویس" },
   { type: "publish", label: "انتشار ایتا" },
+  { type: "api_action", label: "اقدام API" },
 ];
 const errors: Record<string, string> = {
   graph_invalid_step: "یک کارت نامعتبر است.", graph_invalid_connection: "اتصال نامعتبر یا تکراری است.",
@@ -176,17 +169,18 @@ export function WorkflowBuilder() {
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, [connecting]);
 
-  const add = (type: string, kind?: string) => {
+  const add = (requestedType: string) => {
+    const type = requestedType === "source" ? "rss_source" : requestedType;
     const key = freshKey();
     const count = steps.length;
-    const config = type === "rss_source" ? kind === "rss" ? { sourceKind: "rss", feedUrl: "" } :
-      { sourceKind: kind, channel: "" } : type === "publish" ? { accountId: "", publishIntervalSeconds: 30 } :
+    const config = type === "rss_source" ? { sourceKind: "rss", feedUrl: "" } :
+      type === "publish" ? { accountId: "", publishIntervalSeconds: 30 } :
       type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
       { profileId: aiProfiles[0]?.id ?? "default", aiMode: "rewrite" } : type === "api_source" ?
       { connectionId: apiConnections[0]?.id ?? "", path: "/comments", itemsPath: "data.comments", idField: "id", textField: "text", contextField: "context",
         readMode: "single", batchLimit: 10, postIdField: "postId", postId: "" } :
       type === "comment_decision" ? { profileId: aiProfiles[0]?.id ?? "default", rules: "" } :
-      type === "api_action" ? { connectionId: apiConnections[0]?.id ?? "", path: "/comments/moderate", action: kind,
+      type === "api_action" ? { connectionId: apiConnections[0]?.id ?? "", path: "/comments/moderate", action: "approve",
         method: "POST", idField: "commentId", statusField: "status", replyField: "reply" } : {};
     const step = { key, type, name: type === "rss_source" ? "منبع" :
       types.find((item) => item.type === type)?.label ?? "کارت", config,
@@ -195,6 +189,23 @@ export function WorkflowBuilder() {
   };
   const update = (key: string, field: string, value: unknown) => setSteps((current) => current.map((step) =>
     step.key === key ? { ...step, config: { ...step.config, [field]: value } } : step));
+  const switchSource = (key: string, kind: string) => {
+    const type = kind === "api" ? "api_source" : kind === "manual" ? "manual_input" : "rss_source";
+    const config = kind === "api" ? { connectionId: apiConnections[0]?.id ?? "", path: "/comments",
+      itemsPath: "data.comments", idField: "id", textField: "text", contextField: "context", readMode: "single",
+      batchLimit: 10, postIdField: "postId", postId: "" } : kind === "manual" ? {} :
+      kind === "rss" ? { sourceKind: "rss", feedUrl: "" } : { sourceKind: kind, channel: "" };
+    setSteps((current) => current.map((step) => step.key === key ? { ...step, type, name: "منبع", config } : step));
+    setMessage("نوع منبع تغییر کرد؛ تنظیماتش را تکمیل و ذخیره کن.");
+  };
+  const switchAI = (key: string, mode: string) => {
+    const type = mode === "decision" ? "comment_decision" : "ai";
+    setSteps((current) => current.map((step) => step.key === key ? { ...step, type, name: "هوش مصنوعی",
+      config: { ...step.config, aiMode: mode, ...(mode === "decision" ? { rules: step.config.rules ?? "" } : {}) } } : step));
+    setEdges((current) => current.map((edge) => edge.sourceKey === key ? { ...edge,
+      condition: mode === "decision" ? { decision: String(steps.find((item) => item.key === edge.targetKey)?.config.action ?? "review") } : null } : edge));
+    setMessage(mode === "decision" ? "برای اتصال‌های خروجی، تصمیم هر شاخه را مشخص کن." : "حالت هوش مصنوعی تغییر کرد؛ ذخیره کن.");
+  };
   const remove = (key: string) => {
     const step = steps.find((item) => item.key === key);
     if (!step || !window.confirm(`کارت «${step.name}» و اتصال‌هایش حذف شود؟`)) return;
@@ -301,8 +312,8 @@ export function WorkflowBuilder() {
     <div className="builder-layout"><section className="builder-workspace" aria-label="بوم جریان">
       <div className="graph-frame"><div className="graph-canvas-controls"><div className="graph-canvas-actions">
         <div className="graph-palette"><details><summary>+ افزودن کارت</summary><div className="graph-palette-menu">
-        {types.map((item) => <button key={`${item.type}-${item.kind ?? ""}`} type="button" onClick={(event) => {
-          add(item.type, item.kind); event.currentTarget.closest("details")?.removeAttribute("open");
+        {types.map((item) => <button key={item.type} type="button" onClick={(event) => {
+          add(item.type); event.currentTarget.closest("details")?.removeAttribute("open");
         }}>{item.label}</button>)}</div></details></div>
         <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
         </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ هر ${pollIntervalMinutes} دقیقه` : "پیش‌نویس"}>{autoEnabled ? `● هر ${pollIntervalMinutes} دقیقه` : "○ پیش‌نویس"}</span>
@@ -374,10 +385,12 @@ export function WorkflowBuilder() {
             <option value="review">بررسی انسانی</option></select></label> : null}
         <button type="button" onClick={() => { const edge = edges.find((item) => edgeId(item) === selectedEdge); if (edge) removeEdge(edge); }}>حذف اتصال</button></div> : null}
       {selected ? <><div className="builder-selected-title"><small>کارت انتخاب‌شده</small><strong>{selected.name}</strong></div>
-        {selected.type === "rss_source" ? <><label><span>نوع منبع</span><select value={String(selected.config.sourceKind ?? "rss")}
-          onChange={(event) => { const kind = event.target.value; setSteps((current) => current.map((step) => step.key === selected.key ?
-            { ...step, config: kind === "rss" ? { sourceKind: kind, feedUrl: "" } : { sourceKind: kind, channel: "" } } : step)); }}>
-          <option value="rss">خوراک RSS</option><option value="eitaa">کانال عمومی ایتا</option><option value="bale">کانال عمومی بله</option></select></label>
+        {isSource(selected) ? <label><span>نوع منبع</span><select value={selected.type === "api_source" ? "api" :
+          selected.type === "manual_input" ? "manual" : String(selected.config.sourceKind ?? "rss")}
+          onChange={(event) => switchSource(selected.key, event.target.value)}>
+          <option value="rss">RSS</option><option value="eitaa">کانال ایتا</option><option value="bale">کانال بله</option>
+          <option value="api">کامنت API</option><option value="manual">ورودی دستی</option></select></label> : null}
+        {selected.type === "rss_source" ? <>
           {selected.config.sourceKind === "eitaa" || selected.config.sourceKind === "bale" ? <label><span>شناسه یا لینک کانال</span>
             <input dir="ltr" placeholder={selected.config.sourceKind === "bale" ? "https://ble.ir/channel" : "https://eitaa.com/channel"}
               value={String(selected.config.channel ?? "")} onChange={(event) => update(selected.key, "channel", event.target.value)} /></label> :
@@ -437,6 +450,11 @@ export function WorkflowBuilder() {
             <small className="builder-note">اگر نتیجهٔ درخواست نامشخص باشد، ارسال خودکار دوباره انجام نمی‌شود.</small>
           </>}
         </> : null}
+        {["ai", "comment_decision"].includes(selected.type) ? <label><span>کار هوش مصنوعی</span><select
+          value={selected.type === "comment_decision" ? "decision" : String(selected.config.aiMode ?? "rewrite")}
+          onChange={(event) => switchAI(selected.key, event.target.value)}>
+          <option value="rewrite">بازنویسی خبر</option><option value="feedback">تحلیل بازخورد کامنت‌ها</option>
+          <option value="decision">تصمیم برای هر کامنت</option></select></label> : null}
         {selected.type === "comment_decision" ? <>
           <label><span>مدل تصمیم</span><select value={String(selected.config.profileId ?? "default")}
             onChange={(event) => update(selected.key, "profileId", event.target.value)}><option value="default">مدل پیش‌فرض</option>
@@ -453,10 +471,7 @@ export function WorkflowBuilder() {
             onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))}>
             <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={120}>۲ دقیقه</option><option value={300}>۵ دقیقه</option></select></label>
           {!eitaaAccounts.length ? <Link href="/connections">+ اتصال کانال ایتا</Link> : null}</> : null}
-        {selected.type === "ai" ? <><label><span>کار این کارت</span><select value={String(selected.config.aiMode ?? "rewrite")}
-          onChange={(event) => update(selected.key, "aiMode", event.target.value)}>
-          <option value="rewrite">بازنویسی خبر</option><option value="feedback">تحلیل بازخورد کامنت‌ها</option></select></label>
-          <label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
+        {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
           onChange={(event) => update(selected.key, "profileId", event.target.value)}>
           {!aiProfiles.some((profile) => profile.id === String(selected.config.profileId ?? "default")) ?
             <option value={String(selected.config.profileId ?? "default")}>مدل انتخاب‌شده موجود نیست</option> : null}
