@@ -1,5 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
-import { decideComment, generateNewsDraft, generateNewsTitle, type AIConnection } from "@socialyar/ai";
+import { analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIConnection } from "@socialyar/ai";
 import { apiRequest } from "./api-client";
 import {
   aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
@@ -10,7 +10,8 @@ type Step = typeof workflowSteps.$inferSelect;
 type Edge = typeof workflowConnections.$inferSelect;
 type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
   videoUrl?: string | null; queuedForPublication?: boolean; commentId?: string; context?: string;
-  decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string };
+  decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string;
+  comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
 
 function transientAIError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -135,7 +136,8 @@ export async function executeRun(input: ExecuteRunInput) {
           output = { text: text.trim(), title: run.input.title as string ?? null,
             url: run.input.url as string ?? null, imageUrl: run.input.imageUrl as string ?? null,
             videoUrl: run.input.videoUrl as string ?? null,
-            commentId: run.input.commentId as string | undefined, context: run.input.context as string | undefined };
+            commentId: run.input.commentId as string | undefined, context: run.input.context as string | undefined,
+            comments: Array.isArray(run.input.comments) ? run.input.comments as Array<{ id: string; text: string }> : undefined };
         } else if (step.type === "filter") {
           if (!upstream?.text) throw new Error("Filter needs an incoming news item");
           const words = String(step.config.keywords ?? "").split(/[،,\n]/).map((word) => word.trim().toLocaleLowerCase()).filter(Boolean);
@@ -167,6 +169,12 @@ export async function executeRun(input: ExecuteRunInput) {
               message: `${step.name}: تلاش ${attempt} از ۳ پس از خطای موقت سرویس هوش مصنوعی`,
               payload: { error: error instanceof Error ? error.message : String(error), attempt } });
           };
+          if (step.config.aiMode === "feedback") {
+            if (!upstream.comments?.length) throw new Error("برای تحلیل بازخورد، منبع API را روی حالت گروهی یا یک نوشته بگذار");
+            const report = await retryAI(() => analyzeCommentFeedback(connection, upstream.comments!, upstream.context ?? "", instructions), retry);
+            output = { ...upstream, text: report.text, feedback: { ...report.counts, total: report.total, themes: report.themes } };
+          } else {
+          if (upstream.comments?.length) throw new Error("برای گروه کامنت‌ها، حالت کارت AI را «تحلیل بازخورد» انتخاب کن");
           const text = await retryAI(() => generateNewsDraft(connection,
             { title: upstream.title || "خبر", text: sourceText, url: upstream.url ?? undefined }, instructions), retry);
           const titleMode = step.config.titleMode ?? "keep";
@@ -178,6 +186,7 @@ export async function executeRun(input: ExecuteRunInput) {
           const imageUrl = imageMode === "remove" ? null : imageMode === "custom" ?
             String(step.config.customImageUrl).trim() : upstream.imageUrl;
           output = { ...upstream, text, title, imageUrl };
+          }
         } else if (step.type === "comment_decision") {
           if (!upstream?.commentId || !upstream.text) throw new Error("تصمیم کامنت به ورودی کامنت نیاز دارد");
           const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows).where(eq(workflows.id, run.workflowId)).limit(1);
