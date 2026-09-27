@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { apiConnections, decryptSecret, encryptSecret, ensureCommentStorage, getDb, secretConfigurationProblem, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
-import { apiRequest, inspectApiComments, validApiBase } from "@socialyar/workflow/api-client";
+import { apiRequest, readApiComments, validApiBase } from "@socialyar/workflow/api-client";
 import { connection as redis } from "../queue";
 
 const schema = z.object({
@@ -13,7 +13,8 @@ const params = z.object({ id: z.string().uuid() });
 const previewSchema = z.object({ path: z.string().startsWith("/").max(300), itemsPath: z.string().min(1).max(150),
   idField: z.string().min(1).max(100), textField: z.string().min(1).max(100), contextField: z.string().max(100).optional(),
   readMode: z.enum(["single", "batch", "post"]).optional(), postId: z.string().max(100).optional(),
-  postIdField: z.string().max(100).optional(), batchLimit: z.union([z.literal(10), z.literal(25), z.literal(50)]).optional() });
+  postIdField: z.string().max(100).optional(), batchLimit: z.number().int().min(1).max(1000).optional(),
+  readAll: z.boolean().optional() });
 const publicFields = { id: apiConnections.id, name: apiConnections.name, baseUrl: apiConnections.baseUrl,
   authType: apiConnections.authType, headerName: apiConnections.headerName };
 
@@ -70,11 +71,10 @@ export async function apiConnectionRoutes(app: FastifyInstance) {
       eq(apiConnections.workspaceId, request.auth.workspaceId))).limit(1);
     if (!row) return reply.code(404).send({ error: "api_connection_not_found" });
     try {
-      const response = await apiRequest({ ...row, token: decryptSecret(row.encryptedToken) }, config.path, "GET");
-      const result = inspectApiComments(response, config);
+      const result = await readApiComments({ ...row, token: decryptSecret(row.encryptedToken) }, config.path, config);
       return { status: "ok", rawCount: result.rawCount, matchedCount: result.matchedCount,
         selectedCount: result.selectedCount, validCount: result.validCount,
-        availablePaths: result.availablePaths,
+        availablePaths: result.availablePaths, pagesFetched: result.pagesFetched, capped: result.capped,
         samples: result.comments.slice(0, 3).map((item) => ({ id: item.id, text: item.text.slice(0, 180) })) };
     } catch (error) { return reply.code(422).send({ error: "api_source_preview_failed",
       message: error instanceof Error ? error.message : "خواندن کامنت‌ها ناموفق بود" }); }
