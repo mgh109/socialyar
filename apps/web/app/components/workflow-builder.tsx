@@ -14,9 +14,10 @@ type ApiConnection = { id: string; name: string; baseUrl: string; authType: "bea
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 type AIProfile = { id: string; name: string; provider: string; model: string };
 type SourcePreview = { status: "ok"; rawCount: number; matchedCount: number; selectedCount: number;
-  validCount: number; availablePaths: string[]; samples: Array<{ id: string; text: string }> };
+  validCount: number; pagesFetched: number; capped: boolean; availablePaths: string[]; samples: Array<{ id: string; text: string }> };
 type SourceHealth = { status: "ok" | "error" | "not_checked"; checkedAt?: string; error?: string;
-  rawCount?: number; matchedCount?: number; selectedCount?: number; validCount?: number; queuedCount?: number };
+  rawCount?: number; matchedCount?: number; selectedCount?: number; validCount?: number; queuedCount?: number;
+  pagesFetched?: number; capped?: boolean };
 type Activity = { run: { id: string; status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
@@ -260,7 +261,8 @@ export function WorkflowBuilder() {
         body: JSON.stringify({ path: String(step.config.path ?? ""), itemsPath: String(step.config.itemsPath ?? ""),
           idField: String(step.config.idField ?? ""), textField: String(step.config.textField ?? ""),
           contextField: String(step.config.contextField ?? ""), readMode: String(step.config.readMode ?? "single"),
-          batchLimit: Number(step.config.batchLimit ?? 10), postId: String(step.config.postId ?? ""),
+          batchLimit: Number(step.config.batchLimit ?? 10), readAll: step.config.readAll === true,
+          postId: String(step.config.postId ?? ""),
           postIdField: String(step.config.postIdField ?? "postId") }) });
       const data = await response.json() as SourcePreview & { message?: string; error?: string };
       if (!response.ok) throw new Error(data.message ?? `آزمایش ناموفق بود (${data.error ?? response.status}).`);
@@ -522,16 +524,24 @@ export function WorkflowBuilder() {
               <option value="batch">گروهی؛ آخرین کامنت‌ها</option>
               <option value="post">گروهی؛ کامنت‌های یک نوشته</option></select></label>
             {selected.config.readMode === "batch" || selected.config.readMode === "post" ? <>
-              <label><span>حداکثر کامنت در هر تحلیل</span><select value={Number(selected.config.batchLimit ?? 10)}
-                onChange={(event) => update(selected.key, "batchLimit", Number(event.target.value))}>
-                <option value={10}>۱۰ کامنت</option><option value={25}>۲۵ کامنت</option><option value={50}>۵۰ کامنت</option></select></label>
+              <label><span>تعداد کامنت برای تحلیل</span><select value={selected.config.readAll === true ? "all" :
+                [10, 25, 50].includes(Number(selected.config.batchLimit ?? 10)) ? String(selected.config.batchLimit ?? 10) : "custom"}
+                onChange={(event) => { const value = event.target.value;
+                  update(selected.key, "readAll", value === "all");
+                  if (value !== "all" && value !== "custom") update(selected.key, "batchLimit", Number(value));
+                  if (value === "custom" && [10, 25, 50].includes(Number(selected.config.batchLimit))) update(selected.key, "batchLimit", 100);
+                }}><option value="10">۱۰ کامنت</option><option value="25">۲۵ کامنت</option><option value="50">۵۰ کامنت</option>
+                <option value="custom">عدد دلخواه</option><option value="all">همهٔ کامنت‌ها (تا ۵۰۰۰ یا ۱۰۰ صفحه)</option></select></label>
+              {selected.config.readAll !== true && ![10, 25, 50].includes(Number(selected.config.batchLimit ?? 10)) ?
+                <label><span>تعداد دلخواه (۱ تا ۱۰۰۰)</span><input type="number" min={1} max={1000} value={Number(selected.config.batchLimit ?? 100)}
+                  onChange={(event) => update(selected.key, "batchLimit", Number(event.target.value))} /></label> : null}
               {selected.config.readMode === "post" ? <>
                 <label><span>فیلد شناسهٔ نوشته در هر کامنت</span><input dir="ltr" value={String(selected.config.postIdField ?? "postId")}
                   onChange={(event) => update(selected.key, "postIdField", event.target.value)} placeholder="postId" /></label>
                 <label><span>شناسهٔ نوشته</span><input dir="ltr" value={String(selected.config.postId ?? "")}
                   onChange={(event) => update(selected.key, "postId", event.target.value)} placeholder="123" /></label>
               </> : null}
-              <small className="builder-note">این حالت را به کارت AI با گزینهٔ «تحلیل بازخورد» وصل کن. API باید کامنت‌های تازه‌تر را اول برگرداند؛ از همان پاسخ حداکثر ۵۰ مورد خوانده می‌شود.</small>
+              <small className="builder-note">صفحه‌های API با PageNumber/PageSize خوانده می‌شوند؛ هر تحلیل حداکثر ۵۰ کامنت دارد. حالت «همه» در هر پایش تا ۵۰۰۰ مورد یا ۱۰۰ صفحه را می‌خواند.</small>
             </> : null}
             {([ ["itemsPath", "مسیر آرایهٔ کامنت‌ها", "data.comments"], ["idField", "فیلد شناسه", "id"],
               ["textField", "فیلد متن", "text"], ["contextField", "فیلد زمینه (اختیاری)", "context"] ] as const)
@@ -542,7 +552,8 @@ export function WorkflowBuilder() {
                 {sourcePreviewBusy ? "در حال خواندن API..." : "آزمایش اتصال و خواندن کامنت‌ها"}</button>
               {sourcePreviewError ? <p role="alert" className="api-connection-error">{sourcePreviewError}</p> : null}
               {sourcePreview ? <div role="status"><strong>✓ اتصال برقرار شد</strong>
-                <p>پاسخ API: {sourcePreview.rawCount.toLocaleString("fa-IR")} مورد · مطابق فیلتر: {sourcePreview.matchedCount.toLocaleString("fa-IR")} · قابل خواندن: {sourcePreview.validCount.toLocaleString("fa-IR")}</p>
+                <p>{sourcePreview.pagesFetched.toLocaleString("fa-IR")} صفحه · {sourcePreview.rawCount.toLocaleString("fa-IR")} مورد · مطابق فیلتر: {sourcePreview.matchedCount.toLocaleString("fa-IR")} · قابل خواندن: {sourcePreview.validCount.toLocaleString("fa-IR")}</p>
+                {sourcePreview.capped ? <small>سقف این نوبت رسید؛ ممکن است موارد بیشتری هنوز خوانده نشده باشند.</small> : null}
                 {sourcePreview.validCount === 0 ? <p>هیچ کامنتی با فیلدهای فعلی خوانده نشد. مسیرهای آرایه: {sourcePreview.availablePaths.join("، ") || "پیدا نشد"}. فیلد شناسه، متن و فیلتر نوشته را بررسی کن.</p> :
                   sourcePreview.samples.map((item) => <p key={item.id} className="api-source-sample"><b>#{item.id}</b> {item.text}</p>)}
                 <small>این آزمایش چیزی منتشر نمی‌کند و وارد صف نمی‌کند.</small>
@@ -551,7 +562,7 @@ export function WorkflowBuilder() {
             {workflowId ? <div className="api-source-check"><strong>آخرین پایش خودکار</strong>
               {!sourceHealth || sourceHealth.status === "not_checked" ? <p>هنوز نتیجهٔ پایش این منبع ثبت نشده است. اگر جریان فعال است و پس از یک نوبت پایش هم همین پیام ماند، وضعیت worker را بررسی کن.</p> :
                 sourceHealth.status === "error" ? <p role="alert" className="api-connection-error">{sourceHealth.error}</p> :
-                <p>{sourceHealth.rawCount?.toLocaleString("fa-IR")} مورد در پاسخ · {sourceHealth.validCount?.toLocaleString("fa-IR")} کامنت خوانده‌شده · {sourceHealth.queuedCount?.toLocaleString("fa-IR")} اجرای تازه در صف</p>}
+                <p>{sourceHealth.pagesFetched?.toLocaleString("fa-IR")} صفحه · {sourceHealth.rawCount?.toLocaleString("fa-IR")} مورد · {sourceHealth.validCount?.toLocaleString("fa-IR")} کامنت خوانده‌شده · {sourceHealth.queuedCount?.toLocaleString("fa-IR")} اجرای تازه در صف</p>}
               {sourceHealth?.status === "ok" && sourceHealth.validCount && !sourceHealth.queuedCount ?
                 <small>کامنت خوانده شد، اما مورد تازه‌ای برای پردازش نبود؛ شناسه‌ها یا محتوای این گروه قبلاً پردازش شده‌اند.</small> : null}
               {sourceHealth?.checkedAt ? <small>زمان بررسی: {new Date(sourceHealth.checkedAt).toLocaleString("fa-IR")}</small> : null}
