@@ -7,6 +7,8 @@ import {
   getDb,
   aiSettings,
   aiProfiles,
+  apiConnections,
+  ensureCommentStorage,
   approvals,
   contentItems,
   contentVariants,
@@ -107,7 +109,7 @@ async function insertGraph(
 
 async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connections: z.infer<typeof connectionSchema>[], workspaceId: string): Promise<string | null> {
   const sorted = [...steps].sort((a, b) => a.order - b.order);
-  const source = sorted.find((step) => step.type === "rss_source");
+  const source = sorted.find((step) => ["rss_source", "api_source"].includes(step.type));
   const graphError = graphProblem(steps, connections, true);
   if (graphError) return graphError;
   if (!source || steps.some((step) => step.type === "manual_input")) return "graph_missing_input";
@@ -135,6 +137,31 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
   }
   }
   const db = getDb();
+  if (sorted.some((step) => ["api_source", "api_action"].includes(step.type))) await ensureCommentStorage();
+  for (const step of sorted.filter((item) => ["api_source", "api_action"].includes(item.type))) {
+    const { connectionId, path } = step.config;
+    if (typeof connectionId !== "string" || !z.string().uuid().safeParse(connectionId).success ||
+      typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || path.length > 300)
+      return "invalid_api_step";
+    const [connection] = await db.select({ id: apiConnections.id }).from(apiConnections)
+      .where(and(eq(apiConnections.id, connectionId), eq(apiConnections.workspaceId, workspaceId))).limit(1);
+    if (!connection) return "invalid_api_step";
+    if (step.type === "api_source" && (!["itemsPath", "idField", "textField"].every((key) =>
+      typeof step.config[key] === "string" && String(step.config[key]).length > 0)) ||
+      step.type === "api_action" && !["approve", "reject", "reply"].includes(String(step.config.action)))
+      return "invalid_api_step";
+  }
+  for (const step of sorted.filter((item) => item.type === "comment_decision")) {
+    if (typeof step.config.rules !== "string" || !step.config.rules.trim()) return "invalid_comment_decision";
+    const outgoing = connections.filter((edge) => edge.sourceKey === step.key);
+    if (!outgoing.length || outgoing.some((edge) => !["approve", "reject", "reply", "review"].includes(String(edge.condition?.decision))))
+      return "invalid_decision_branch";
+    const profileId = step.config.profileId;
+    const [profile] = profileId && profileId !== "default" ? await db.select({ id: aiProfiles.id }).from(aiProfiles)
+      .where(and(eq(aiProfiles.id, String(profileId)), eq(aiProfiles.workspaceId, workspaceId))).limit(1) :
+      await db.select({ id: aiSettings.workspaceId }).from(aiSettings).where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
+    if (!profile) return "ai_profile_not_found";
+  }
   for (const publisher of sorted.filter((step) => step.type === "publish")) {
     const interval = publisher.config.publishIntervalSeconds ?? 30;
     if (typeof interval !== "number" || ![30, 60, 120, 300].includes(interval)) return "invalid_publish_interval";
