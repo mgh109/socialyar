@@ -150,6 +150,9 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
       typeof step.config[key] === "string" && String(step.config[key]).length > 0)) ||
       step.type === "api_action" && !["approve", "reject", "reply"].includes(String(step.config.action)))
       return "invalid_api_step";
+    if (step.type === "api_action" && ["idField", "statusField", "replyField"].some((key) =>
+      step.config[key] !== undefined && !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(String(step.config[key]))))
+      return "invalid_api_step";
   }
   for (const step of sorted.filter((item) => item.type === "comment_decision")) {
     if (typeof step.config.rules !== "string" || !step.config.rules.trim()) return "invalid_comment_decision";
@@ -157,6 +160,8 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     if (!outgoing.length || outgoing.some((edge) => !["approve", "reject", "reply", "review"].includes(String(edge.condition?.decision))))
       return "invalid_decision_branch";
     const profileId = step.config.profileId;
+    if (profileId !== undefined && profileId !== "default" &&
+      (typeof profileId !== "string" || !z.string().uuid().safeParse(profileId).success)) return "ai_profile_not_found";
     const [profile] = profileId && profileId !== "default" ? await db.select({ id: aiProfiles.id }).from(aiProfiles)
       .where(and(eq(aiProfiles.id, String(profileId)), eq(aiProfiles.workspaceId, workspaceId))).limit(1) :
       await db.select({ id: aiSettings.workspaceId }).from(aiSettings).where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
