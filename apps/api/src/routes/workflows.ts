@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -7,10 +7,12 @@ import {
   getDb,
   aiSettings,
   aiProfiles,
+  approvals,
   contentItems,
   contentVariants,
   publications,
   runs,
+  schedules,
   socialAccounts,
   workflowConnections,
   workflowSteps,
@@ -320,17 +322,40 @@ export async function workflowRoutes(app: FastifyInstance) {
       if (!workflow) return "not_found";
       if (workflow.status === "active") return "active";
 
-      const [previousRun] = await tx.select({ id: runs.id }).from(runs)
-        .where(eq(runs.workflowId, workflowId)).limit(1);
-      if (previousRun) return "has_runs";
+      const workflowRunIds = tx.select({ id: runs.id }).from(runs)
+        .where(eq(runs.workflowId, workflowId));
+      const [unfinished] = await tx.select({ id: runs.id }).from(runs)
+        .where(and(eq(runs.workflowId, workflowId), inArray(runs.status, ["queued", "running", "waiting_approval"])))
+        .limit(1);
+      if (unfinished) return "has_pending_work";
 
+      const workflowContentIds = tx.select({ id: contentItems.id }).from(contentItems)
+        .where(inArray(contentItems.runId, workflowRunIds));
+      const [publication] = await tx.select({ id: publications.id }).from(publications)
+        .innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
+        .where(inArray(contentVariants.contentItemId, workflowContentIds)).limit(1);
+      if (publication) return "has_publications";
+      const [schedule] = await tx.select({ id: schedules.id }).from(schedules)
+        .innerJoin(contentVariants, eq(schedules.contentVariantId, contentVariants.id))
+        .where(inArray(contentVariants.contentItemId, workflowContentIds)).limit(1);
+      if (schedule) return "has_publications";
+      const [pendingApproval] = await tx.select({ id: approvals.id }).from(approvals)
+        .innerJoin(contentVariants, eq(approvals.contentVariantId, contentVariants.id))
+        .where(and(inArray(contentVariants.contentItemId, workflowContentIds), eq(approvals.status, "pending"))).limit(1);
+      if (pendingApproval) return "has_pending_work";
+
+      // Drafts and completed run logs belong to this workflow; remove them before
+      // deleting versions, whose steps are referenced by run_steps with RESTRICT.
+      await tx.delete(contentItems).where(inArray(contentItems.id, workflowContentIds));
+      await tx.delete(runs).where(eq(runs.workflowId, workflowId));
       await tx.delete(workflows).where(eq(workflows.id, workflowId));
       return "deleted";
     });
 
     if (result === "not_found") return reply.code(404).send({ error: "workflow_not_found" });
     if (result === "active") return reply.code(409).send({ error: "workflow_active" });
-    if (result === "has_runs") return reply.code(409).send({ error: "workflow_has_runs" });
+    if (result === "has_pending_work") return reply.code(409).send({ error: "workflow_has_pending_work" });
+    if (result === "has_publications") return reply.code(409).send({ error: "workflow_has_publications" });
     return reply.code(204).send();
   });
 
