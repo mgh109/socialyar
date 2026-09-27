@@ -23,7 +23,7 @@ export function WorkflowList() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function deleteWorkflow(workflow: Workflow) {
-    if (!window.confirm(`جریان «${workflow.name}» حذف شود؟ این کار قابل بازگشت نیست.`)) return;
+    if (!window.confirm(`جریان «${workflow.name}» حذف شود؟ اجراهای تمام‌شده و پیش‌نویس‌های آن هم پاک می‌شوند. این کار قابل بازگشت نیست.`)) return;
     setDeletingId(workflow.id);
     setMessage("");
     try {
@@ -31,7 +31,8 @@ export function WorkflowList() {
       if (!response.ok) {
         const body = await response.json().catch(() => ({})) as { error?: string };
         if (body.error === "workflow_active") throw new Error("برای حذف این جریان، ابتدا آن را غیرفعال کن.");
-        if (body.error === "workflow_has_runs") throw new Error("این جریان سابقهٔ اجرا دارد و برای حفظ گزارش‌ها قابل حذف نیست.");
+        if (body.error === "workflow_has_pending_work") throw new Error("این جریان هنوز کار در حال اجرا یا تأیید در انتظار دارد؛ پس از پایان یا لغو آن حذف کن.");
+        if (body.error === "workflow_has_publications") throw new Error("این جریان سابقهٔ انتشار یا برنامهٔ انتشار دارد و برای حفظ اطلاعات آن قابل حذف نیست.");
         throw new Error(`حذف جریان ناموفق بود (${response.status})`);
       }
       setItems((current) => {
