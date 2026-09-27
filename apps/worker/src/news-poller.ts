@@ -187,7 +187,7 @@ async function poll() {
           .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source"])));
         if (!sources.length) continue;
         const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
-        const intervalMinutes = [1, 2, 5, 10, 15].includes(configured) ? configured : 5;
+        const intervalMinutes = Number.isInteger(configured) && configured >= 1 && configured <= 10080 ? configured : 5;
         const reserved = await connection.set(`news-poll:${workflow.id}:${version.id}`, String(Date.now()), "EX", intervalMinutes * 60, "NX");
         if (reserved !== "OK") continue;
         const rotation = Math.floor(Date.now() / (intervalMinutes * 60_000)) % sources.length;
