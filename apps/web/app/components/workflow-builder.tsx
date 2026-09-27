@@ -13,7 +13,7 @@ type Edge = { sourceKey: string; targetKey: string; condition?: { decision?: str
 type ApiConnection = { id: string; name: string; baseUrl: string };
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 type AIProfile = { id: string; name: string; provider: string; model: string };
-type Activity = { run: { status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
+type Activity = { run: { id: string; status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "RSS", eitaa: "ایتا", bale: "بله" };
@@ -47,6 +47,7 @@ const errors: Record<string, string> = {
   invalid_api_step: "اتصال، مسیر یا فیلدهای کارت API معتبر نیست.",
   invalid_comment_decision: "قواعد بررسی کامنت را وارد کن.",
   invalid_decision_branch: "برای هر خروجی کارت تصمیم، نتیجهٔ شاخه را انتخاب کن.",
+  invalid_feedback_path: "منبع گروهی را به کارت AI با حالت «تحلیل بازخورد» وصل کن؛ این مسیر نباید به اقدام تکی کامنت برسد.",
 };
 const nodeWidth = 190;
 const nodeHeight = 150;
@@ -181,8 +182,9 @@ export function WorkflowBuilder() {
     const config = type === "rss_source" ? kind === "rss" ? { sourceKind: "rss", feedUrl: "" } :
       { sourceKind: kind, channel: "" } : type === "publish" ? { accountId: "", publishIntervalSeconds: 30 } :
       type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
-      { profileId: aiProfiles[0]?.id ?? "default" } : type === "api_source" ?
-      { connectionId: apiConnections[0]?.id ?? "", path: "/comments", itemsPath: "data.comments", idField: "id", textField: "text", contextField: "context" } :
+      { profileId: aiProfiles[0]?.id ?? "default", aiMode: "rewrite" } : type === "api_source" ?
+      { connectionId: apiConnections[0]?.id ?? "", path: "/comments", itemsPath: "data.comments", idField: "id", textField: "text", contextField: "context",
+        readMode: "single", batchLimit: 10, postIdField: "postId", postId: "" } :
       type === "comment_decision" ? { profileId: aiProfiles[0]?.id ?? "default", rules: "" } :
       type === "api_action" ? { connectionId: apiConnections[0]?.id ?? "", path: "/comments/moderate", action: kind,
         method: "POST", idField: "commentId", statusField: "status", replyField: "reply" } : {};
@@ -307,6 +309,7 @@ export function WorkflowBuilder() {
         {activity && (activity.publication || activity.queueCount || activity.run) ? <details className="graph-activity"><summary title="آخرین فعالیت همین جریان" aria-label="آخرین فعالیت همین جریان">فعالیت</summary><div><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
         activity.publication?.status === "failed" ? "ارسال ناموفق" : activity.publication ? "در صف انتشار" : activity.run?.status ?? "بدون خبر"}
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
+        {activity.run ? <Link href={`/runs/${activity.run.id}`}>دیدن آخرین اجرا و تحلیل ←</Link> : null}
         {activity.publication?.externalUrl ? <a href={activity.publication.externalUrl} target="_blank" rel="noreferrer">دیدن خبر ↗</a> : null}</div></details> : null}</div></div>
       <div className="graph-scroll" ref={canvasRef} onPointerUp={(event) => {
         if (connecting && event.target === event.currentTarget) { setConnecting(null); setPointer(null); }
@@ -351,6 +354,7 @@ export function WorkflowBuilder() {
             step.type === "publish" ? eitaaAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "نیاز به انتخاب کانال" :
             step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال API را انتخاب کن" :
             step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
+            step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
             step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>
           {step.type === "rss_source" ? <div className="graph-source-footer">{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</div> : null}
           {!isTerminal(step) ? <button className={`graph-port output ${connecting === step.key ? "active" : ""}`}
@@ -394,11 +398,28 @@ export function WorkflowBuilder() {
           <label><span>مسیر نسبی روی همان میزبان</span><input dir="ltr" value={String(selected.config.path ?? "")}
             onChange={(event) => update(selected.key, "path", event.target.value)} placeholder="/comments" /></label>
           {selected.type === "api_source" ? <>
+            <label><span>روش خواندن کامنت‌ها</span><select value={String(selected.config.readMode ?? "single")}
+              onChange={(event) => update(selected.key, "readMode", event.target.value)}>
+              <option value="single">تکی؛ برای تصمیم و اقدام هر کامنت</option>
+              <option value="batch">گروهی؛ آخرین کامنت‌ها</option>
+              <option value="post">گروهی؛ کامنت‌های یک نوشته</option></select></label>
+            {selected.config.readMode === "batch" || selected.config.readMode === "post" ? <>
+              <label><span>حداکثر کامنت در هر تحلیل</span><select value={Number(selected.config.batchLimit ?? 10)}
+                onChange={(event) => update(selected.key, "batchLimit", Number(event.target.value))}>
+                <option value={10}>۱۰ کامنت</option><option value={25}>۲۵ کامنت</option><option value={50}>۵۰ کامنت</option></select></label>
+              {selected.config.readMode === "post" ? <>
+                <label><span>فیلد شناسهٔ نوشته در هر کامنت</span><input dir="ltr" value={String(selected.config.postIdField ?? "postId")}
+                  onChange={(event) => update(selected.key, "postIdField", event.target.value)} placeholder="postId" /></label>
+                <label><span>شناسهٔ نوشته</span><input dir="ltr" value={String(selected.config.postId ?? "")}
+                  onChange={(event) => update(selected.key, "postId", event.target.value)} placeholder="123" /></label>
+              </> : null}
+              <small className="builder-note">این حالت را به کارت AI با گزینهٔ «تحلیل بازخورد» وصل کن. API باید کامنت‌های تازه‌تر را اول برگرداند؛ از همان پاسخ حداکثر ۵۰ مورد خوانده می‌شود.</small>
+            </> : null}
             {([ ["itemsPath", "مسیر آرایهٔ کامنت‌ها", "data.comments"], ["idField", "فیلد شناسه", "id"],
               ["textField", "فیلد متن", "text"], ["contextField", "فیلد زمینه (اختیاری)", "context"] ] as const)
               .map(([key, label, hint]) => <label key={key}><span>{label}</span><input dir="ltr" value={String(selected.config[key] ?? "")}
                 placeholder={hint} onChange={(event) => update(selected.key, key, event.target.value)} /></label>)}
-            <small className="builder-note">پایش طبق فاصلهٔ جریان انجام می‌شود؛ شناسهٔ تکراری دوباره پردازش نمی‌شود.</small>
+            <small className="builder-note">پایش طبق فاصلهٔ جریان انجام می‌شود؛ گروهی با شناسه‌های یکسان دوباره تحلیل نمی‌شود.</small>
           </> : <>
             <label><span>اقدام</span><select value={String(selected.config.action ?? "approve")}
               onChange={(event) => update(selected.key, "action", event.target.value)}><option value="approve">تأیید</option>
@@ -432,13 +453,18 @@ export function WorkflowBuilder() {
             onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))}>
             <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={120}>۲ دقیقه</option><option value={300}>۵ دقیقه</option></select></label>
           {!eitaaAccounts.length ? <Link href="/connections">+ اتصال کانال ایتا</Link> : null}</> : null}
-        {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
+        {selected.type === "ai" ? <><label><span>کار این کارت</span><select value={String(selected.config.aiMode ?? "rewrite")}
+          onChange={(event) => update(selected.key, "aiMode", event.target.value)}>
+          <option value="rewrite">بازنویسی خبر</option><option value="feedback">تحلیل بازخورد کامنت‌ها</option></select></label>
+          <label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
           onChange={(event) => update(selected.key, "profileId", event.target.value)}>
           {!aiProfiles.some((profile) => profile.id === String(selected.config.profileId ?? "default")) ?
             <option value={String(selected.config.profileId ?? "default")}>مدل انتخاب‌شده موجود نیست</option> : null}
           {aiProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider} / {profile.model}</option>)}
-          </select></label><label><span>دستور بازنویسی متن</span><textarea value={String(selected.config.instructions ?? "")}
-          onChange={(event) => update(selected.key, "instructions", event.target.value)} placeholder="خبر را کوتاه و دقیق بازنویسی کن." /></label>
+          </select></label><label><span>{selected.config.aiMode === "feedback" ? "راهنمای تحلیل (اختیاری)" : "دستور بازنویسی متن"}</span><textarea value={String(selected.config.instructions ?? "")}
+          onChange={(event) => update(selected.key, "instructions", event.target.value)} placeholder={selected.config.aiMode === "feedback" ?
+            "بازخورد کاربران را دربارهٔ کیفیت خدمات توضیح بده و نگرانی‌های پرتکرار را مشخص کن." : "خبر را کوتاه و دقیق بازنویسی کن."} /></label>
+          {selected.config.aiMode === "feedback" ? <small className="builder-note">هر کامنت جدا برچسب می‌گیرد؛ شمارش مثبت، منفی و خنثی از برچسب‌ها محاسبه می‌شود. نتیجه را در صفحهٔ اجرای جریان ببین.</small> : <>
           <label><span>عنوان خبر</span><select value={String(selected.config.titleMode ?? "keep")}
             onChange={(event) => update(selected.key, "titleMode", event.target.value)}>
             <option value="keep">عنوان اصلی را نگه دار</option><option value="rewrite">عنوان را با AI بازنویسی کن</option>
@@ -455,6 +481,7 @@ export function WorkflowBuilder() {
           {selected.config.imageMode === "custom" ? <label><span>نشانی تصویر (HTTPS)</span><input dir="ltr" type="url"
             value={String(selected.config.customImageUrl ?? "")} onChange={(event) => update(selected.key, "customImageUrl", event.target.value)}
             placeholder="https://example.com/news.jpg" /></label> : null}
+          </>}
           <Link href="/settings/ai">{aiReady ? "✓ مدل AI تنظیم شده" : "+ تنظیم مدل و توکن AI"}</Link></> : null}
         {selected.type === "manual_input" ? <label><span>متن ورودی</span><textarea value={prompt}
           onChange={(event) => setPrompt(event.target.value)} placeholder="متن خبر یا موضوع" /></label> : null}
