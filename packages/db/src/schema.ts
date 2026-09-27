@@ -104,6 +104,31 @@ export const aiProfiles = pgTable("ai_profiles", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ workspaceIdx: index("ai_profiles_workspace_idx").on(t.workspaceId) }));
 
+export const apiConnections = pgTable("api_connections", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  baseUrl: text("base_url").notNull(),
+  authType: text("auth_type").notNull(),
+  headerName: text("header_name"),
+  encryptedToken: text("encrypted_token").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ workspaceIdx: index("api_connections_workspace_idx").on(t.workspaceId) }));
+
+export const commentActions = pgTable("comment_actions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  workflowId: uuid("workflow_id").notNull().references(() => workflows.id, { onDelete: "cascade" }),
+  runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
+  stepKey: text("step_key").notNull(),
+  commentId: text("comment_id").notNull(),
+  status: text("status").notNull(),
+  detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ actionUq: uniqueIndex("comment_actions_once_uq").on(t.workflowId, t.stepKey, t.commentId) }));
+
 export const newsItems = pgTable("news_items", {
   id: uuid("id").defaultRandom().primaryKey(),
   workflowId: uuid("workflow_id").notNull().references(() => workflows.id, { onDelete: "cascade" }),
