@@ -227,7 +227,9 @@ export async function executeRun(input: ExecuteRunInput) {
           } else {
             try {
               const idField = String(step.config.idField || "commentId");
-              const body: Record<string, unknown> = { [idField]: upstream.commentId };
+              const numericId = /^\d+$/.test(upstream.commentId) ? Number(upstream.commentId) : NaN;
+              const commentId = Number.isSafeInteger(numericId) ? numericId : upstream.commentId;
+              const body: Record<string, unknown> = { [idField]: commentId };
               if (action === "reply") body[String(step.config.replyField || "reply")] = upstream.reply;
               else body[String(step.config.statusField || "status")] = action === "approve" ?
                 String(step.config.approveValue || "approved") : String(step.config.rejectValue || "rejected");
