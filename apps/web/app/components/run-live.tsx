@@ -38,7 +38,8 @@ export function RunLive({ runId }: { runId: string }) {
   const [run, setRun] = useState<RunData | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [steps, setSteps] = useState<Array<{ key: string; name: string; type: string; status: string | null;
-    output: { text?: string } | null; error: { message?: string } | null; attempt: number | null }>>([]);
+    output: { text?: string; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } } | null;
+    error: { message?: string } | null; attempt: number | null }>>([]);
   const [connected, setConnected] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -153,6 +154,14 @@ export function RunLive({ runId }: { runId: string }) {
               {actionError ? <span role="alert">{actionError}</span> : null}
             </div>
           )) : null}
+
+          {steps.filter((step) => step.status === "completed" && step.output?.feedback).map((step) => (
+            <div className="run-output-ready" key={`feedback-${step.key}`}>
+              <div><strong>تحلیل بازخورد · {step.output!.feedback!.total.toLocaleString("fa-IR")} کامنت</strong>
+                <span>مثبت: {step.output!.feedback!.positive.toLocaleString("fa-IR")} · منفی: {step.output!.feedback!.negative.toLocaleString("fa-IR")} · خنثی: {step.output!.feedback!.neutral.toLocaleString("fa-IR")}</span>
+                <p style={{ whiteSpace: "pre-wrap" }}>{step.output?.text}</p></div>
+            </div>
+          ))}
 
           {canOpenStudio ? (
             <div className="run-output-ready">
