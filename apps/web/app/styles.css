@@ -1071,6 +1071,10 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .api-source-check small { color:var(--muted); }
 .api-source-check .api-connection-error { color:#b42318; }
 .api-source-sample { padding:7px 9px; border-radius:7px; background:var(--panel2); }
+.graph-node.role-source { border-top:3px solid #4da5d6; }
+.graph-node.role-process { border-top:3px solid #a882d8; }
+.graph-node.role-output { border-top:3px solid var(--green); }
+.graph-role-label { display:block; margin:3px 0 1px; color:var(--muted); font-size:10px; line-height:1.2; }
 .builder-help { border:1px solid var(--border); border-radius:10px; background:var(--panel); padding:14px; font-size:13px; }
 .builder-help p { margin:6px 0 0; color:var(--muted); }
 .account-dock { position:fixed; z-index:110; left:15px; bottom:15px; direction:rtl; }

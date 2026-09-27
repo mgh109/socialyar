@@ -193,8 +193,8 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     if (typeof accountId !== "string" || !z.string().uuid().safeParse(accountId).success) return "eitaa_account_required";
     const [account] = await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, workspaceId),
-        eq(socialAccounts.channel, "eitaa"), eq(socialAccounts.isActive, true))).limit(1);
-    if (!account) return "eitaa_account_not_found";
+        eq(socialAccounts.isActive, true))).limit(1);
+    if (!account || !["eitaa", "telegram", "website"].includes(account.channel)) return "eitaa_account_not_found";
   }
   const accountIds = sorted.filter((step) => step.type === "publish").map((step) => step.config.accountId);
   if (new Set(accountIds).size !== accountIds.length) return "duplicate_publish_channel";
