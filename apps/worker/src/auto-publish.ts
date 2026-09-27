@@ -39,11 +39,12 @@ export async function enqueueAutoPublication(runId: string) {
     const publishIntervalSeconds = publishStep.config.publishIntervalSeconds ?? 30;
     if (typeof publishIntervalSeconds !== "number" || ![30, 60, 120, 300].includes(publishIntervalSeconds))
       throw new Error("Invalid publication interval");
-    if (typeof accountId !== "string") throw new Error("Publish step needs an Eitaa account");
+    if (typeof accountId !== "string") throw new Error("مقصد انتشار انتخاب نشده است");
     const [account] = await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, row.workspaceId),
-        eq(socialAccounts.channel, "eitaa"), eq(socialAccounts.isActive, true))).limit(1);
-    if (!account) throw new Error("Eitaa account is no longer active");
+        eq(socialAccounts.isActive, true))).limit(1);
+    if (!account || !["eitaa", "telegram", "website"].includes(account.channel))
+      throw new Error("مقصد انتشار معتبر یا فعال نیست");
 
     const existing = await db.select().from(contentItems).where(eq(contentItems.runId, runId));
     let content = existing.find((item) => item.metadata.publishStepKey === publishStep.key) ??
@@ -56,9 +57,9 @@ export async function enqueueAutoPublication(runId: string) {
           routePath: path }, status: "approved" }).returning();
     }
     let [variant] = await db.select().from(contentVariants).where(and(
-      eq(contentVariants.contentItemId, content.id), eq(contentVariants.channel, "eitaa"))).limit(1);
+      eq(contentVariants.contentItemId, content.id), eq(contentVariants.channel, account.channel))).limit(1);
     if (!variant) {
-      [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: "eitaa",
+      [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: account.channel,
         title: content.title, body: generated.text,
         settings: { imageUrl: generated.imageUrl ?? null, videoUrl: generated.videoUrl ?? null,
           publishIntervalSeconds }, status: "approved", generatedBy: "ai" }).returning();
