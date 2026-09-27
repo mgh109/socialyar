@@ -39,7 +39,7 @@ const connectionSchema = z.object({
 
 const createWorkflowSchema = z.object({
   name: z.string().min(1),
-  pollIntervalMinutes: z.union([z.literal(1), z.literal(2), z.literal(5), z.literal(10), z.literal(15)]).default(5),
+  pollIntervalMinutes: z.number().int().min(1).max(10080).default(5),
   status: z.enum(["draft", "active"]).default("draft"),
   description: z.string().nullable().optional(),
   autonomyMode: z.enum(["manual", "assisted", "semi_auto", "full_auto"]).default("assisted"),
@@ -49,7 +49,7 @@ const createWorkflowSchema = z.object({
 });
 
 const updateWorkflowSchema = z.object({
-  pollIntervalMinutes: z.union([z.literal(1), z.literal(2), z.literal(5), z.literal(10), z.literal(15)]).default(5),
+  pollIntervalMinutes: z.number().int().min(1).max(10080).default(5),
   name: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
   autonomyMode: z.enum(["manual", "assisted", "semi_auto", "full_auto"]).optional(),
@@ -190,7 +190,8 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
   }
   for (const publisher of sorted.filter((step) => step.type === "publish")) {
     const interval = publisher.config.publishIntervalSeconds ?? 30;
-    if (typeof interval !== "number" || ![30, 60, 120, 300].includes(interval)) return "invalid_publish_interval";
+    if (typeof interval !== "number" || !Number.isInteger(interval) || interval < 30 || interval > 604800)
+      return "invalid_publish_interval";
     const accountId = publisher.config.accountId;
     if (typeof accountId !== "string" || !z.string().uuid().safeParse(accountId).success) return "eitaa_account_required";
     const [account] = await db.select().from(socialAccounts)
