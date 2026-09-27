@@ -54,7 +54,7 @@ export function apiField(value: unknown, path: string): unknown {
 }
 
 export type CommentSourceConfig = { itemsPath: string; idField: string; textField: string;
-  contextField?: string; readMode?: string; postId?: string; postIdField?: string; batchLimit?: number };
+  contextField?: string; readMode?: string; postId?: string; postIdField?: string; batchLimit?: number; readAll?: boolean };
 
 function arrayPaths(value: unknown, prefix = "$", depth = 0): string[] {
   if (Array.isArray(value)) return [prefix];
@@ -72,7 +72,8 @@ export function inspectApiComments(response: unknown, config: CommentSourceConfi
   const postId = String(config.postId ?? "").trim();
   const matching = mode === "post" ? items.filter((item) =>
     String(apiField(item, config.postIdField || "postId") ?? "") === postId) : items;
-  const limit = [10, 25, 50].includes(Number(config.batchLimit)) ? Number(config.batchLimit) : 10;
+  const limit = Number.isInteger(config.batchLimit) && Number(config.batchLimit) > 0 && Number(config.batchLimit) <= 5000
+    ? Number(config.batchLimit) : 10;
   const selected = matching.slice(0, mode === "single" ? 50 : limit);
   const comments = selected.flatMap((item): Array<{ id: string; text: string; context: string }> => {
     const id = apiField(item, config.idField), text = apiField(item, config.textField);
@@ -82,4 +83,46 @@ export function inspectApiComments(response: unknown, config: CommentSourceConfi
   });
   return { rawCount: items.length, matchedCount: matching.length, selectedCount: selected.length,
     validCount: comments.length, comments, availablePaths };
+}
+
+/** Fetch successive pages; some APIs enforce a smaller page size than requested. */
+export async function readApiComments(connection: ApiConnection, path: string, config: CommentSourceConfig,
+  request: typeof apiRequest = apiRequest) {
+  const target = config.readAll ? 5000 : config.readMode === "single" ? 50 :
+    Math.min(1000, Math.max(1, Number(config.batchLimit ?? 10)));
+  const url = new URL(path, "https://api.invalid");
+  const firstPage = Math.max(1, Number(url.searchParams.get("PageNumber") ?? 1) || 1);
+  const requestedSize = Math.min(100, Math.max(20, target));
+  const seen = new Set<string>();
+  const collected: unknown[] = [];
+  let pagesFetched = 0;
+  let availablePaths: string[] = [];
+  for (let page = firstPage; page < firstPage + 100 && collected.length < 5000; page++) {
+    url.searchParams.set("PageNumber", String(page));
+    url.searchParams.set("PageSize", String(requestedSize));
+    const response = await request(connection, url.pathname + url.search, "GET");
+    const items = apiField(response, config.itemsPath);
+    if (!Array.isArray(items)) {
+      // Preserve the descriptive path error from the ordinary inspector.
+      inspectApiComments(response, config);
+      throw new Error("آرایهٔ کامنت‌ها پیدا نشد");
+    }
+    if (!availablePaths.length) availablePaths = arrayPaths(response);
+    pagesFetched++;
+    if (!items.length) break;
+    let added = 0;
+    for (const item of items) {
+      const id = apiField(item, config.idField);
+      const fingerprint = id == null ? JSON.stringify(item) : String(id);
+      if (seen.has(fingerprint)) continue;
+      seen.add(fingerprint); collected.push(item); added++;
+    }
+    if (!added) break; // An API that ignores pagination returned the same page again.
+    const matched = config.readMode === "post" ? collected.filter((item) =>
+      String(apiField(item, config.postIdField || "postId") ?? "") === String(config.postId ?? "")).length : collected.length;
+    if (!config.readAll && matched >= target) break;
+  }
+  const result = inspectApiComments(collected, { ...config, itemsPath: "$", batchLimit: target });
+  return { ...result, availablePaths, pagesFetched,
+    capped: config.readAll === true && (collected.length >= 5000 || pagesFetched >= 100) };
 }
