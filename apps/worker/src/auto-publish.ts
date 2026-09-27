@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { contentItems, contentVariants, getDb, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows } from "@socialyar/db";
-import { connection } from "./queue";
+import { connection, reservePublicationSlot } from "./queue";
 
 const publicationQueue = new Queue("publication-jobs", { connection });
 
@@ -37,7 +37,8 @@ export async function enqueueAutoPublication(runId: string) {
     }
     const accountId = publishStep.config.accountId;
     const publishIntervalSeconds = publishStep.config.publishIntervalSeconds ?? 30;
-    if (typeof publishIntervalSeconds !== "number" || ![30, 60, 120, 300].includes(publishIntervalSeconds))
+    if (typeof publishIntervalSeconds !== "number" || !Number.isInteger(publishIntervalSeconds) ||
+      publishIntervalSeconds < 30 || publishIntervalSeconds > 604800)
       throw new Error("Invalid publication interval");
     if (typeof accountId !== "string") throw new Error("مقصد انتشار انتخاب نشده است");
     const [account] = await db.select().from(socialAccounts)
@@ -74,8 +75,13 @@ export async function enqueueAutoPublication(runId: string) {
         contentVariantId: variant.id, socialAccountId: account.id, status: "queued" }).returning();
     }
     if (publication.status === "published" || publication.status === "publishing") continue;
+    if (await publicationQueue.getJob(`publication-${publication.id}`)) continue;
+    const delay = await reservePublicationSlot(account.id, publishIntervalSeconds);
+    await db.update(contentVariants).set({ settings: { ...variant.settings, pacedInQueue: true } })
+      .where(eq(contentVariants.id, variant.id));
     await publicationQueue.add("publish-content", { publicationId: publication.id }, {
-      jobId: `publication-${publication.id}`, attempts: 3, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: 1000,
+      jobId: `publication-${publication.id}`, delay, attempts: 3,
+      backoff: { type: "exponential", delay: 5000 }, removeOnComplete: 1000,
     });
     } catch (error) {
       console.error(`Publication branch ${publishStep.key} failed for run ${runId}`, error);

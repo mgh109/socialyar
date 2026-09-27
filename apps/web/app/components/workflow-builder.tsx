@@ -14,14 +14,21 @@ type ApiConnection = { id: string; name: string; baseUrl: string; authType: "bea
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 type AIProfile = { id: string; name: string; provider: string; model: string };
 type SourcePreview = { status: "ok"; rawCount: number; matchedCount: number; selectedCount: number;
-  validCount: number; availablePaths: string[]; samples: Array<{ id: string; text: string }> };
+  validCount: number; pagesFetched: number; capped: boolean; availablePaths: string[]; samples: Array<{ id: string; text: string }> };
 type SourceHealth = { status: "ok" | "error" | "not_checked"; checkedAt?: string; error?: string;
-  rawCount?: number; matchedCount?: number; selectedCount?: number; validCount?: number; queuedCount?: number };
+  rawCount?: number; matchedCount?: number; selectedCount?: number; validCount?: number; queuedCount?: number;
+  pagesFetched?: number; capped?: boolean };
 type Activity = { run: { id: string; status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "RSS", eitaa: "ایتا", bale: "بله" };
 const publishNames: Record<string, string> = { eitaa: "ایتا", telegram: "تلگرام", website: "وب‌سایت" };
+const pollPresets = [1, 5, 15, 60, 1440];
+const publishPresets = [30, 60, 300, 3600, 86400];
+function durationLabel(minutes: number) {
+  return minutes % 1440 === 0 ? `هر ${minutes / 1440} روز` :
+    minutes % 60 === 0 ? `هر ${minutes / 60} ساعت` : `هر ${minutes} دقیقه`;
+}
 const types = [
   { type: "source", label: "منبع" },
   { type: "filter", label: "شرط" },
@@ -260,7 +267,8 @@ export function WorkflowBuilder() {
         body: JSON.stringify({ path: String(step.config.path ?? ""), itemsPath: String(step.config.itemsPath ?? ""),
           idField: String(step.config.idField ?? ""), textField: String(step.config.textField ?? ""),
           contextField: String(step.config.contextField ?? ""), readMode: String(step.config.readMode ?? "single"),
-          batchLimit: Number(step.config.batchLimit ?? 10), postId: String(step.config.postId ?? ""),
+          batchLimit: Number(step.config.batchLimit ?? 10), readAll: step.config.readAll === true,
+          postId: String(step.config.postId ?? ""),
           postIdField: String(step.config.postIdField ?? "postId") }) });
       const data = await response.json() as SourcePreview & { message?: string; error?: string };
       if (!response.ok) throw new Error(data.message ?? `آزمایش ناموفق بود (${data.error ?? response.status}).`);
@@ -378,9 +386,13 @@ export function WorkflowBuilder() {
         <details className="workflow-settings-menu"><summary>تنظیمات جریان</summary><div className="workflow-settings-popover">
           <strong>تنظیمات عمومی</strong>
           <label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label><span>فاصلهٔ پایش منابع</span><select value={pollIntervalMinutes} onChange={(event) => setPollIntervalMinutes(Number(event.target.value))}>
-            <option value={1}>هر ۱ دقیقه</option><option value={2}>هر ۲ دقیقه</option><option value={5}>هر ۵ دقیقه</option>
-            <option value={10}>هر ۱۰ دقیقه</option><option value={15}>هر ۱۵ دقیقه</option></select></label>
+          <label><span>فاصلهٔ پایش منابع</span><select value={pollPresets.includes(pollIntervalMinutes) ? String(pollIntervalMinutes) : "custom"}
+            onChange={(event) => setPollIntervalMinutes(event.target.value === "custom" ? 30 : Number(event.target.value))}>
+            <option value={1}>هر ۱ دقیقه</option><option value={5}>هر ۵ دقیقه</option><option value={15}>هر ۱۵ دقیقه</option>
+            <option value={60}>هر ۱ ساعت</option><option value={1440}>روزی یک‌بار</option><option value="custom">عدد دلخواه</option></select></label>
+          {!pollPresets.includes(pollIntervalMinutes) ? <label><span>فاصلهٔ دلخواه (دقیقه، ۱ تا ۱۰۰۸۰)</span>
+            <input type="number" min={1} max={10080} value={pollIntervalMinutes}
+              onChange={(event) => setPollIntervalMinutes(Number(event.target.value))} /></label> : null}
           <small>فاصلهٔ ارسال خبر در کارت انتشار تنظیم می‌شود.</small>
         </div></details>
         <button className="ghost-button" onClick={() => void save(autoEnabled)} disabled={busy}>ذخیره تغییرات</button>
@@ -395,7 +407,7 @@ export function WorkflowBuilder() {
           add(item.type); event.currentTarget.closest("details")?.removeAttribute("open");
         }}>{item.label}</button>)}</div></details></div>
         <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
-        </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ هر ${pollIntervalMinutes} دقیقه` : "پیش‌نویس"}>{autoEnabled ? `● هر ${pollIntervalMinutes} دقیقه` : "○ پیش‌نویس"}</span>
+        </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ ${durationLabel(pollIntervalMinutes)}` : "پیش‌نویس"}>{autoEnabled ? `● ${durationLabel(pollIntervalMinutes)}` : "○ پیش‌نویس"}</span>
         {activity && (activity.publication || activity.queueCount || activity.run) ? <details className="graph-activity"><summary title="آخرین فعالیت همین جریان" aria-label="آخرین فعالیت همین جریان">فعالیت</summary><div><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
         activity.publication?.status === "failed" ? "ارسال ناموفق" : activity.publication ? "در صف انتشار" : activity.run?.status ?? "بدون خبر"}
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
@@ -522,16 +534,24 @@ export function WorkflowBuilder() {
               <option value="batch">گروهی؛ آخرین کامنت‌ها</option>
               <option value="post">گروهی؛ کامنت‌های یک نوشته</option></select></label>
             {selected.config.readMode === "batch" || selected.config.readMode === "post" ? <>
-              <label><span>حداکثر کامنت در هر تحلیل</span><select value={Number(selected.config.batchLimit ?? 10)}
-                onChange={(event) => update(selected.key, "batchLimit", Number(event.target.value))}>
-                <option value={10}>۱۰ کامنت</option><option value={25}>۲۵ کامنت</option><option value={50}>۵۰ کامنت</option></select></label>
+              <label><span>تعداد کامنت برای تحلیل</span><select value={selected.config.readAll === true ? "all" :
+                [10, 25, 50].includes(Number(selected.config.batchLimit ?? 10)) ? String(selected.config.batchLimit ?? 10) : "custom"}
+                onChange={(event) => { const value = event.target.value;
+                  update(selected.key, "readAll", value === "all");
+                  if (value !== "all" && value !== "custom") update(selected.key, "batchLimit", Number(value));
+                  if (value === "custom" && [10, 25, 50].includes(Number(selected.config.batchLimit))) update(selected.key, "batchLimit", 100);
+                }}><option value="10">۱۰ کامنت</option><option value="25">۲۵ کامنت</option><option value="50">۵۰ کامنت</option>
+                <option value="custom">عدد دلخواه</option><option value="all">همهٔ کامنت‌ها (تا ۵۰۰۰ یا ۱۰۰ صفحه)</option></select></label>
+              {selected.config.readAll !== true && ![10, 25, 50].includes(Number(selected.config.batchLimit ?? 10)) ?
+                <label><span>تعداد دلخواه (۱ تا ۱۰۰۰)</span><input type="number" min={1} max={1000} value={Number(selected.config.batchLimit ?? 100)}
+                  onChange={(event) => update(selected.key, "batchLimit", Number(event.target.value))} /></label> : null}
               {selected.config.readMode === "post" ? <>
                 <label><span>فیلد شناسهٔ نوشته در هر کامنت</span><input dir="ltr" value={String(selected.config.postIdField ?? "postId")}
                   onChange={(event) => update(selected.key, "postIdField", event.target.value)} placeholder="postId" /></label>
                 <label><span>شناسهٔ نوشته</span><input dir="ltr" value={String(selected.config.postId ?? "")}
                   onChange={(event) => update(selected.key, "postId", event.target.value)} placeholder="123" /></label>
               </> : null}
-              <small className="builder-note">این حالت را به کارت AI با گزینهٔ «تحلیل بازخورد» وصل کن. API باید کامنت‌های تازه‌تر را اول برگرداند؛ از همان پاسخ حداکثر ۵۰ مورد خوانده می‌شود.</small>
+              <small className="builder-note">صفحه‌های API با PageNumber/PageSize خوانده می‌شوند؛ هر تحلیل حداکثر ۵۰ کامنت دارد. حالت «همه» در هر پایش تا ۵۰۰۰ مورد یا ۱۰۰ صفحه را می‌خواند.</small>
             </> : null}
             {([ ["itemsPath", "مسیر آرایهٔ کامنت‌ها", "data.comments"], ["idField", "فیلد شناسه", "id"],
               ["textField", "فیلد متن", "text"], ["contextField", "فیلد زمینه (اختیاری)", "context"] ] as const)
@@ -542,7 +562,8 @@ export function WorkflowBuilder() {
                 {sourcePreviewBusy ? "در حال خواندن API..." : "آزمایش اتصال و خواندن کامنت‌ها"}</button>
               {sourcePreviewError ? <p role="alert" className="api-connection-error">{sourcePreviewError}</p> : null}
               {sourcePreview ? <div role="status"><strong>✓ اتصال برقرار شد</strong>
-                <p>پاسخ API: {sourcePreview.rawCount.toLocaleString("fa-IR")} مورد · مطابق فیلتر: {sourcePreview.matchedCount.toLocaleString("fa-IR")} · قابل خواندن: {sourcePreview.validCount.toLocaleString("fa-IR")}</p>
+                <p>{sourcePreview.pagesFetched.toLocaleString("fa-IR")} صفحه · {sourcePreview.rawCount.toLocaleString("fa-IR")} مورد · مطابق فیلتر: {sourcePreview.matchedCount.toLocaleString("fa-IR")} · قابل خواندن: {sourcePreview.validCount.toLocaleString("fa-IR")}</p>
+                {sourcePreview.capped ? <small>سقف این نوبت رسید؛ ممکن است موارد بیشتری هنوز خوانده نشده باشند.</small> : null}
                 {sourcePreview.validCount === 0 ? <p>هیچ کامنتی با فیلدهای فعلی خوانده نشد. مسیرهای آرایه: {sourcePreview.availablePaths.join("، ") || "پیدا نشد"}. فیلد شناسه، متن و فیلتر نوشته را بررسی کن.</p> :
                   sourcePreview.samples.map((item) => <p key={item.id} className="api-source-sample"><b>#{item.id}</b> {item.text}</p>)}
                 <small>این آزمایش چیزی منتشر نمی‌کند و وارد صف نمی‌کند.</small>
@@ -551,7 +572,7 @@ export function WorkflowBuilder() {
             {workflowId ? <div className="api-source-check"><strong>آخرین پایش خودکار</strong>
               {!sourceHealth || sourceHealth.status === "not_checked" ? <p>هنوز نتیجهٔ پایش این منبع ثبت نشده است. اگر جریان فعال است و پس از یک نوبت پایش هم همین پیام ماند، وضعیت worker را بررسی کن.</p> :
                 sourceHealth.status === "error" ? <p role="alert" className="api-connection-error">{sourceHealth.error}</p> :
-                <p>{sourceHealth.rawCount?.toLocaleString("fa-IR")} مورد در پاسخ · {sourceHealth.validCount?.toLocaleString("fa-IR")} کامنت خوانده‌شده · {sourceHealth.queuedCount?.toLocaleString("fa-IR")} اجرای تازه در صف</p>}
+                <p>{sourceHealth.pagesFetched?.toLocaleString("fa-IR")} صفحه · {sourceHealth.rawCount?.toLocaleString("fa-IR")} مورد · {sourceHealth.validCount?.toLocaleString("fa-IR")} کامنت خوانده‌شده · {sourceHealth.queuedCount?.toLocaleString("fa-IR")} اجرای تازه در صف</p>}
               {sourceHealth?.status === "ok" && sourceHealth.validCount && !sourceHealth.queuedCount ?
                 <small>کامنت خوانده شد، اما مورد تازه‌ای برای پردازش نبود؛ شناسه‌ها یا محتوای این گروه قبلاً پردازش شده‌اند.</small> : null}
               {sourceHealth?.checkedAt ? <small>زمان بررسی: {new Date(sourceHealth.checkedAt).toLocaleString("fa-IR")}</small> : null}
@@ -592,9 +613,17 @@ export function WorkflowBuilder() {
         {selected.type === "publish" ? <><label><span>مقصد انتشار</span><select value={String(selected.config.accountId ?? "")}
           onChange={(event) => update(selected.key, "accountId", event.target.value)}><option value="">انتخاب مقصد</option>
           {publishAccounts.map((account) => <option key={account.id} value={account.id}>{publishNames[account.channel]} · {account.displayName ?? account.externalAccountId}</option>)}</select></label>
-          <label><span>فاصلهٔ انتشار در همین کانال</span><select value={Number(selected.config.publishIntervalSeconds ?? 30)}
-            onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))}>
-            <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={120}>۲ دقیقه</option><option value={300}>۵ دقیقه</option></select></label>
+          <label><span>فاصلهٔ انتشار در همین کانال</span><select
+            value={publishPresets.includes(Number(selected.config.publishIntervalSeconds ?? 30)) ?
+              String(selected.config.publishIntervalSeconds ?? 30) : "custom"}
+            onChange={(event) => update(selected.key, "publishIntervalSeconds", event.target.value === "custom" ? 600 : Number(event.target.value))}>
+            <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={300}>۵ دقیقه</option>
+            <option value={3600}>هر ۱ ساعت</option><option value={86400}>روزی یک‌بار</option><option value="custom">عدد دلخواه</option></select></label>
+          {!publishPresets.includes(Number(selected.config.publishIntervalSeconds ?? 30)) ?
+            <label><span>فاصلهٔ دلخواه (ثانیه، ۳۰ تا ۶۰۴۸۰۰)</span><input type="number" min={30} max={604800}
+              value={Number(selected.config.publishIntervalSeconds ?? 600)}
+              onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))} /></label> : null}
+          <small className="builder-note">این فاصله بین دو پیام همان مقصد اعمال می‌شود؛ تنظیم روزانه یعنی هر ۲۴ ساعت حداکثر یک ارسال.</small>
           {!publishAccounts.length ? <Link href="/connections">+ اتصال مقصد انتشار</Link> : null}
           <small className="builder-note">ایتا، تلگرام و وب‌سایت آمادهٔ انتشارند. اینستاگرام و بله پس از پیاده‌سازی و آزمایش ناشرشان اضافه می‌شوند.</small></> : null}
         {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}

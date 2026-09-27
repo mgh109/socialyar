@@ -72,7 +72,8 @@ export async function executePublication(input: {
       .where(eq(contentItems.id, variant.contentItemId)).limit(1);
     if (source?.trigger === "rss") interval = 30;
   }
-  if (account && typeof interval === "number" && Number.isInteger(interval) && interval >= 30 && interval <= 300) {
+  if (account && variant.settings.pacedInQueue !== true && typeof interval === "number" &&
+    Number.isInteger(interval) && interval >= 30 && interval <= 300) {
     const waitMs = await reservePublicationSlot(account.id, interval);
     if (waitMs) await pause(waitMs);
   }
