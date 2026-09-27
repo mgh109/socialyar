@@ -10,6 +10,7 @@ import { accountRoutes } from "./routes/accounts";
 import { analyticsRoutes } from "./routes/analytics";
 import { authRoutes } from "./routes/auth";
 import { aiSettingsRoutes } from "./routes/ai-settings";
+import { apiConnectionRoutes } from "./routes/api-connections";
 import { authPlugin } from "./auth";
 import { closeQueue } from "./queue";
  
@@ -237,6 +238,7 @@ app.get("/health", async () => ({
 
 await app.register(authRoutes);
 await app.register(aiSettingsRoutes);
+await app.register(apiConnectionRoutes);
 await app.register(workflowRoutes);
 await app.register(runRoutes);
 await app.register(contentRoutes);

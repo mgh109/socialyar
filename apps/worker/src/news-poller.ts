@@ -3,7 +3,8 @@ import { isIP } from "node:net";
 import { and, eq, inArray } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { XMLParser } from "fast-xml-parser";
-import { getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
+import { apiConnections, decryptSecret, ensureCommentStorage, getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
+import { apiField, apiRequest } from "@socialyar/workflow/api-client";
 import { connection } from "./queue";
 import { channelHandle, fetchEitaaPosts } from "./eitaa-source";
 import { baleHandle, fetchBalePosts } from "./bale-source";
@@ -53,7 +54,8 @@ function publicFeedUrl(value: string) {
 
 async function queueItem(workflowId: string, versionId: string, title: string, summary: string,
   link: string, imageUrl: string | null, legacyId?: string, uniqueId?: string, sourceKey?: string,
-  videoUrl?: string | null, videoUnavailable?: boolean): Promise<boolean> {
+  videoUrl?: string | null, videoUnavailable?: boolean, commentId?: string, context?: string,
+  comments?: Array<{ id: string; text: string }>): Promise<boolean> {
   const db = getDb();
   const itemKey = createHash("sha256").update(uniqueId ?? link).digest("hex");
   const legacyKey = createHash("sha256").update(legacyId || link).digest("hex");
@@ -65,8 +67,8 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
   const [claimed] = await db.insert(newsItems).values({ workflowId, itemKey }).onConflictDoNothing().returning();
   if (!claimed) return false;
   const [run] = await db.insert(runs).values({ workflowId, workflowVersionId: versionId,
-    trigger: "rss", input: { title, text: summary || title, url: link, imageUrl, videoUrl,
-      videoUnavailable: videoUnavailable === true, sourceKey }, status: "queued" }).returning();
+    trigger: comments ? "api_feedback" : commentId ? "api_comments" : "rss", input: { title, text: summary || title, url: link, imageUrl, videoUrl,
+      videoUnavailable: videoUnavailable === true, sourceKey, commentId, context, comments }, status: "queued" }).returning();
   await db.update(newsItems).set({ runId: run.id }).where(eq(newsItems.id, claimed.id));
   await db.insert(runEvents).values({ runId: run.id, type: "run_started", message: "Source item queued" });
   try {
@@ -82,9 +84,47 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
 }
 
 type NewsCandidate = { title: string; text: string; url: string; imageUrl: string | null;
-  videoUrl?: string | null; videoUnavailable?: boolean; legacyId?: string; uniqueId?: string };
+  videoUrl?: string | null; videoUnavailable?: boolean; legacyId?: string; uniqueId?: string;
+  commentId?: string; context?: string; comments?: Array<{ id: string; text: string }> };
 
-async function sourceCandidates(source: typeof workflowSteps.$inferSelect): Promise<NewsCandidate[]> {
+async function sourceCandidates(source: typeof workflowSteps.$inferSelect, workspaceId: string): Promise<NewsCandidate[]> {
+  if (source.type === "api_source") {
+    await ensureCommentStorage();
+    const db = getDb();
+    const [connection] = await db.select().from(apiConnections).where(and(eq(apiConnections.id, String(source.config.connectionId)),
+      eq(apiConnections.workspaceId, workspaceId))).limit(1);
+    if (!connection) throw new Error("اتصال API منبع پیدا نشد");
+    const result = await apiRequest({ ...connection, token: decryptSecret(connection.encryptedToken) },
+      String(source.config.path), "GET");
+    const items = apiField(result, String(source.config.itemsPath));
+    if (!Array.isArray(items)) throw new Error("مسیر فهرست کامنت‌ها در پاسخ API آرایه نیست");
+    const mode = String(source.config.readMode ?? "single");
+    const postId = String(source.config.postId ?? "").trim();
+    const matching = mode === "post" ? items.filter((item) =>
+      String(apiField(item, String(source.config.postIdField || "postId")) ?? "") === postId) : items;
+    const limit = [10, 25, 50].includes(Number(source.config.batchLimit)) ? Number(source.config.batchLimit) : 10;
+    const parsed = matching.slice(0, mode === "single" ? 50 : limit).flatMap((item): NewsCandidate[] => {
+      const id = apiField(item, String(source.config.idField));
+      const text = apiField(item, String(source.config.textField));
+      if ((typeof id !== "string" && typeof id !== "number") || typeof text !== "string" || !text.trim()) return [];
+      const commentId = String(id);
+      const context = apiField(item, String(source.config.contextField || "context"));
+      return [{ title: `کامنت ${commentId}`, text: text.trim(), url: "", imageUrl: null,
+        uniqueId: `api:${connection.id}:${commentId}`, commentId,
+        context: typeof context === "string" ? context : "" }];
+    });
+    if (mode === "single") return parsed.reverse();
+    if (!parsed.length) return [];
+    const comments = parsed.map((item) => ({ id: item.commentId!, text: item.text.slice(0, 600) }));
+    const groupId = mode === "post" ? `post:${postId}` : `recent:${limit}`;
+    const fingerprint = createHash("sha256").update(JSON.stringify(comments.map((item) =>
+      [item.id, item.text]).sort((a, b) => a[0].localeCompare(b[0])))).digest("hex");
+    const context = parsed.find((item) => item.context)?.context ?? "";
+    return [{ title: mode === "post" ? `بازخورد نوشتهٔ ${postId}` : "بازخورد کامنت‌های اخیر",
+      text: comments.map((item, index) => `${index + 1}. ${item.text}`).join("\n"), url: "", imageUrl: null,
+      uniqueId: `api-feedback:${connection.id}:${source.key}:${groupId}:${fingerprint}`,
+      context, comments }];
+  }
   const kind = source.config.sourceKind;
   const urls = kind === "rss" ? [source.config.feedUrl] :
     Array.isArray(source.config.feedUrls) ? source.config.feedUrls : [source.config.feedUrl];
@@ -139,7 +179,7 @@ async function poll() {
           .where(and(eq(workflowVersions.workflowId, workflow.id), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
         if (!version) continue;
         const sources = await db.select().from(workflowSteps)
-          .where(and(eq(workflowSteps.workflowVersionId, version.id), eq(workflowSteps.type, "rss_source")));
+          .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source"])));
         if (!sources.length) continue;
         const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
         const intervalMinutes = [1, 2, 5, 10, 15].includes(configured) ? configured : 5;
@@ -147,7 +187,10 @@ async function poll() {
         if (reserved !== "OK") continue;
         const rotation = Math.floor(Date.now() / (intervalMinutes * 60_000)) % sources.length;
         const ordered = [...sources.slice(rotation), ...sources.slice(0, rotation)];
-        const batches = await Promise.all(ordered.map(async (source) => ({ source, items: await sourceCandidates(source) })));
+        const batches = await Promise.all(ordered.map(async (source) => {
+          try { return { source, items: await sourceCandidates(source, workflow.workspaceId) }; }
+          catch (error) { console.error(`Source poll failed for ${source.key}`, error); return { source, items: [] as NewsCandidate[] }; }
+        }));
         let queuedCount = 0;
         // Round robin keeps one busy source from starving the others.
         for (let index = 0; index < 10 && queuedCount < 15; index++) {
@@ -157,7 +200,7 @@ async function poll() {
             try {
               if (await queueItem(workflow.id, version.id, item.title, item.text, item.url,
                 item.imageUrl, item.legacyId, item.uniqueId, batch.source.key,
-                item.videoUrl, item.videoUnavailable)) queuedCount++;
+                item.videoUrl, item.videoUnavailable, item.commentId, item.context, item.comments)) queuedCount++;
             } catch (error) { console.error(`Queue failed for ${workflow.id}`, error); }
           }
         }

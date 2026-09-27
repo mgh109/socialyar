@@ -1,0 +1,53 @@
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+
+export type ApiConnection = { baseUrl: string; authType: string; headerName: string | null; token: string };
+
+export function validApiBase(value: string) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password && !url.port && !url.search && !url.hash &&
+      isIP(url.hostname.replace(/[\[\]]/g, "")) === 0 && !/^(localhost|.*\.(?:local|internal))$/i.test(url.hostname);
+  } catch { return false; }
+}
+
+export async function apiRequest(connection: ApiConnection, path: string, method: "GET" | "POST" | "PATCH", body?: unknown,
+  idempotencyKey?: string): Promise<unknown> {
+  if (!validApiBase(connection.baseUrl) || !path.startsWith("/") || path.startsWith("//") ||
+    /(?:^|\/)\.\.?\//.test(path) || /%2e|%2f|%5c/i.test(path)) throw new Error("نشانی API معتبر نیست");
+  const base = new URL(connection.baseUrl);
+  const url = new URL(path, base);
+  if (url.origin !== base.origin) throw new Error("مسیر باید روی همان میزبان اتصال API باشد");
+  const addresses = await lookup(url.hostname, { all: true });
+  if (!addresses.length || addresses.some(({ address, family }) => family !== 4 ||
+    /^(?:0\.|10\.|127\.|169\.254\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|198\.18\.|198\.19\.|22[4-9]\.|23\d\.|24\d\.|25\d\.)/.test(address))) {
+    throw new Error("میزبان API باید نشانی عمومی داشته باشد");
+  }
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (connection.authType === "bearer") headers.Authorization = `Bearer ${connection.token}`;
+  else if (connection.authType === "api_key" && connection.headerName && /^X-[A-Za-z0-9-]{1,60}$/i.test(connection.headerName))
+    headers[connection.headerName] = connection.token;
+  else throw new Error("روش احراز هویت API معتبر نیست");
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+  const response = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+    redirect: "error", signal: AbortSignal.timeout(15000) });
+  const length = Number(response.headers.get("content-length") ?? 0);
+  if (length > 1_000_000) throw new Error("پاسخ API بیش از اندازه بزرگ است");
+  const reader = response.body?.getReader();
+  let text = "";
+  if (reader) {
+    const decoder = new TextDecoder(); let size = 0;
+    while (true) { const { done, value } = await reader.read(); if (done) break;
+      size += value.byteLength; if (size > 1_000_000) { await reader.cancel(); throw new Error("پاسخ API بیش از اندازه بزرگ است"); }
+      text += decoder.decode(value, { stream: true }); }
+    text += decoder.decode();
+  }
+  if (!response.ok) throw new Error(`API پاسخ ${response.status} داد`);
+  try { return text ? JSON.parse(text) : {}; } catch { throw new Error("پاسخ API باید JSON باشد"); }
+}
+
+export function apiField(value: unknown, path: string): unknown {
+  return path.split(".").filter(Boolean).reduce<unknown>((item, key) =>
+    item && typeof item === "object" ? (item as Record<string, unknown>)[key] : undefined, value);
+}

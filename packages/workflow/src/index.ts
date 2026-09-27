@@ -1,14 +1,17 @@
 import { and, asc, eq } from "drizzle-orm";
-import { generateNewsDraft, generateNewsTitle, type AIConnection } from "@socialyar/ai";
+import { analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIConnection } from "@socialyar/ai";
+import { apiRequest } from "./api-client";
 import {
-  aiProfiles, aiSettings, decryptSecret, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
+  aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
 } from "@socialyar/db";
 
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
 type Step = typeof workflowSteps.$inferSelect;
 type Edge = typeof workflowConnections.$inferSelect;
 type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
-  videoUrl?: string | null; queuedForPublication?: boolean };
+  videoUrl?: string | null; queuedForPublication?: boolean; commentId?: string; context?: string;
+  decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string;
+  comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
 
 function transientAIError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -70,7 +73,7 @@ export async function executeRun(input: ExecuteRunInput) {
     const outputs: Record<string, unknown> = { ...(run.output ?? {}) };
     const states = new Map<string, string>();
     const selectedSource = typeof run.input.sourceKey === "string" ? run.input.sourceKey :
-      ordered.find((step) => ["manual_input", "rss_source", "source"].includes(step.type))?.key;
+      ordered.find((step) => ["manual_input", "rss_source", "api_source", "source"].includes(step.type))?.key;
     let waiting = false;
     let failed = false;
 
@@ -90,12 +93,18 @@ export async function executeRun(input: ExecuteRunInput) {
         states.set(step.id, "waiting_approval"); waiting = true;
         continue;
       }
-      if (["rss_source", "manual_input", "source"].includes(step.type) && step.key !== selectedSource) {
+      if (["rss_source", "api_source", "manual_input", "source"].includes(step.type) && step.key !== selectedSource) {
         states.set(step.id, "skipped");
         continue;
       }
       const parents = edges.filter((edge) => edge.targetStepId === step.id);
-      const activeParent = parents.find((edge) => states.get(edge.sourceStepId) === "completed");
+      const activeParent = parents.find((edge) => {
+        if (states.get(edge.sourceStepId) !== "completed") return false;
+        const condition = edge.condition as { decision?: string } | null;
+        if (!condition?.decision) return true;
+        const source = steps.find((item) => item.id === edge.sourceStepId);
+        return source && (outputs[source.key] as News | undefined)?.decision === condition.decision;
+      });
       if (!activeParent && parents.some((edge) => states.get(edge.sourceStepId) === "waiting_approval")) {
         states.set(step.id, "waiting_approval"); waiting = true;
         continue;
@@ -118,7 +127,7 @@ export async function executeRun(input: ExecuteRunInput) {
           continue;
         }
         let output: News;
-        if (["source", "manual_input", "rss_source"].includes(step.type)) {
+        if (["source", "manual_input", "rss_source", "api_source"].includes(step.type)) {
           if (run.input.videoUnavailable === true) {
             throw new Error("این پست ویدیو دارد، اما صفحهٔ عمومی ایتا فایل ویدیو را در اختیار نمی‌گذارد. انتشار بدون ویدیو متوقف شد.");
           }
@@ -126,7 +135,9 @@ export async function executeRun(input: ExecuteRunInput) {
           if (typeof text !== "string" || !text.trim()) throw new Error("A text input is required");
           output = { text: text.trim(), title: run.input.title as string ?? null,
             url: run.input.url as string ?? null, imageUrl: run.input.imageUrl as string ?? null,
-            videoUrl: run.input.videoUrl as string ?? null };
+            videoUrl: run.input.videoUrl as string ?? null,
+            commentId: run.input.commentId as string | undefined, context: run.input.context as string | undefined,
+            comments: Array.isArray(run.input.comments) ? run.input.comments as Array<{ id: string; text: string }> : undefined };
         } else if (step.type === "filter") {
           if (!upstream?.text) throw new Error("Filter needs an incoming news item");
           const words = String(step.config.keywords ?? "").split(/[،,\n]/).map((word) => word.trim().toLocaleLowerCase()).filter(Boolean);
@@ -158,6 +169,12 @@ export async function executeRun(input: ExecuteRunInput) {
               message: `${step.name}: تلاش ${attempt} از ۳ پس از خطای موقت سرویس هوش مصنوعی`,
               payload: { error: error instanceof Error ? error.message : String(error), attempt } });
           };
+          if (step.config.aiMode === "feedback") {
+            if (!upstream.comments?.length) throw new Error("برای تحلیل بازخورد، منبع API را روی حالت گروهی یا یک نوشته بگذار");
+            const report = await retryAI(() => analyzeCommentFeedback(connection, upstream.comments!, upstream.context ?? "", instructions), retry);
+            output = { ...upstream, text: report.text, feedback: { ...report.counts, total: report.total, themes: report.themes } };
+          } else {
+          if (upstream.comments?.length) throw new Error("برای گروه کامنت‌ها، حالت کارت AI را «تحلیل بازخورد» انتخاب کن");
           const text = await retryAI(() => generateNewsDraft(connection,
             { title: upstream.title || "خبر", text: sourceText, url: upstream.url ?? undefined }, instructions), retry);
           const titleMode = step.config.titleMode ?? "keep";
@@ -169,6 +186,62 @@ export async function executeRun(input: ExecuteRunInput) {
           const imageUrl = imageMode === "remove" ? null : imageMode === "custom" ?
             String(step.config.customImageUrl).trim() : upstream.imageUrl;
           output = { ...upstream, text, title, imageUrl };
+          }
+        } else if (step.type === "comment_decision") {
+          if (!upstream?.commentId || !upstream.text) throw new Error("تصمیم کامنت به ورودی کامنت نیاز دارد");
+          const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows).where(eq(workflows.id, run.workflowId)).limit(1);
+          const profileId = step.config.profileId;
+          const [settings] = workflow ? typeof profileId === "string" && profileId !== "default" ?
+            await db.select().from(aiProfiles).where(and(eq(aiProfiles.id, profileId), eq(aiProfiles.workspaceId, workflow.workspaceId))).limit(1) :
+            await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
+          if (!settings) throw new Error("مدل AI انتخاب‌شده در دسترس نیست");
+          const connection = { provider: settings.provider as AIConnection["provider"], model: settings.model,
+            token: decryptSecret(settings.encryptedToken) };
+          const decision = await retryAI(() => decideComment(connection, upstream.text!, upstream.context ?? "",
+            String(step.config.rules ?? "")), async (attempt, error) => {
+            await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "retry",
+              message: `تلاش ${attempt} برای تصمیم کامنت`, payload: { error: String(error) } });
+          });
+          if (!edges.some((edge) => edge.sourceStepId === step.id &&
+            (edge.condition as { decision?: string } | null)?.decision === decision.decision))
+            throw new Error(`برای تصمیم ${decision.decision} مسیر خروجی تعریف نشده است`);
+          output = { ...upstream, ...decision };
+        } else if (step.type === "api_action") {
+          if (!upstream?.commentId) throw new Error("شناسهٔ کامنت در ورودی اقدام نیست");
+          const action = String(step.config.action);
+          if (!["approve", "reject", "reply"].includes(action)) throw new Error("اقدام API معتبر نیست");
+          if (action === "reply" && !upstream.reply) throw new Error("متن پاسخ برای کامنت موجود نیست");
+          await ensureCommentStorage();
+          const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows).where(eq(workflows.id, run.workflowId)).limit(1);
+          if (!workflow) throw new Error("جریان پیدا نشد");
+          const [connection] = await db.select().from(apiConnections).where(and(eq(apiConnections.id, String(step.config.connectionId)),
+            eq(apiConnections.workspaceId, workflow.workspaceId))).limit(1);
+          if (!connection) throw new Error("اتصال API در دسترس نیست");
+          const actionItemId = `${selectedSource ?? ""}:${upstream.commentId}`;
+          const [claim] = await db.insert(commentActions).values({ workspaceId: workflow.workspaceId, workflowId: run.workflowId,
+            runId: run.id, stepKey: step.key, commentId: actionItemId, status: "pending" }).onConflictDoNothing().returning();
+          if (!claim) {
+            const [previousAction] = await db.select().from(commentActions).where(and(eq(commentActions.workflowId, run.workflowId),
+              eq(commentActions.stepKey, step.key), eq(commentActions.commentId, actionItemId))).limit(1);
+            if (previousAction?.status !== "succeeded") throw new Error("وضعیت اقدام قبلی نامشخص است؛ پیش از ارسال دوباره بررسی کن");
+          } else {
+            try {
+              const idField = String(step.config.idField || "commentId");
+              const body: Record<string, unknown> = { [idField]: upstream.commentId };
+              if (action === "reply") body[String(step.config.replyField || "reply")] = upstream.reply;
+              else body[String(step.config.statusField || "status")] = action === "approve" ?
+                String(step.config.approveValue || "approved") : String(step.config.rejectValue || "rejected");
+              await apiRequest({ ...connection, token: decryptSecret(connection.encryptedToken) }, String(step.config.path),
+                step.config.method === "PATCH" ? "PATCH" : "POST", body, claim.id);
+              await db.update(commentActions).set({ status: "succeeded", detail: { action }, updatedAt: new Date() })
+                .where(eq(commentActions.id, claim.id));
+            } catch (error) {
+              await db.update(commentActions).set({ status: "uncertain", detail: { error: String(error) }, updatedAt: new Date() })
+                .where(eq(commentActions.id, claim.id));
+              throw error;
+            }
+          }
+          output = { ...upstream };
         } else if (step.type === "publish" || step.type === "draft") {
           if (!upstream?.text) throw new Error(`${step.type} needs text from a connected step`);
           output = step.type === "publish" ? { ...upstream, queuedForPublication: true } : upstream;
@@ -185,7 +258,7 @@ export async function executeRun(input: ExecuteRunInput) {
         await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "step_failed", message });
       }
     }
-    const completed = ordered.some((step) => ["publish", "draft"].includes(step.type) && states.get(step.id) === "completed");
+    const completed = ordered.some((step) => ["publish", "draft", "api_action"].includes(step.type) && states.get(step.id) === "completed");
     const status = waiting ? "waiting_approval" : failed && !completed ? "failed" : "completed";
     await db.update(runs).set({ status, output: outputs, finishedAt: waiting ? null : new Date() }).where(eq(runs.id, run.id));
     await db.insert(runEvents).values({ runId: run.id, type: status === "failed" ? "run_failed" : status === "completed" ? "run_completed" : "approval_requested",

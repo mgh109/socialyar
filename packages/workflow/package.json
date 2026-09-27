@@ -5,7 +5,8 @@
   "version": "0.0.0",
   "exports": {
     ".": "./src/index.ts",
-    "./graph": "./src/graph.ts"
+    "./graph": "./src/graph.ts",
+    "./api-client": "./src/api-client.ts"
   },
   "dependencies": {
     "@socialyar/ai": "workspace:*",

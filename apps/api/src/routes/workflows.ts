@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -7,10 +7,14 @@ import {
   getDb,
   aiSettings,
   aiProfiles,
+  apiConnections,
+  ensureCommentStorage,
+  approvals,
   contentItems,
   contentVariants,
   publications,
   runs,
+  schedules,
   socialAccounts,
   workflowConnections,
   workflowSteps,
@@ -105,7 +109,7 @@ async function insertGraph(
 
 async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connections: z.infer<typeof connectionSchema>[], workspaceId: string): Promise<string | null> {
   const sorted = [...steps].sort((a, b) => a.order - b.order);
-  const source = sorted.find((step) => step.type === "rss_source");
+  const source = sorted.find((step) => ["rss_source", "api_source"].includes(step.type));
   const graphError = graphProblem(steps, connections, true);
   if (graphError) return graphError;
   if (!source || steps.some((step) => step.type === "manual_input")) return "graph_missing_input";
@@ -133,6 +137,55 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
   }
   }
   const db = getDb();
+  if (sorted.some((step) => ["api_source", "api_action"].includes(step.type))) await ensureCommentStorage();
+  for (const step of sorted.filter((item) => ["api_source", "api_action"].includes(item.type))) {
+    const { connectionId, path } = step.config;
+    if (typeof connectionId !== "string" || !z.string().uuid().safeParse(connectionId).success ||
+      typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || path.length > 300)
+      return "invalid_api_step";
+    const [connection] = await db.select({ id: apiConnections.id }).from(apiConnections)
+      .where(and(eq(apiConnections.id, connectionId), eq(apiConnections.workspaceId, workspaceId))).limit(1);
+    if (!connection) return "invalid_api_step";
+    if (step.type === "api_source" && (!["itemsPath", "idField", "textField"].every((key) =>
+      typeof step.config[key] === "string" && String(step.config[key]).length > 0)) ||
+      step.type === "api_action" && !["approve", "reject", "reply"].includes(String(step.config.action)))
+      return "invalid_api_step";
+    if (step.type === "api_source") {
+      const mode = String(step.config.readMode ?? "single");
+      if (!["single", "batch", "post"].includes(mode) ||
+        (mode !== "single" && ![10, 25, 50].includes(Number(step.config.batchLimit ?? 10))) ||
+        (mode === "post" && (!String(step.config.postId ?? "").trim() || !String(step.config.postIdField ?? "").trim())))
+        return "invalid_api_step";
+      if (mode !== "single") {
+        const seen = new Set<string>(), queue = [step.key];
+        while (queue.length) {
+          const key = queue.shift()!;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          queue.push(...connections.filter((edge) => edge.sourceKey === key).map((edge) => edge.targetKey));
+        }
+        const reachable = sorted.filter((item) => seen.has(item.key));
+        if (!reachable.some((item) => item.type === "ai" && item.config.aiMode === "feedback") ||
+          reachable.some((item) => ["api_action", "comment_decision"].includes(item.type))) return "invalid_feedback_path";
+      }
+    }
+    if (step.type === "api_action" && ["idField", "statusField", "replyField"].some((key) =>
+      step.config[key] !== undefined && !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(String(step.config[key]))))
+      return "invalid_api_step";
+  }
+  for (const step of sorted.filter((item) => item.type === "comment_decision")) {
+    if (typeof step.config.rules !== "string" || !step.config.rules.trim()) return "invalid_comment_decision";
+    const outgoing = connections.filter((edge) => edge.sourceKey === step.key);
+    if (!outgoing.length || outgoing.some((edge) => !["approve", "reject", "reply", "review"].includes(String(edge.condition?.decision))))
+      return "invalid_decision_branch";
+    const profileId = step.config.profileId;
+    if (profileId !== undefined && profileId !== "default" &&
+      (typeof profileId !== "string" || !z.string().uuid().safeParse(profileId).success)) return "ai_profile_not_found";
+    const [profile] = profileId && profileId !== "default" ? await db.select({ id: aiProfiles.id }).from(aiProfiles)
+      .where(and(eq(aiProfiles.id, String(profileId)), eq(aiProfiles.workspaceId, workspaceId))).limit(1) :
+      await db.select({ id: aiSettings.workspaceId }).from(aiSettings).where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
+    if (!profile) return "ai_profile_not_found";
+  }
   for (const publisher of sorted.filter((step) => step.type === "publish")) {
     const interval = publisher.config.publishIntervalSeconds ?? 30;
     if (typeof interval !== "number" || ![30, 60, 120, 300].includes(interval)) return "invalid_publish_interval";
@@ -150,6 +203,7 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
       !["include", "exclude"].includes(String(filter.config.mode ?? "include"))) return "graph_invalid_filter";
   }
   for (const step of sorted.filter((item) => item.type === "ai")) {
+    if (!["rewrite", "feedback"].includes(String(step.config.aiMode ?? "rewrite"))) return "ai_output_invalid";
     const titleMode = String(step.config.titleMode ?? "keep");
     const imageMode = String(step.config.imageMode ?? "keep");
     if (!["keep", "rewrite", "custom"].includes(titleMode) ||
@@ -320,17 +374,40 @@ export async function workflowRoutes(app: FastifyInstance) {
       if (!workflow) return "not_found";
       if (workflow.status === "active") return "active";
 
-      const [previousRun] = await tx.select({ id: runs.id }).from(runs)
-        .where(eq(runs.workflowId, workflowId)).limit(1);
-      if (previousRun) return "has_runs";
+      const workflowRunIds = tx.select({ id: runs.id }).from(runs)
+        .where(eq(runs.workflowId, workflowId));
+      const [unfinished] = await tx.select({ id: runs.id }).from(runs)
+        .where(and(eq(runs.workflowId, workflowId), inArray(runs.status, ["queued", "running", "waiting_approval"])))
+        .limit(1);
+      if (unfinished) return "has_pending_work";
 
+      const workflowContentIds = tx.select({ id: contentItems.id }).from(contentItems)
+        .where(inArray(contentItems.runId, workflowRunIds));
+      const [publication] = await tx.select({ id: publications.id }).from(publications)
+        .innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
+        .where(inArray(contentVariants.contentItemId, workflowContentIds)).limit(1);
+      if (publication) return "has_publications";
+      const [schedule] = await tx.select({ id: schedules.id }).from(schedules)
+        .innerJoin(contentVariants, eq(schedules.contentVariantId, contentVariants.id))
+        .where(inArray(contentVariants.contentItemId, workflowContentIds)).limit(1);
+      if (schedule) return "has_publications";
+      const [pendingApproval] = await tx.select({ id: approvals.id }).from(approvals)
+        .innerJoin(contentVariants, eq(approvals.contentVariantId, contentVariants.id))
+        .where(and(inArray(contentVariants.contentItemId, workflowContentIds), eq(approvals.status, "pending"))).limit(1);
+      if (pendingApproval) return "has_pending_work";
+
+      // Drafts and completed run logs belong to this workflow; remove them before
+      // deleting versions, whose steps are referenced by run_steps with RESTRICT.
+      await tx.delete(contentItems).where(inArray(contentItems.id, workflowContentIds));
+      await tx.delete(runs).where(eq(runs.workflowId, workflowId));
       await tx.delete(workflows).where(eq(workflows.id, workflowId));
       return "deleted";
     });
 
     if (result === "not_found") return reply.code(404).send({ error: "workflow_not_found" });
     if (result === "active") return reply.code(409).send({ error: "workflow_active" });
-    if (result === "has_runs") return reply.code(409).send({ error: "workflow_has_runs" });
+    if (result === "has_pending_work") return reply.code(409).send({ error: "workflow_has_pending_work" });
+    if (result === "has_publications") return reply.code(409).send({ error: "workflow_has_publications" });
     return reply.code(204).send();
   });
 

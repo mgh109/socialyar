@@ -1,9 +1,9 @@
 export type GraphNode = { key: string; type: string };
 export type GraphEdge = { sourceKey: string; targetKey: string };
 
-const sources = new Set(["rss_source", "manual_input"]);
-const outputs = new Set(["publish", "draft"]);
-export const supportedTypes = new Set(["rss_source", "manual_input", "filter", "ai", "human_approval", "draft", "publish"]);
+const sources = new Set(["rss_source", "api_source", "manual_input"]);
+const outputs = new Set(["publish", "draft", "api_action"]);
+export const supportedTypes = new Set(["rss_source", "api_source", "manual_input", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action"]);
 
 /** A DAG with reachable inputs and explicit terminals; joins accept the first active input. */
 export function graphProblem(nodes: GraphNode[], edges: GraphEdge[], active: boolean): string | null {
