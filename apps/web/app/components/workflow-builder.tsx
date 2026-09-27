@@ -13,6 +13,10 @@ type Edge = { sourceKey: string; targetKey: string; condition?: { decision?: str
 type ApiConnection = { id: string; name: string; baseUrl: string; authType: "bearer" | "api_key"; headerName: string | null };
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 type AIProfile = { id: string; name: string; provider: string; model: string };
+type SourcePreview = { status: "ok"; rawCount: number; matchedCount: number; selectedCount: number;
+  validCount: number; availablePaths: string[]; samples: Array<{ id: string; text: string }> };
+type SourceHealth = { status: "ok" | "error" | "not_checked"; checkedAt?: string; error?: string;
+  rawCount?: number; matchedCount?: number; selectedCount?: number; validCount?: number; queuedCount?: number };
 type Activity = { run: { id: string; status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
@@ -100,6 +104,10 @@ export function WorkflowBuilder() {
   const [connectionToken, setConnectionToken] = useState("");
   const [connectionBusy, setConnectionBusy] = useState(false);
   const [connectionError, setConnectionError] = useState("");
+  const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
+  const [sourcePreviewError, setSourcePreviewError] = useState("");
+  const [sourcePreviewBusy, setSourcePreviewBusy] = useState(false);
+  const [sourceHealth, setSourceHealth] = useState<SourceHealth | null>(null);
   const [activity, setActivity] = useState<Activity | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
@@ -118,7 +126,18 @@ export function WorkflowBuilder() {
 
   useEffect(() => {
     setConnectionFormOpen(false); setConnectionEditingId(null); setConnectionToken(""); setConnectionError("");
+    setSourcePreview(null); setSourcePreviewError(""); setSourceHealth(null);
   }, [selectedKey]);
+
+  useEffect(() => {
+    if (!workflowId || selected?.type !== "api_source") return;
+    const key = selected.key;
+    const refresh = () => void apiFetch(`/workflows/${workflowId}/sources/${encodeURIComponent(key)}/status`)
+      .then(async (response) => response.ok ? response.json() as Promise<SourceHealth> : null)
+      .then((value) => { if (value) setSourceHealth(value); }).catch(() => {});
+    refresh(); const timer = window.setInterval(refresh, 15000);
+    return () => window.clearInterval(timer);
+  }, [workflowId, selectedKey, selected?.type]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -230,6 +249,23 @@ export function WorkflowBuilder() {
       setMessage("اتصال API ذخیره و به کارت انتخاب شد؛ تغییرات جریان را ذخیره کن.");
     } catch (error) { setConnectionError(error instanceof Error ? error.message : "اتصال ذخیره نشد."); }
     finally { setConnectionBusy(false); }
+  };
+  const previewSource = async (step: Step) => {
+    const connectionId = String(step.config.connectionId ?? "");
+    if (!connectionId) { setSourcePreviewError("ابتدا اتصال API را انتخاب یا ایجاد کن."); return; }
+    setSourcePreviewBusy(true); setSourcePreview(null); setSourcePreviewError("");
+    try {
+      const response = await apiFetch(`/api-connections/${connectionId}/preview`, { method: "POST",
+        body: JSON.stringify({ path: String(step.config.path ?? ""), itemsPath: String(step.config.itemsPath ?? ""),
+          idField: String(step.config.idField ?? ""), textField: String(step.config.textField ?? ""),
+          contextField: String(step.config.contextField ?? ""), readMode: String(step.config.readMode ?? "single"),
+          batchLimit: Number(step.config.batchLimit ?? 10), postId: String(step.config.postId ?? ""),
+          postIdField: String(step.config.postIdField ?? "postId") }) });
+      const data = await response.json() as SourcePreview & { message?: string; error?: string };
+      if (!response.ok) throw new Error(data.message ?? `آزمایش ناموفق بود (${data.error ?? response.status}).`);
+      setSourcePreview(data);
+    } catch (error) { setSourcePreviewError(error instanceof Error ? error.message : "خواندن کامنت‌ها ناموفق بود."); }
+    finally { setSourcePreviewBusy(false); }
   };
   const switchSource = (key: string, kind: string) => {
     const type = kind === "api" ? "api_source" : kind === "manual" ? "manual_input" : "rss_source";
@@ -496,6 +532,26 @@ export function WorkflowBuilder() {
               ["textField", "فیلد متن", "text"], ["contextField", "فیلد زمینه (اختیاری)", "context"] ] as const)
               .map(([key, label, hint]) => <label key={key}><span>{label}</span><input dir="ltr" value={String(selected.config[key] ?? "")}
                 placeholder={hint} onChange={(event) => update(selected.key, key, event.target.value)} /></label>)}
+            <div className="api-source-check">
+              <button type="button" disabled={sourcePreviewBusy} onClick={() => void previewSource(selected)}>
+                {sourcePreviewBusy ? "در حال خواندن API..." : "آزمایش اتصال و خواندن کامنت‌ها"}</button>
+              {sourcePreviewError ? <p role="alert" className="api-connection-error">{sourcePreviewError}</p> : null}
+              {sourcePreview ? <div role="status"><strong>✓ اتصال برقرار شد</strong>
+                <p>پاسخ API: {sourcePreview.rawCount.toLocaleString("fa-IR")} مورد · مطابق فیلتر: {sourcePreview.matchedCount.toLocaleString("fa-IR")} · قابل خواندن: {sourcePreview.validCount.toLocaleString("fa-IR")}</p>
+                {sourcePreview.validCount === 0 ? <p>هیچ کامنتی با فیلدهای فعلی خوانده نشد. مسیرهای آرایه: {sourcePreview.availablePaths.join("، ") || "پیدا نشد"}. فیلد شناسه، متن و فیلتر نوشته را بررسی کن.</p> :
+                  sourcePreview.samples.map((item) => <p key={item.id} className="api-source-sample"><b>#{item.id}</b> {item.text}</p>)}
+                <small>این آزمایش چیزی منتشر نمی‌کند و وارد صف نمی‌کند.</small>
+              </div> : null}
+            </div>
+            {workflowId ? <div className="api-source-check"><strong>آخرین پایش خودکار</strong>
+              {!sourceHealth || sourceHealth.status === "not_checked" ? <p>هنوز نتیجهٔ پایش این منبع ثبت نشده است. اگر جریان فعال است و پس از یک نوبت پایش هم همین پیام ماند، وضعیت worker را بررسی کن.</p> :
+                sourceHealth.status === "error" ? <p role="alert" className="api-connection-error">{sourceHealth.error}</p> :
+                <p>{sourceHealth.rawCount?.toLocaleString("fa-IR")} مورد در پاسخ · {sourceHealth.validCount?.toLocaleString("fa-IR")} کامنت خوانده‌شده · {sourceHealth.queuedCount?.toLocaleString("fa-IR")} اجرای تازه در صف</p>}
+              {sourceHealth?.status === "ok" && sourceHealth.validCount && !sourceHealth.queuedCount ?
+                <small>کامنت خوانده شد، اما مورد تازه‌ای برای پردازش نبود؛ شناسه‌ها یا محتوای این گروه قبلاً پردازش شده‌اند.</small> : null}
+              {sourceHealth?.checkedAt ? <small>زمان بررسی: {new Date(sourceHealth.checkedAt).toLocaleString("fa-IR")}</small> : null}
+              {activity?.run ? <Link href={`/runs/${activity.run.id}`}>دیدن آخرین اجرای جریان ←</Link> : null}
+            </div> : null}
             <small className="builder-note">پایش طبق فاصلهٔ جریان انجام می‌شود؛ گروهی با شناسه‌های یکسان دوباره تحلیل نمی‌شود.</small>
           </> : <>
             <label><span>اقدام</span><select value={String(selected.config.action ?? "approve")}

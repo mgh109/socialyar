@@ -48,6 +48,38 @@ export async function apiRequest(connection: ApiConnection, path: string, method
 }
 
 export function apiField(value: unknown, path: string): unknown {
+  if (path === "$" || !path) return value;
   return path.split(".").filter(Boolean).reduce<unknown>((item, key) =>
     item && typeof item === "object" ? (item as Record<string, unknown>)[key] : undefined, value);
+}
+
+export type CommentSourceConfig = { itemsPath: string; idField: string; textField: string;
+  contextField?: string; readMode?: string; postId?: string; postIdField?: string; batchLimit?: number };
+
+function arrayPaths(value: unknown, prefix = "$", depth = 0): string[] {
+  if (Array.isArray(value)) return [prefix];
+  if (!value || typeof value !== "object" || depth >= 3) return [];
+  return Object.entries(value as Record<string, unknown>).slice(0, 20).flatMap(([key, item]) =>
+    arrayPaths(item, prefix === "$" ? key : `${prefix}.${key}`, depth + 1)).slice(0, 12);
+}
+
+export function inspectApiComments(response: unknown, config: CommentSourceConfig) {
+  const items = apiField(response, config.itemsPath);
+  const availablePaths = arrayPaths(response);
+  if (!Array.isArray(items)) throw new Error(
+    `مسیر «${config.itemsPath}» آرایهٔ کامنت‌ها نیست. مسیرهای آرایهٔ پاسخ: ${availablePaths.join("، ") || "پیدا نشد"}`);
+  const mode = config.readMode ?? "single";
+  const postId = String(config.postId ?? "").trim();
+  const matching = mode === "post" ? items.filter((item) =>
+    String(apiField(item, config.postIdField || "postId") ?? "") === postId) : items;
+  const limit = [10, 25, 50].includes(Number(config.batchLimit)) ? Number(config.batchLimit) : 10;
+  const selected = matching.slice(0, mode === "single" ? 50 : limit);
+  const comments = selected.flatMap((item): Array<{ id: string; text: string; context: string }> => {
+    const id = apiField(item, config.idField), text = apiField(item, config.textField);
+    if ((typeof id !== "string" && typeof id !== "number") || typeof text !== "string" || !text.trim()) return [];
+    const context = apiField(item, config.contextField || "context");
+    return [{ id: String(id), text: text.trim(), context: typeof context === "string" ? context : "" }];
+  });
+  return { rawCount: items.length, matchedCount: matching.length, selectedCount: selected.length,
+    validCount: comments.length, comments, availablePaths };
 }

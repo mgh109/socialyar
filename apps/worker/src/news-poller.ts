@@ -4,7 +4,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { XMLParser } from "fast-xml-parser";
 import { apiConnections, decryptSecret, ensureCommentStorage, getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
-import { apiField, apiRequest } from "@socialyar/workflow/api-client";
+import { apiRequest, inspectApiComments } from "@socialyar/workflow/api-client";
 import { connection } from "./queue";
 import { channelHandle, fetchEitaaPosts } from "./eitaa-source";
 import { baleHandle, fetchBalePosts } from "./bale-source";
@@ -87,7 +87,8 @@ type NewsCandidate = { title: string; text: string; url: string; imageUrl: strin
   videoUrl?: string | null; videoUnavailable?: boolean; legacyId?: string; uniqueId?: string;
   commentId?: string; context?: string; comments?: Array<{ id: string; text: string }> };
 
-async function sourceCandidates(source: typeof workflowSteps.$inferSelect, workspaceId: string): Promise<NewsCandidate[]> {
+type SourceStats = { rawCount: number; matchedCount: number; selectedCount: number; validCount: number };
+async function sourceCandidates(source: typeof workflowSteps.$inferSelect, workspaceId: string): Promise<{ items: NewsCandidate[]; stats?: SourceStats }> {
   if (source.type === "api_source") {
     await ensureCommentStorage();
     const db = getDb();
@@ -96,34 +97,30 @@ async function sourceCandidates(source: typeof workflowSteps.$inferSelect, works
     if (!connection) throw new Error("اتصال API منبع پیدا نشد");
     const result = await apiRequest({ ...connection, token: decryptSecret(connection.encryptedToken) },
       String(source.config.path), "GET");
-    const items = apiField(result, String(source.config.itemsPath));
-    if (!Array.isArray(items)) throw new Error("مسیر فهرست کامنت‌ها در پاسخ API آرایه نیست");
+    const inspected = inspectApiComments(result, {
+      itemsPath: String(source.config.itemsPath), idField: String(source.config.idField),
+      textField: String(source.config.textField), contextField: String(source.config.contextField || "context"),
+      readMode: String(source.config.readMode ?? "single"), postId: String(source.config.postId ?? ""),
+      postIdField: String(source.config.postIdField || "postId"), batchLimit: Number(source.config.batchLimit ?? 10),
+    });
     const mode = String(source.config.readMode ?? "single");
     const postId = String(source.config.postId ?? "").trim();
-    const matching = mode === "post" ? items.filter((item) =>
-      String(apiField(item, String(source.config.postIdField || "postId")) ?? "") === postId) : items;
     const limit = [10, 25, 50].includes(Number(source.config.batchLimit)) ? Number(source.config.batchLimit) : 10;
-    const parsed = matching.slice(0, mode === "single" ? 50 : limit).flatMap((item): NewsCandidate[] => {
-      const id = apiField(item, String(source.config.idField));
-      const text = apiField(item, String(source.config.textField));
-      if ((typeof id !== "string" && typeof id !== "number") || typeof text !== "string" || !text.trim()) return [];
-      const commentId = String(id);
-      const context = apiField(item, String(source.config.contextField || "context"));
-      return [{ title: `کامنت ${commentId}`, text: text.trim(), url: "", imageUrl: null,
-        uniqueId: `api:${connection.id}:${commentId}`, commentId,
-        context: typeof context === "string" ? context : "" }];
-    });
-    if (mode === "single") return parsed.reverse();
-    if (!parsed.length) return [];
+    const parsed = inspected.comments.map((item): NewsCandidate => ({ title: `کامنت ${item.id}`, text: item.text,
+      url: "", imageUrl: null, uniqueId: `api:${connection.id}:${item.id}`, commentId: item.id, context: item.context }));
+    const stats = { rawCount: inspected.rawCount, matchedCount: inspected.matchedCount,
+      selectedCount: inspected.selectedCount, validCount: inspected.validCount };
+    if (mode === "single") return { items: parsed.reverse(), stats };
+    if (!parsed.length) return { items: [], stats };
     const comments = parsed.map((item) => ({ id: item.commentId!, text: item.text.slice(0, 600) }));
     const groupId = mode === "post" ? `post:${postId}` : `recent:${limit}`;
     const fingerprint = createHash("sha256").update(JSON.stringify(comments.map((item) =>
       [item.id, item.text]).sort((a, b) => a[0].localeCompare(b[0])))).digest("hex");
     const context = parsed.find((item) => item.context)?.context ?? "";
-    return [{ title: mode === "post" ? `بازخورد نوشتهٔ ${postId}` : "بازخورد کامنت‌های اخیر",
+    return { items: [{ title: mode === "post" ? `بازخورد نوشتهٔ ${postId}` : "بازخورد کامنت‌های اخیر",
       text: comments.map((item, index) => `${index + 1}. ${item.text}`).join("\n"), url: "", imageUrl: null,
       uniqueId: `api-feedback:${connection.id}:${source.key}:${groupId}:${fingerprint}`,
-      context, comments }];
+      context, comments }], stats };
   }
   const kind = source.config.sourceKind;
   const urls = kind === "rss" ? [source.config.feedUrl] :
@@ -163,7 +160,7 @@ async function sourceCandidates(source: typeof workflowSteps.$inferSelect, works
       candidates.push(...posts.map((post) => ({ ...post, uniqueId: `bale:${handle}:${post.id}` })));
     } catch (error) { console.error(`Bale poll failed for ${input}`, error); }
   }
-  return candidates;
+  return { items: candidates };
 }
 
 async function poll() {
@@ -188,8 +185,15 @@ async function poll() {
         const rotation = Math.floor(Date.now() / (intervalMinutes * 60_000)) % sources.length;
         const ordered = [...sources.slice(rotation), ...sources.slice(0, rotation)];
         const batches = await Promise.all(ordered.map(async (source) => {
-          try { return { source, items: await sourceCandidates(source, workflow.workspaceId) }; }
-          catch (error) { console.error(`Source poll failed for ${source.key}`, error); return { source, items: [] as NewsCandidate[] }; }
+          try { const result = await sourceCandidates(source, workflow.workspaceId);
+            return { source, ...result, queued: 0, queueError: "" }; }
+          catch (error) {
+            console.error(`Source poll failed for ${source.key}`, error);
+            if (source.type === "api_source") await connection.set(`source-health:${workflow.id}:${version.id}:${source.key}`,
+              JSON.stringify({ checkedAt: new Date().toISOString(), status: "error",
+                error: error instanceof Error ? error.message : String(error) }), "EX", 604800);
+            return { source, items: [] as NewsCandidate[], queued: 0, queueError: "" };
+          }
         }));
         let queuedCount = 0;
         // Round robin keeps one busy source from starving the others.
@@ -200,9 +204,19 @@ async function poll() {
             try {
               if (await queueItem(workflow.id, version.id, item.title, item.text, item.url,
                 item.imageUrl, item.legacyId, item.uniqueId, batch.source.key,
-                item.videoUrl, item.videoUnavailable, item.commentId, item.context, item.comments)) queuedCount++;
-            } catch (error) { console.error(`Queue failed for ${workflow.id}`, error); }
+                item.videoUrl, item.videoUnavailable, item.commentId, item.context, item.comments)) {
+                queuedCount++; batch.queued++;
+              }
+            } catch (error) {
+              console.error(`Queue failed for ${workflow.id}`, error);
+              batch.queueError = error instanceof Error ? error.message : String(error);
+            }
           }
+        }
+        for (const batch of batches) if (batch.source.type === "api_source" && "stats" in batch && batch.stats) {
+          await connection.set(`source-health:${workflow.id}:${version.id}:${batch.source.key}`,
+            JSON.stringify({ checkedAt: new Date().toISOString(), status: batch.queueError ? "error" : "ok",
+              ...batch.stats, queuedCount: batch.queued, ...(batch.queueError ? { error: `خطا در صف: ${batch.queueError}` } : {}) }), "EX", 604800);
         }
       } catch (error) { console.error(`News poll failed for workflow ${workflow.id}`, error); }
     }

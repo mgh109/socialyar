@@ -1064,6 +1064,13 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .api-connection-inline { display:flex; flex-direction:column; gap:12px; border:1px solid var(--border); border-radius:10px; background:var(--panel); padding:14px; }
 .api-connection-inline > small { color:var(--muted); line-height:1.6; }
 .api-connection-inline .api-connection-error { color:#b42318; }
+.api-source-check { display:flex; flex-direction:column; gap:8px; padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--panel); font-size:12px; line-height:1.7; }
+.api-source-check button { border:1px solid var(--green); border-radius:8px; color:var(--accent-text); background:var(--accent-soft); padding:9px; font:inherit; cursor:pointer; }
+.api-source-check button:disabled { opacity:.6; cursor:wait; }
+.api-source-check p { margin:4px 0; overflow-wrap:anywhere; }
+.api-source-check small { color:var(--muted); }
+.api-source-check .api-connection-error { color:#b42318; }
+.api-source-sample { padding:7px 9px; border-radius:7px; background:var(--panel2); }
 .builder-help { border:1px solid var(--border); border-radius:10px; background:var(--panel); padding:14px; font-size:13px; }
 .builder-help p { margin:6px 0 0; color:var(--muted); }
 .account-dock { position:fixed; z-index:110; left:15px; bottom:15px; direction:rtl; }
