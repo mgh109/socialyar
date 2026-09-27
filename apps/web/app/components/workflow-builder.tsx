@@ -23,6 +23,12 @@ const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].in
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "RSS", eitaa: "ایتا", bale: "بله" };
 const publishNames: Record<string, string> = { eitaa: "ایتا", telegram: "تلگرام", website: "وب‌سایت" };
+const pollPresets = [1, 5, 15, 60, 1440];
+const publishPresets = [30, 60, 300, 3600, 86400];
+function durationLabel(minutes: number) {
+  return minutes % 1440 === 0 ? `هر ${minutes / 1440} روز` :
+    minutes % 60 === 0 ? `هر ${minutes / 60} ساعت` : `هر ${minutes} دقیقه`;
+}
 const types = [
   { type: "source", label: "منبع" },
   { type: "filter", label: "شرط" },
@@ -380,9 +386,13 @@ export function WorkflowBuilder() {
         <details className="workflow-settings-menu"><summary>تنظیمات جریان</summary><div className="workflow-settings-popover">
           <strong>تنظیمات عمومی</strong>
           <label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label><span>فاصلهٔ پایش منابع</span><select value={pollIntervalMinutes} onChange={(event) => setPollIntervalMinutes(Number(event.target.value))}>
-            <option value={1}>هر ۱ دقیقه</option><option value={2}>هر ۲ دقیقه</option><option value={5}>هر ۵ دقیقه</option>
-            <option value={10}>هر ۱۰ دقیقه</option><option value={15}>هر ۱۵ دقیقه</option></select></label>
+          <label><span>فاصلهٔ پایش منابع</span><select value={pollPresets.includes(pollIntervalMinutes) ? String(pollIntervalMinutes) : "custom"}
+            onChange={(event) => setPollIntervalMinutes(event.target.value === "custom" ? 30 : Number(event.target.value))}>
+            <option value={1}>هر ۱ دقیقه</option><option value={5}>هر ۵ دقیقه</option><option value={15}>هر ۱۵ دقیقه</option>
+            <option value={60}>هر ۱ ساعت</option><option value={1440}>روزی یک‌بار</option><option value="custom">عدد دلخواه</option></select></label>
+          {!pollPresets.includes(pollIntervalMinutes) ? <label><span>فاصلهٔ دلخواه (دقیقه، ۱ تا ۱۰۰۸۰)</span>
+            <input type="number" min={1} max={10080} value={pollIntervalMinutes}
+              onChange={(event) => setPollIntervalMinutes(Number(event.target.value))} /></label> : null}
           <small>فاصلهٔ ارسال خبر در کارت انتشار تنظیم می‌شود.</small>
         </div></details>
         <button className="ghost-button" onClick={() => void save(autoEnabled)} disabled={busy}>ذخیره تغییرات</button>
@@ -397,7 +407,7 @@ export function WorkflowBuilder() {
           add(item.type); event.currentTarget.closest("details")?.removeAttribute("open");
         }}>{item.label}</button>)}</div></details></div>
         <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
-        </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ هر ${pollIntervalMinutes} دقیقه` : "پیش‌نویس"}>{autoEnabled ? `● هر ${pollIntervalMinutes} دقیقه` : "○ پیش‌نویس"}</span>
+        </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ ${durationLabel(pollIntervalMinutes)}` : "پیش‌نویس"}>{autoEnabled ? `● ${durationLabel(pollIntervalMinutes)}` : "○ پیش‌نویس"}</span>
         {activity && (activity.publication || activity.queueCount || activity.run) ? <details className="graph-activity"><summary title="آخرین فعالیت همین جریان" aria-label="آخرین فعالیت همین جریان">فعالیت</summary><div><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
         activity.publication?.status === "failed" ? "ارسال ناموفق" : activity.publication ? "در صف انتشار" : activity.run?.status ?? "بدون خبر"}
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
@@ -603,9 +613,17 @@ export function WorkflowBuilder() {
         {selected.type === "publish" ? <><label><span>مقصد انتشار</span><select value={String(selected.config.accountId ?? "")}
           onChange={(event) => update(selected.key, "accountId", event.target.value)}><option value="">انتخاب مقصد</option>
           {publishAccounts.map((account) => <option key={account.id} value={account.id}>{publishNames[account.channel]} · {account.displayName ?? account.externalAccountId}</option>)}</select></label>
-          <label><span>فاصلهٔ انتشار در همین کانال</span><select value={Number(selected.config.publishIntervalSeconds ?? 30)}
-            onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))}>
-            <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={120}>۲ دقیقه</option><option value={300}>۵ دقیقه</option></select></label>
+          <label><span>فاصلهٔ انتشار در همین کانال</span><select
+            value={publishPresets.includes(Number(selected.config.publishIntervalSeconds ?? 30)) ?
+              String(selected.config.publishIntervalSeconds ?? 30) : "custom"}
+            onChange={(event) => update(selected.key, "publishIntervalSeconds", event.target.value === "custom" ? 600 : Number(event.target.value))}>
+            <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={300}>۵ دقیقه</option>
+            <option value={3600}>هر ۱ ساعت</option><option value={86400}>روزی یک‌بار</option><option value="custom">عدد دلخواه</option></select></label>
+          {!publishPresets.includes(Number(selected.config.publishIntervalSeconds ?? 30)) ?
+            <label><span>فاصلهٔ دلخواه (ثانیه، ۳۰ تا ۶۰۴۸۰۰)</span><input type="number" min={30} max={604800}
+              value={Number(selected.config.publishIntervalSeconds ?? 600)}
+              onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))} /></label> : null}
+          <small className="builder-note">این فاصله بین دو پیام همان مقصد اعمال می‌شود؛ تنظیم روزانه یعنی هر ۲۴ ساعت حداکثر یک ارسال.</small>
           {!publishAccounts.length ? <Link href="/connections">+ اتصال مقصد انتشار</Link> : null}
           <small className="builder-note">ایتا، تلگرام و وب‌سایت آمادهٔ انتشارند. اینستاگرام و بله پس از پیاده‌سازی و آزمایش ناشرشان اضافه می‌شوند.</small></> : null}
         {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
