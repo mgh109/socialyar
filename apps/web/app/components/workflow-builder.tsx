@@ -21,13 +21,14 @@ type Activity = { run: { id: string; status: string; createdAt: string } | null;
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "RSS", eitaa: "ایتا", bale: "بله" };
+const publishNames: Record<string, string> = { eitaa: "ایتا", telegram: "تلگرام", website: "وب‌سایت" };
 const types = [
   { type: "source", label: "منبع" },
   { type: "filter", label: "شرط" },
   { type: "ai", label: "هوش مصنوعی" },
   { type: "human_approval", label: "تأیید انسانی" },
   { type: "draft", label: "پیش‌نویس" },
-  { type: "publish", label: "انتشار ایتا" },
+  { type: "publish", label: "انتشار" },
   { type: "api_action", label: "اقدام API" },
 ];
 const errors: Record<string, string> = {
@@ -36,8 +37,8 @@ const errors: Record<string, string> = {
   graph_unfinished_branch: "هر شاخه باید به انتشار یا پیش‌نویس برسد.", graph_invalid_filter: "برای شرط، واژه‌های کلیدی وارد کن.",
   ai_output_invalid: "تنظیم عنوان یا نشانی تصویر کارت AI معتبر نیست.",
   invalid_rss_url: "آدرس RSS باید HTTPS عمومی باشد.", invalid_eitaa_source: "شناسهٔ کانال ایتا معتبر نیست.",
-  invalid_bale_source: "شناسهٔ کانال بله معتبر نیست.", eitaa_account_required: "کانال خروجی ایتا را انتخاب کن.",
-  eitaa_account_not_found: "اتصال کانال ایتا معتبر نیست.", ai_token_not_configured: "توکن AI را تنظیم کن.",
+  invalid_bale_source: "شناسهٔ کانال بله معتبر نیست.", eitaa_account_required: "مقصد انتشار را انتخاب کن.",
+  eitaa_account_not_found: "اتصال مقصد انتشار معتبر یا فعال نیست.", ai_token_not_configured: "توکن AI را تنظیم کن.",
   ai_profile_not_found: "مدل AI انتخاب‌شده موجود نیست؛ یک مدل معتبر انتخاب کن.",
   invalid_publish_interval: "فاصلهٔ انتشار معتبر نیست.",
   duplicate_publish_channel: "هر کانال خروجی را فقط به یک کارت انتشار وصل کن.",
@@ -113,7 +114,7 @@ export function WorkflowBuilder() {
   const [message, setMessage] = useState("آماده ذخیره");
   const selected = steps.find((step) => step.key === selectedKey);
   const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => ["rss_source", "api_source"].includes(step.type));
-  const eitaaAccounts = accounts.filter((account) => account.channel === "eitaa" && account.isActive);
+  const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
   const edgeName = (key: string) => {
     const step = steps.find((item) => item.key === key);
@@ -423,7 +424,7 @@ export function WorkflowBuilder() {
             y: steps.find((step) => step.key === connecting)!.position.y + 70 }, pointer)} /> : null}
         </svg>
         {!steps.length ? <div className="graph-empty">بوم خالی است. از «افزودن کارت» شروع کن.</div> : null}
-        {steps.map((step) => <article key={step.key} className={`graph-node ${selectedKey === step.key ? "selected" : ""}`}
+        {steps.map((step) => <article key={step.key} className={`graph-node ${isSource(step) ? "role-source" : isTerminal(step) ? "role-output" : "role-process"} ${selectedKey === step.key ? "selected" : ""}`}
           style={{ left: step.position.x, top: step.position.y }} onClick={() => { setSelectedKey(step.key); setSelectedEdge(null); }}>
           {!isSource(step) ? <button className="graph-port input" title="ورودی؛ خروجی یک کارت را اینجا رها کن"
             aria-label={`ورودی ${step.name}`} onPointerUp={(event) => { event.stopPropagation(); if (connecting) connect(connecting, step.key); }}
@@ -434,18 +435,22 @@ export function WorkflowBuilder() {
               x: step.position.x, y: step.position.y }; setSelectedKey(step.key);
           }}><span className="graph-kind">{step.type === "rss_source" ? sourceNames[String(step.config.sourceKind ?? "rss")] :
             step.type === "api_source" || step.type === "api_action" ? "API" : step.type === "comment_decision" ? "AI" :
-            step.type === "filter" ? "شرط" : step.type === "publish" ? "ایتا" : step.type === "ai" ? "AI" : "کارت"}</span>
+            step.type === "filter" ? "شرط" : step.type === "publish" ?
+              publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "خروجی" :
+              step.type === "ai" ? "AI" : "کارت"}</span>
             <button type="button" className="graph-delete" title="حذف کارت" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => { event.stopPropagation(); remove(step.key); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button></div>
-          <strong>{step.name}</strong><small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
+          <span className="graph-role-label">{isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>
+          <strong>{step.type === "publish" ? "انتشار" : step.name}</strong><small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
-            step.type === "publish" ? eitaaAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "نیاز به انتخاب کانال" :
+            step.type === "publish" ? publishAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "مقصد را انتخاب کن" :
             step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال API را انتخاب کن" :
             step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
             step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
             step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>
           {step.type === "rss_source" ? <div className="graph-source-footer">{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</div> : null}
+          {step.type === "publish" ? <div className="graph-source-footer">{step.config.accountId ? "● آماده" : "○ تنظیم‌نشده"} · {publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "انتشار"}</div> : null}
           {!isTerminal(step) ? <button className={`graph-port output ${connecting === step.key ? "active" : ""}`}
             title="خروجی؛ به ورودی کارت بعدی بکش یا کلیک کن" aria-label={`خروجی ${step.name}`}
             onPointerDown={(event) => { event.stopPropagation(); setConnecting(step.key); setPointer(null); }}
@@ -584,13 +589,14 @@ export function WorkflowBuilder() {
             placeholder="کامنت‌های محترمانه را تأیید کن؛ توهین را رد کن؛ سؤال مرتبط را پاسخ بده؛ مورد مبهم را برای بررسی بفرست." /></label>
           <small className="builder-note">برای هر اتصال خروجی، تصمیم تأیید، رد، پاسخ یا بررسی انسانی را انتخاب کن.</small>
         </> : null}
-        {selected.type === "publish" ? <><label><span>کانال ایتا</span><select value={String(selected.config.accountId ?? "")}
-          onChange={(event) => update(selected.key, "accountId", event.target.value)}><option value="">انتخاب کانال</option>
-          {eitaaAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}</select></label>
+        {selected.type === "publish" ? <><label><span>مقصد انتشار</span><select value={String(selected.config.accountId ?? "")}
+          onChange={(event) => update(selected.key, "accountId", event.target.value)}><option value="">انتخاب مقصد</option>
+          {publishAccounts.map((account) => <option key={account.id} value={account.id}>{publishNames[account.channel]} · {account.displayName ?? account.externalAccountId}</option>)}</select></label>
           <label><span>فاصلهٔ انتشار در همین کانال</span><select value={Number(selected.config.publishIntervalSeconds ?? 30)}
             onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))}>
             <option value={30}>۳۰ ثانیه</option><option value={60}>۱ دقیقه</option><option value={120}>۲ دقیقه</option><option value={300}>۵ دقیقه</option></select></label>
-          {!eitaaAccounts.length ? <Link href="/connections">+ اتصال کانال ایتا</Link> : null}</> : null}
+          {!publishAccounts.length ? <Link href="/connections">+ اتصال مقصد انتشار</Link> : null}
+          <small className="builder-note">ایتا، تلگرام و وب‌سایت آمادهٔ انتشارند. اینستاگرام و بله پس از پیاده‌سازی و آزمایش ناشرشان اضافه می‌شوند.</small></> : null}
         {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
           onChange={(event) => update(selected.key, "profileId", event.target.value)}>
           {!aiProfiles.some((profile) => profile.id === String(selected.config.profileId ?? "default")) ?
