@@ -150,6 +150,25 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
       typeof step.config[key] === "string" && String(step.config[key]).length > 0)) ||
       step.type === "api_action" && !["approve", "reject", "reply"].includes(String(step.config.action)))
       return "invalid_api_step";
+    if (step.type === "api_source") {
+      const mode = String(step.config.readMode ?? "single");
+      if (!["single", "batch", "post"].includes(mode) ||
+        (mode !== "single" && ![10, 25, 50].includes(Number(step.config.batchLimit ?? 10))) ||
+        (mode === "post" && (!String(step.config.postId ?? "").trim() || !String(step.config.postIdField ?? "").trim())))
+        return "invalid_api_step";
+      if (mode !== "single") {
+        const seen = new Set<string>(), queue = [step.key];
+        while (queue.length) {
+          const key = queue.shift()!;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          queue.push(...connections.filter((edge) => edge.sourceKey === key).map((edge) => edge.targetKey));
+        }
+        const reachable = sorted.filter((item) => seen.has(item.key));
+        if (!reachable.some((item) => item.type === "ai" && item.config.aiMode === "feedback") ||
+          reachable.some((item) => ["api_action", "comment_decision"].includes(item.type))) return "invalid_feedback_path";
+      }
+    }
     if (step.type === "api_action" && ["idField", "statusField", "replyField"].some((key) =>
       step.config[key] !== undefined && !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(String(step.config[key]))))
       return "invalid_api_step";
@@ -184,6 +203,7 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
       !["include", "exclude"].includes(String(filter.config.mode ?? "include"))) return "graph_invalid_filter";
   }
   for (const step of sorted.filter((item) => item.type === "ai")) {
+    if (!["rewrite", "feedback"].includes(String(step.config.aiMode ?? "rewrite"))) return "ai_output_invalid";
     const titleMode = String(step.config.titleMode ?? "keep");
     const imageMode = String(step.config.imageMode ?? "keep");
     if (!["keep", "rewrite", "custom"].includes(titleMode) ||
