@@ -153,7 +153,9 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     if (step.type === "api_source") {
       const mode = String(step.config.readMode ?? "single");
       if (!["single", "batch", "post"].includes(mode) ||
-        (mode !== "single" && ![10, 25, 50].includes(Number(step.config.batchLimit ?? 10))) ||
+        (mode !== "single" && (!Number.isInteger(Number(step.config.batchLimit ?? 10)) ||
+          Number(step.config.batchLimit ?? 10) < 1 || Number(step.config.batchLimit ?? 10) > 1000 ||
+          step.config.readAll !== undefined && typeof step.config.readAll !== "boolean")) ||
         (mode === "post" && (!String(step.config.postId ?? "").trim() || !String(step.config.postIdField ?? "").trim())))
         return "invalid_api_step";
       if (mode !== "single") {
