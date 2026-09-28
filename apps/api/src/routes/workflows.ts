@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -248,11 +248,11 @@ export async function workflowRoutes(app: FastifyInstance) {
     if (!workflow) return reply.code(404).send({ error: "workflow_not_found" });
     const [version] = await db.select({ id: workflowVersions.id }).from(workflowVersions)
       .where(and(eq(workflowVersions.workflowId, workflowId), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
-    if (!version) return { events: [], active: [], sources: [] };
+    if (!version) return { events: [], active: [], sources: [], publications: [] };
     const sourceSteps = await db.select({ key: workflowSteps.key }).from(workflowSteps)
       .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source"])));
     const markerKeys = sourceSteps.map((step) => `source-live:${workflowId}:${version.id}:${step.key}`);
-    const [markers, events, active] = await Promise.all([
+    const [markers, events, active, publicationRows] = await Promise.all([
       markerKeys.length ? redis.mget(...markerKeys) : Promise.resolve([] as Array<string | null>),
       db.select({ id: runEvents.id, type: runEvents.type, createdAt: runEvents.createdAt,
         stepKey: workflowSteps.key, decision: runEvents.payload })
@@ -269,12 +269,23 @@ export async function workflowRoutes(app: FastifyInstance) {
           inArray(runs.status, ["running", "waiting_approval"]),
           inArray(runSteps.status, ["running", "retrying", "waiting_approval"])))
         .orderBy(desc(runSteps.startedAt)).limit(100),
+      db.select({ id: publications.id, status: publications.status, updatedAt: publications.updatedAt,
+        publishedAt: publications.publishedAt, metadata: contentItems.metadata })
+        .from(publications).innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
+        .innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id))
+        .innerJoin(runs, eq(contentItems.runId, runs.id))
+        .where(and(eq(runs.workflowId, workflowId), eq(runs.workflowVersionId, version.id),
+          or(eq(publications.status, "publishing"), gte(publications.updatedAt, new Date(Date.now() - 90_000)))))
+        .orderBy(desc(publications.updatedAt)).limit(50),
     ]);
     return {
       events: events.reverse().map((event) => ({ id: event.id, type: event.type,
         createdAt: event.createdAt, stepKey: event.stepKey,
         decision: typeof event.decision?.decision === "string" ? event.decision.decision : null })),
       active,
+      publications: publicationRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ?
+        [{ id: row.id, stepKey: row.metadata.publishStepKey, status: row.status,
+          updatedAt: row.updatedAt, publishedAt: row.publishedAt }] : []),
       sources: sourceSteps.flatMap((step, index) => {
         const raw = markers[index];
         if (!raw) return [];
