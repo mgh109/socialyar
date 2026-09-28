@@ -1,8 +1,8 @@
-import { and, asc, eq } from "drizzle-orm";
-import { analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIConnection } from "@socialyar/ai";
+import { and, asc, eq, sql } from "drizzle-orm";
+import { analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIRequestUsage, type AIConnection } from "@socialyar/ai";
 import { apiRequest } from "./api-client";
 import {
-  aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
+  aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
 } from "@socialyar/db";
 
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
@@ -118,6 +118,24 @@ export async function executeRun(input: ExecuteRunInput) {
         : await db.insert(runSteps).values({ runId: run.id, workflowStepId: step.id, status: "running", attempt: 1,
           input: { runInput: run.input, parentKey: parentStep?.key ?? null }, startedAt: new Date() }).returning();
       await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "step_started", message: step.name });
+      const accountUsage = async (usage: AIRequestUsage) => {
+        await ensureAIUsageStorage();
+        const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows)
+          .where(eq(workflows.id, run.workflowId)).limit(1);
+        if (!workflow) throw new Error("Workflow not found for AI usage");
+        await db.transaction(async (tx) => {
+          await tx.insert(aiUsageEvents).values({ workspaceId: workflow.workspaceId, workflowId: run.workflowId,
+            runId: run.id, runStepId: record.id, ...usage });
+          await tx.update(runSteps).set({ provider: usage.provider, model: usage.model,
+            inputTokens: sql`${runSteps.inputTokens} + ${usage.inputTokens ?? 0}`,
+            outputTokens: sql`${runSteps.outputTokens} + ${usage.outputTokens ?? 0}`,
+            costMicros: sql`${runSteps.costMicros} + ${usage.costMicros ?? 0}` }).where(eq(runSteps.id, record.id));
+          await tx.update(runs).set({
+            totalInputTokens: sql`${runs.totalInputTokens} + ${usage.inputTokens ?? 0}`,
+            totalOutputTokens: sql`${runs.totalOutputTokens} + ${usage.outputTokens ?? 0}`,
+            totalCostMicros: sql`${runs.totalCostMicros} + ${usage.costMicros ?? 0}` }).where(eq(runs.id, run.id));
+        });
+      };
       try {
         if (step.type === "human_approval" || step.type === "approval") {
           if (!upstream?.text) throw new Error("Approval needs an incoming news item");
@@ -161,7 +179,7 @@ export async function executeRun(input: ExecuteRunInput) {
             await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
           if (!settings) throw new Error("Selected AI profile is not available");
           const connection = { provider: settings.provider as AIConnection["provider"],
-            model: settings.model, token: decryptSecret(settings.encryptedToken) };
+            model: settings.model, token: decryptSecret(settings.encryptedToken), onUsage: accountUsage };
           const instructions = typeof step.config.instructions === "string" ? step.config.instructions : undefined;
           const retry = async (attempt: number, error: unknown) => {
             await db.update(runSteps).set({ status: "retrying", attempt }).where(eq(runSteps.id, record.id));
@@ -196,7 +214,7 @@ export async function executeRun(input: ExecuteRunInput) {
             await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
           if (!settings) throw new Error("مدل AI انتخاب‌شده در دسترس نیست");
           const connection = { provider: settings.provider as AIConnection["provider"], model: settings.model,
-            token: decryptSecret(settings.encryptedToken) };
+            token: decryptSecret(settings.encryptedToken), onUsage: accountUsage };
           const decision = await retryAI(() => decideComment(connection, upstream.text!, upstream.context ?? "",
             String(step.config.rules ?? "")), async (attempt, error) => {
             await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "retry",
