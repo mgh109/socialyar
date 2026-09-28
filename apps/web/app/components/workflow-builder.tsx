@@ -581,7 +581,11 @@ export function WorkflowBuilder() {
             <small className="builder-note">پایش طبق فاصلهٔ جریان انجام می‌شود؛ گروهی با شناسه‌های یکسان دوباره تحلیل نمی‌شود.</small>
           </> : <>
             <label><span>اقدام</span><select value={String(selected.config.action ?? "approve")}
-              onChange={(event) => update(selected.key, "action", event.target.value)}><option value="approve">تأیید</option>
+              onChange={(event) => { const action = event.target.value; update(selected.key, "action", action);
+                setEdges((current) => current.map((edge) => edge.targetKey === selected.key &&
+                  steps.find((step) => step.key === edge.sourceKey)?.type === "comment_decision" ?
+                  { ...edge, condition: { decision: action } } : edge));
+              }}><option value="approve">تأیید</option>
               <option value="reject">رد</option><option value="reply">پاسخ</option></select></label>
             <label><span>روش درخواست</span><select value={String(selected.config.method ?? "POST")}
               onChange={(event) => update(selected.key, "method", event.target.value)}><option>POST</option><option>PATCH</option></select></label>
