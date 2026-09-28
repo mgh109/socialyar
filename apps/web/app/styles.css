@@ -1347,3 +1347,10 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .usage-row > span:first-child { font-weight: 650; overflow-wrap: anywhere; }
 @media (max-width: 900px) { .ai-usage-section .ai-usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .usage-breakdown { grid-template-columns: 1fr; } }
 @media (max-width: 540px) { .ai-usage-section .ai-usage-grid { grid-template-columns: 1fr; } }
+.graph-usage > div { width:min(310px, calc(100vw - 32px)); z-index:12; line-height:1.7; }
+.graph-usage select { width:100%; padding:7px; border:1px solid var(--border); border-radius:7px; background:var(--panel2); color:var(--text); font:inherit; }
+.graph-usage small { color:var(--muted); }
+.graph-usage-footer { color:var(--accent-text); }
+.card-usage-report { display:flex; flex-direction:column; gap:6px; padding:12px; margin:0 0 17px; border:1px solid var(--border); border-radius:9px; background:var(--panel2); font-size:12px; line-height:1.8; }
+.card-usage-report strong { color:var(--text); font-size:13px; }
+.card-usage-report small { color:var(--muted); }
