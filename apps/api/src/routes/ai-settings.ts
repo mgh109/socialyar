@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { generateNewsDraft, type AIConnection } from "@socialyar/ai";
-import { aiProfiles, aiSettings, decryptSecret, encryptSecret, getDb, secretConfigurationProblem, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
+import { aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, decryptSecret, encryptSecret, getDb, secretConfigurationProblem, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
 
 const settingsSchema = z.object({
   provider: z.enum(["openai", "openrouter", "gapgpt"]),
@@ -171,7 +171,10 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
     if (!row) return reply.code(409).send({ error: "ai_not_configured" });
     try {
       const text = await generateNewsDraft({ provider: row.provider as AIConnection["provider"],
-        model: row.model, token: decryptSecret(row.encryptedToken) }, { title: "آزمایش اتصال", text: input.text });
+        model: row.model, token: decryptSecret(row.encryptedToken), onUsage: async (usage) => {
+          await ensureAIUsageStorage();
+          await db.insert(aiUsageEvents).values({ workspaceId: request.auth.workspaceId, ...usage });
+        } }, { title: "آزمایش اتصال", text: input.text });
       return { text };
     } catch (error) {
       request.log.error({ error }, "AI connection test failed");
