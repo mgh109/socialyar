@@ -1371,6 +1371,8 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .graph-node.node-completed .graph-role-label { color:var(--green); }
 .graph-node.node-failed .graph-role-label { color:var(--red); }
 .graph-node.node-waiting .graph-role-label { color:var(--amber); }
+.graph-source-schedule { display:flex; align-items:center; justify-content:space-between; gap:5px; font-size:10px; white-space:nowrap; }
+.graph-source-schedule span:last-child { direction:rtl; font-variant-numeric:tabular-nums; color:var(--accent-text); }
 @keyframes node-spin { to { transform:rotate(360deg); } }
 @keyframes node-scan { to { transform:translateX(-120px); } }
 @keyframes node-breathe { 50% { opacity:.28; transform:scale(.75); } }

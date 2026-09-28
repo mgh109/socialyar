@@ -23,6 +23,7 @@ type UsageTotals = { requests: number; inputTokens: number | string; outputToken
   costMicros: number | string; unreportedTokens: number; unreportedCost: number };
 type WorkflowUsage = { totals: UsageTotals; byStep: Array<UsageTotals & { stepKey: string }> };
 type LiveState = {
+  nextPollAt: string | null;
   events: Array<{ id: string; type: string; stepKey: string | null; createdAt: string; decision: string | null }>;
   active: Array<{ stepKey: string; status: string }>;
   sources: Array<{ stepKey: string; status: string; at: string; count?: number; queuedCount?: number }>;
@@ -69,6 +70,16 @@ const errors: Record<string, string> = {
 const nodeWidth = 190;
 const nodeHeight = 150;
 const freshKey = () => `node-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+function countdownLabel(nextPollAt: string | null | undefined, now: number, active: boolean) {
+  if (!active) return "پایش متوقف";
+  if (!nextPollAt) return "در انتظار نوبت پایش";
+  const seconds = Math.max(0, Math.ceil((new Date(nextPollAt).getTime() - now) / 1000));
+  if (!seconds) return "در نوبت پایش";
+  const two = (value: number) => value.toLocaleString("fa-IR", { minimumIntegerDigits: 2 });
+  const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+  if (hours >= 24) return `${faNumber(Math.floor(hours / 24))} روز، ${two(hours % 24)}:${two(minutes)}`;
+  return `${hours ? `${two(hours)}:` : ""}${two(minutes)}:${two(seconds % 60)}`;
+}
 
 function migrate(loaded: Step[], edges: Edge[]) {
   const steps: Step[] = [];
@@ -139,6 +150,7 @@ export function WorkflowBuilder() {
   const [usagePeriod, setUsagePeriod] = useState<"7d" | "30d" | "all">("30d");
   const [usageError, setUsageError] = useState("");
   const [live, setLive] = useState<LiveState | null>(null);
+  const [clock, setClock] = useState(Date.now());
   const [edgePulses, setEdgePulses] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
@@ -180,6 +192,11 @@ export function WorkflowBuilder() {
   };
   const surfaceWidth = Math.max(viewport.width, ...steps.map((step) => step.position.x + nodeWidth + 48), 540);
   const surfaceHeight = Math.max(viewport.height, ...steps.map((step) => step.position.y + nodeHeight + 48), 400);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     seenLiveEvents.current.clear();
@@ -605,7 +622,10 @@ export function WorkflowBuilder() {
             step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
             step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
             step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>
-          {step.type === "rss_source" ? <div className="graph-source-footer">{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</div> : null}
+          {step.type === "rss_source" ? <div className="graph-source-footer graph-source-schedule"><span>{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</span>
+            <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
+          {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
+            <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
           {step.type === "publish" ? <div className="graph-source-footer">{step.config.accountId ? "● آماده" : "○ تنظیم‌نشده"} · {publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "انتشار"}</div> : null}
           {["ai", "comment_decision"].includes(step.type) && usage?.byStep.find((item) => item.stepKey === step.key) ?
             <div className="graph-source-footer graph-usage-footer">مصرف {usagePeriod === "7d" ? "۷ روز" : usagePeriod === "all" ? "کل" : "۳۰ روز"} · 
