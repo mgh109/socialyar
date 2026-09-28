@@ -1,8 +1,8 @@
-import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
-  analyticsEvents,
+  aiUsageEvents, ensureAIUsageStorage, workflows, analyticsEvents,
   contentItems,
   contentVariants,
   getDb,
@@ -38,6 +38,41 @@ function rangeCondition(
 export async function analyticsRoutes(app: FastifyInstance) {
   const db = getDb();
   app.addHook("onRequest", app.authenticate);
+
+  app.get("/analytics/ai-usage", async (request) => {
+    const query = z.object({ period: z.enum(["7d", "30d", "90d", "all"]).default("30d"),
+      workflowId: z.string().uuid().optional() }).parse(request.query);
+    await ensureAIUsageStorage();
+    const days = query.period === "all" ? null : Number.parseInt(query.period, 10);
+    const since = days === null ? null : new Date(Date.now() - days * 86400_000);
+    if (query.workflowId) {
+      const [workflow] = await db.select({ id: workflows.id }).from(workflows)
+        .where(and(eq(workflows.id, query.workflowId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
+      if (!workflow) return { period: query.period, totals: null, byWorkflow: [], byModel: [] };
+    }
+    const condition = and(eq(aiUsageEvents.workspaceId, request.auth.workspaceId),
+      since ? gte(aiUsageEvents.createdAt, since) : undefined,
+      query.workflowId ? eq(aiUsageEvents.workflowId, query.workflowId) : undefined);
+    const metrics = {
+      requests: sql<number>`count(*)::int`,
+      inputTokens: sql<number>`coalesce(sum(${aiUsageEvents.inputTokens}), 0)::bigint`,
+      outputTokens: sql<number>`coalesce(sum(${aiUsageEvents.outputTokens}), 0)::bigint`,
+      costMicros: sql<number>`coalesce(sum(${aiUsageEvents.costMicros}), 0)::bigint`,
+      unreportedTokens: sql<number>`count(*) filter (where ${aiUsageEvents.inputTokens} is null or ${aiUsageEvents.outputTokens} is null)::int`,
+      unreportedCost: sql<number>`count(*) filter (where ${aiUsageEvents.costMicros} is null)::int`,
+    };
+    const [totalRows, workflowRows, modelRows] = await Promise.all([
+      db.select(metrics).from(aiUsageEvents).where(condition),
+      db.select({ workflowId: aiUsageEvents.workflowId, workflowName: workflows.name, ...metrics })
+        .from(aiUsageEvents).leftJoin(workflows, eq(aiUsageEvents.workflowId, workflows.id))
+        .where(condition).groupBy(aiUsageEvents.workflowId, workflows.name)
+        .orderBy(desc(metrics.requests)),
+      db.select({ provider: aiUsageEvents.provider, model: aiUsageEvents.model, ...metrics })
+        .from(aiUsageEvents).where(condition).groupBy(aiUsageEvents.provider, aiUsageEvents.model)
+        .orderBy(desc(metrics.requests)),
+    ]);
+    return { period: query.period, totals: totalRows[0], byWorkflow: workflowRows, byModel: modelRows };
+  });
 
   app.get("/analytics/summary", async (request) => {
     const query = rangeQuery.parse(request.query);
