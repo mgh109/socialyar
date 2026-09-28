@@ -1354,3 +1354,17 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .card-usage-report { display:flex; flex-direction:column; gap:6px; padding:12px; margin:0 0 17px; border:1px solid var(--border); border-radius:9px; background:var(--panel2); font-size:12px; line-height:1.8; }
 .card-usage-report strong { color:var(--text); font-size:13px; }
 .card-usage-report small { color:var(--muted); }
+.graph-node { overflow:visible; }
+.graph-node strong { margin-top:8px; line-height:1.45; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.graph-node small { margin-top:3px; line-height:1.45; }
+.graph-node:has(.graph-source-footer) small { max-width:100%; }
+.graph-role-label { min-height:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.graph-live-dot { display:inline-block; width:6px; height:6px; margin-inline-end:5px; border-radius:50%; background:currentColor; vertical-align:middle; }
+.graph-node.node-running { border-color:var(--green); box-shadow:0 0 0 2px var(--accent-soft),0 0 18px rgba(20,131,96,.2); }
+.graph-node.node-running .graph-role-label { color:var(--green); }
+.graph-node.node-running .graph-live-dot { animation:node-breathe 1.2s ease-in-out infinite; }
+.graph-node.node-completed .graph-role-label { color:var(--green); }
+.graph-node.node-failed .graph-role-label { color:var(--red); }
+.graph-node.node-waiting .graph-role-label { color:var(--amber); }
+@keyframes node-breathe { 50% { opacity:.28; transform:scale(.75); } }
+@media (prefers-reduced-motion:reduce) { .graph-node.node-running .graph-live-dot { animation:none; } }
