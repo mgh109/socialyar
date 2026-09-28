@@ -4,7 +4,10 @@ export interface AIProvider {
   generate(input: { system?: string; prompt: string }): Promise<{ text: string; usage: AIUsage }>;
 }
 
-export type AIConnection = { provider: "openai" | "openrouter" | "gapgpt"; model: string; token: string };
+export type AIRequestUsage = { provider: AIConnection["provider"]; model: string; inputTokens: number | null;
+  outputTokens: number | null; costMicros: number | null };
+export type AIConnection = { provider: "openai" | "openrouter" | "gapgpt"; model: string; token: string;
+  onUsage?: (usage: AIRequestUsage) => Promise<void> };
 
 export async function generateNewsDraft(connection: AIConnection, article: { title: string; text: string; url?: string }, instructions?: string) {
   return chatCompletion(connection, [
@@ -76,11 +79,22 @@ async function chatCompletion(connection: AIConnection, messages: Array<{ role: 
     body: JSON.stringify({
       model: connection.model,
       messages,
+      ...(connection.provider === "openrouter" ? { usage: { include: true } } : {}),
     }),
     signal: AbortSignal.timeout(45000),
   });
-  const data = await response.json() as { error?: { message?: string }; choices?: Array<{ message?: { content?: string } }> };
+  const data = await response.json() as { error?: { message?: string }; model?: string;
+    usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number; total_cost?: number };
+    choices?: Array<{ message?: { content?: string } }> };
   if (!response.ok) throw new Error(`AI request failed (${response.status}): ${data.error?.message ?? "Provider error"}`);
+  if (connection.onUsage) {
+    const tokens = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    const reportedCost = data.usage?.cost ?? data.usage?.total_cost;
+    await connection.onUsage({ provider: connection.provider, model: data.model || connection.model,
+      inputTokens: tokens(data.usage?.prompt_tokens), outputTokens: tokens(data.usage?.completion_tokens),
+      costMicros: typeof reportedCost === "number" && Number.isFinite(reportedCost) && reportedCost >= 0
+        ? Math.round(reportedCost * 1_000_000) : null });
+  }
   const text = data.choices?.[0]?.message?.content?.trim();
   if (!text) throw new Error("AI provider returned no text");
   return text;
