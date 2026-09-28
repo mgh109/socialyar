@@ -19,6 +19,12 @@ type SourceHealth = { status: "ok" | "error" | "not_checked"; checkedAt?: string
   rawCount?: number; matchedCount?: number; selectedCount?: number; validCount?: number; queuedCount?: number;
   pagesFetched?: number; capped?: boolean };
 type Activity = { run: { id: string; status: string; createdAt: string } | null; publication: { status: string; publishedAt: string | null; externalUrl: string | null } | null; queueCount: number };
+type UsageTotals = { requests: number; inputTokens: number | string; outputTokens: number | string;
+  costMicros: number | string; unreportedTokens: number; unreportedCost: number };
+type WorkflowUsage = { totals: UsageTotals; byStep: Array<UsageTotals & { stepKey: string }> };
+const faNumber = (value: number | string) => Number(value).toLocaleString("fa-IR");
+const dollarCost = (usage: UsageTotals) => (Number(usage.costMicros) / 1_000_000)
+  .toLocaleString("fa-IR", { maximumFractionDigits: 4 });
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "RSS", eitaa: "ایتا", bale: "بله" };
@@ -117,9 +123,13 @@ export function WorkflowBuilder() {
   const [sourcePreviewBusy, setSourcePreviewBusy] = useState(false);
   const [sourceHealth, setSourceHealth] = useState<SourceHealth | null>(null);
   const [activity, setActivity] = useState<Activity | null>(null);
+  const [usage, setUsage] = useState<WorkflowUsage | null>(null);
+  const [usagePeriod, setUsagePeriod] = useState<"7d" | "30d" | "all">("30d");
+  const [usageError, setUsageError] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
   const selected = steps.find((step) => step.key === selectedKey);
+  const selectedUsage = usage?.byStep.find((item) => item.stepKey === selectedKey);
   const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => ["rss_source", "api_source"].includes(step.type));
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
@@ -131,6 +141,20 @@ export function WorkflowBuilder() {
   };
   const surfaceWidth = Math.max(viewport.width, ...steps.map((step) => step.position.x + nodeWidth + 48), 540);
   const surfaceHeight = Math.max(viewport.height, ...steps.map((step) => step.position.y + nodeHeight + 48), 400);
+
+  useEffect(() => {
+    if (!workflowId) { setUsage(null); return; }
+    let active = true;
+    const refresh = () => void apiFetch(`/analytics/ai-usage?workflowId=${encodeURIComponent(workflowId)}&period=${usagePeriod}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("گزارش مصرف در دسترس نیست");
+        const report = await response.json() as WorkflowUsage;
+        if (active) { setUsage(report); setUsageError(""); }
+      }).catch(() => { if (active) setUsageError("گزارش مصرف در دسترس نیست"); });
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [workflowId, usagePeriod]);
 
   useEffect(() => {
     setConnectionFormOpen(false); setConnectionEditingId(null); setConnectionToken(""); setConnectionError("");
@@ -408,6 +432,20 @@ export function WorkflowBuilder() {
         }}>{item.label}</button>)}</div></details></div>
         <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
         </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ ${durationLabel(pollIntervalMinutes)}` : "پیش‌نویس"}>{autoEnabled ? `● ${durationLabel(pollIntervalMinutes)}` : "○ پیش‌نویس"}</span>
+        {workflowId ? <details className="graph-activity graph-usage"><summary>مصرف AI {usage?.totals.requests ? `· ${faNumber(usage.totals.requests)}` : ""}</summary>
+          <div><strong>مصرف هوش مصنوعی این جریان</strong>
+            <select aria-label="بازهٔ مصرف این جریان" value={usagePeriod} onChange={(event) => setUsagePeriod(event.target.value as "7d" | "30d" | "all")}>
+              <option value="7d">۷ روز اخیر</option><option value="30d">۳۰ روز اخیر</option><option value="all">همهٔ زمان‌ها</option>
+            </select>
+            {usageError ? <span role="alert">{usageError}</span> : usage?.totals.requests ? <>
+              <span>{faNumber(usage.totals.requests)} درخواست از مدل</span>
+              <span>{faNumber(usage.totals.inputTokens)} توکن ورودی · {faNumber(usage.totals.outputTokens)} توکن خروجی</span>
+              <span>هزینهٔ گزارش‌شده: {dollarCost(usage.totals)} دلار</span>
+              {usage.totals.unreportedCost > 0 ? <small>هزینهٔ {faNumber(usage.totals.unreportedCost)} درخواست گزارش نشده؛ مبلغ بالا کامل نیست.</small> : null}
+              {usage.totals.unreportedTokens > 0 ? <small>آمار توکن {faNumber(usage.totals.unreportedTokens)} درخواست کامل نیست.</small> : null}
+            </> : <span>هنوز مصرفی برای این جریان ثبت نشده است.</span>}
+            <Link href="/analytics">آمار همهٔ جریان‌ها ←</Link>
+          </div></details> : null}
         {activity && (activity.publication || activity.queueCount || activity.run) ? <details className="graph-activity"><summary title="آخرین فعالیت همین جریان" aria-label="آخرین فعالیت همین جریان">فعالیت</summary><div><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
         activity.publication?.status === "failed" ? "ارسال ناموفق" : activity.publication ? "در صف انتشار" : activity.run?.status ?? "بدون خبر"}
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
@@ -463,6 +501,9 @@ export function WorkflowBuilder() {
             step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>
           {step.type === "rss_source" ? <div className="graph-source-footer">{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</div> : null}
           {step.type === "publish" ? <div className="graph-source-footer">{step.config.accountId ? "● آماده" : "○ تنظیم‌نشده"} · {publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "انتشار"}</div> : null}
+          {["ai", "comment_decision"].includes(step.type) && usage?.byStep.find((item) => item.stepKey === step.key) ?
+            <div className="graph-source-footer graph-usage-footer">مصرف {usagePeriod === "7d" ? "۷ روز" : usagePeriod === "all" ? "کل" : "۳۰ روز"} · 
+              {faNumber(usage.byStep.find((item) => item.stepKey === step.key)!.requests)} درخواست</div> : null}
           {!isTerminal(step) ? <button className={`graph-port output ${connecting === step.key ? "active" : ""}`}
             title="خروجی؛ به ورودی کارت بعدی بکش یا کلیک کن" aria-label={`خروجی ${step.name}`}
             onPointerDown={(event) => { event.stopPropagation(); setConnecting(step.key); setPointer(null); }}
@@ -480,6 +521,16 @@ export function WorkflowBuilder() {
             <option value="review">بررسی انسانی</option></select></label> : null}
         <button type="button" onClick={() => { const edge = edges.find((item) => edgeId(item) === selectedEdge); if (edge) removeEdge(edge); }}>حذف اتصال</button></div> : null}
       {selected ? <><div className="builder-selected-title"><small>کارت انتخاب‌شده</small><strong>{selected.name}</strong></div>
+        {["ai", "comment_decision"].includes(selected.type) && workflowId ? <section className="card-usage-report" aria-label="مصرف این کارت">
+          <strong>مصرف این کارت · {usagePeriod === "7d" ? "۷ روز اخیر" : usagePeriod === "all" ? "همهٔ زمان‌ها" : "۳۰ روز اخیر"}</strong>
+          {selectedUsage ? <><span>{faNumber(selectedUsage.requests)} بار از مدل درخواست شده</span>
+            <span>{faNumber(selectedUsage.inputTokens)} توکن ورودی · {faNumber(selectedUsage.outputTokens)} توکن خروجی</span>
+            <span>هزینهٔ گزارش‌شده: {dollarCost(selectedUsage)} دلار</span>
+            {selectedUsage.unreportedCost > 0 || selectedUsage.unreportedTokens > 0 ?
+              <small>بخشی از مصرف را سرویس گزارش نکرده؛ رقم هزینه ممکن است کامل نباشد.</small> : null}</> :
+            <span>هنوز برای این کارت مصرفی ثبت نشده است.</span>}
+          <small>توکن، مقدار متن پردازش‌شده توسط مدل است؛ این عدد تعداد خبر نیست.</small>
+        </section> : null}
         {isSource(selected) ? <label><span>نوع منبع</span><select value={selected.type === "api_source" ? "api" :
           selected.type === "manual_input" ? "manual" : String(selected.config.sourceKind ?? "rss")}
           onChange={(event) => switchSource(selected.key, event.target.value)}>
