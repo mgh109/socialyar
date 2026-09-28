@@ -2,7 +2,7 @@ import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
-  aiUsageEvents, ensureAIUsageStorage, workflows, analyticsEvents,
+  aiUsageEvents, ensureAIUsageStorage, workflows, workflowSteps, runSteps, analyticsEvents,
   contentItems,
   contentVariants,
   getDb,
@@ -48,7 +48,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
     if (query.workflowId) {
       const [workflow] = await db.select({ id: workflows.id }).from(workflows)
         .where(and(eq(workflows.id, query.workflowId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
-      if (!workflow) return { period: query.period, totals: null, byWorkflow: [], byModel: [] };
+      if (!workflow) return { period: query.period, totals: null, byWorkflow: [], byModel: [], byStep: [] };
     }
     const condition = and(eq(aiUsageEvents.workspaceId, request.auth.workspaceId),
       since ? gte(aiUsageEvents.createdAt, since) : undefined,
@@ -61,7 +61,7 @@ export async function analyticsRoutes(app: FastifyInstance) {
       unreportedTokens: sql<number>`count(*) filter (where ${aiUsageEvents.inputTokens} is null or ${aiUsageEvents.outputTokens} is null)::int`,
       unreportedCost: sql<number>`count(*) filter (where ${aiUsageEvents.costMicros} is null)::int`,
     };
-    const [totalRows, workflowRows, modelRows] = await Promise.all([
+    const [totalRows, workflowRows, modelRows, stepRows] = await Promise.all([
       db.select(metrics).from(aiUsageEvents).where(condition),
       db.select({ workflowId: aiUsageEvents.workflowId, workflowName: workflows.name, ...metrics })
         .from(aiUsageEvents).leftJoin(workflows, eq(aiUsageEvents.workflowId, workflows.id))
@@ -70,8 +70,12 @@ export async function analyticsRoutes(app: FastifyInstance) {
       db.select({ provider: aiUsageEvents.provider, model: aiUsageEvents.model, ...metrics })
         .from(aiUsageEvents).where(condition).groupBy(aiUsageEvents.provider, aiUsageEvents.model)
         .orderBy(desc(metrics.requests)),
+      query.workflowId ? db.select({ stepKey: workflowSteps.key, ...metrics })
+        .from(aiUsageEvents).innerJoin(runSteps, eq(aiUsageEvents.runStepId, runSteps.id))
+        .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
+        .where(condition).groupBy(workflowSteps.key).orderBy(desc(metrics.requests)) : Promise.resolve([]),
     ]);
-    return { period: query.period, totals: totalRows[0], byWorkflow: workflowRows, byModel: modelRows };
+    return { period: query.period, totals: totalRows[0], byWorkflow: workflowRows, byModel: modelRows, byStep: stepRows };
   });
 
   app.get("/analytics/summary", async (request) => {
