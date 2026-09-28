@@ -138,6 +138,7 @@ async function sourceCandidates(source: typeof workflowSteps.$inferSelect, works
   const bale = kind === "bale" ? [source.config.channel] :
     Array.isArray(source.config.baleChannels) ? source.config.baleChannels : [];
   const candidates: NewsCandidate[] = [];
+  const sourceErrors: Error[] = [];
   for (const feedUrl of urls.slice(0, 10)) {
     if (typeof feedUrl !== "string" || !feedUrl.trim()) continue;
     try {
@@ -152,22 +153,26 @@ async function sourceCandidates(source: typeof workflowSteps.$inferSelect, works
         candidates.push({ title, url, text: stringValue(item?.description ?? item?.summary ?? item?.["content:encoded"])
           .replace(/<[^>]+>/g, " ").trim(), imageUrl: imageFromEntry(item), legacyId: stringValue(item.guid ?? item.id) });
       }
-    } catch (error) { console.error(`RSS poll failed for ${feedUrl}`, error); }
+    } catch (error) { console.error(`RSS poll failed for ${feedUrl}`, error);
+      sourceErrors.push(error instanceof Error ? error : new Error(String(error))); }
   }
   for (const input of eitaa.slice(0, 10)) {
     if (typeof input !== "string") continue;
     try {
       const posts = await fetchEitaaPosts(channelHandle(input));
       candidates.push(...posts.map((post) => ({ ...post })));
-    } catch (error) { console.error(`Eitaa poll failed for ${input}`, error); }
+    } catch (error) { console.error(`Eitaa poll failed for ${input}`, error);
+      sourceErrors.push(error instanceof Error ? error : new Error(String(error))); }
   }
   for (const input of bale.slice(0, 10)) {
     if (typeof input !== "string") continue;
     try {
       const handle = baleHandle(input), posts = await fetchBalePosts(handle);
       candidates.push(...posts.map((post) => ({ ...post, uniqueId: `bale:${handle}:${post.id}` })));
-    } catch (error) { console.error(`Bale poll failed for ${input}`, error); }
+    } catch (error) { console.error(`Bale poll failed for ${input}`, error);
+      sourceErrors.push(error instanceof Error ? error : new Error(String(error))); }
   }
+  if (sourceErrors.length && !candidates.length) throw sourceErrors[0];
   return { items: candidates };
 }
 
@@ -193,10 +198,14 @@ async function poll() {
         const rotation = Math.floor(Date.now() / (intervalMinutes * 60_000)) % sources.length;
         const ordered = [...sources.slice(rotation), ...sources.slice(0, rotation)];
         const batches = await Promise.all(ordered.map(async (source) => {
+          const liveKey = `source-live:${workflow.id}:${version.id}:${source.key}`;
+          await connection.set(liveKey, JSON.stringify({ status: "reading", at: new Date().toISOString() }), "EX", 45);
           try { const result = await sourceCandidates(source, workflow.workspaceId);
+            await connection.set(liveKey, JSON.stringify({ status: "read", at: new Date().toISOString(), count: result.items.length }), "EX", 12);
             return { source, ...result, queued: 0, queueError: "" }; }
           catch (error) {
             console.error(`Source poll failed for ${source.key}`, error);
+            await connection.set(liveKey, JSON.stringify({ status: "error", at: new Date().toISOString() }), "EX", 12);
             if (source.type === "api_source") await connection.set(`source-health:${workflow.id}:${version.id}:${source.key}`,
               JSON.stringify({ checkedAt: new Date().toISOString(), status: "error",
                 error: error instanceof Error ? error.message : String(error) }), "EX", 604800);
