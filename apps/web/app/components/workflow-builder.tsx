@@ -214,7 +214,7 @@ export function WorkflowBuilder() {
         setEdgePulses((current) => { if (current[key] !== id) return current;
           const next = { ...current }; delete next[key]; return next; });
         timers.delete(timer);
-      }, 3600);
+      }, 4600);
       timers.add(timer);
     };
     const refresh = async () => {
@@ -583,9 +583,11 @@ export function WorkflowBuilder() {
             const sending = live?.publications.some((item) => item.stepKey === edge.targetKey && item.status === "publishing");
             return <g key={edgeId(edge)} className={`graph-edge ${selectedEdge === edgeId(edge) ? "selected" : ""} ${sending ? "sending" : ""}`}>
               <path className="edge-visible" d={path} />
-              {sending ? <circle className="edge-sending-glow" r="4"><animateMotion dur="2s" repeatCount="indefinite" path={path} /></circle> : null}
+              {sending ? <circle className="edge-sending-glow" r="4"><animateMotion begin="indefinite" dur="4s" repeatCount="indefinite" path={path}
+                ref={(animation) => { if (animation && !animation.hasAttribute("data-started")) { animation.setAttribute("data-started", "true"); (animation as SVGElement & { beginElement: () => void }).beginElement(); } }} /></circle> : null}
               {edgePulses[edgeId(edge)] ? <circle key={edgePulses[edgeId(edge)]} className="edge-glow" r="4">
-                <animateMotion dur="3.2s" fill="freeze" path={path} /></circle> : null}
+                <animateMotion begin="indefinite" dur="4s" fill="freeze" path={path}
+                  ref={(animation) => { if (animation && !animation.hasAttribute("data-started")) { animation.setAttribute("data-started", "true"); (animation as SVGElement & { beginElement: () => void }).beginElement(); } }} /></circle> : null}
               <path className="edge-hit" d={path} role="button" tabIndex={0} aria-label={`اتصال ${edgeName(edge.sourceKey)} به ${edgeName(edge.targetKey)}`}
                 onClick={() => { setSelectedEdge(edgeId(edge)); setSelectedKey(""); }}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedEdge(edgeId(edge)); setSelectedKey(""); } }} />
