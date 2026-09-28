@@ -26,6 +26,7 @@ type LiveState = {
   events: Array<{ id: string; type: string; stepKey: string | null; createdAt: string; decision: string | null }>;
   active: Array<{ stepKey: string; status: string }>;
   sources: Array<{ stepKey: string; status: string; at: string; count?: number }>;
+  publications: Array<{ id: string; stepKey: string; status: string; updatedAt: string; publishedAt: string | null }>;
 };
 const faNumber = (value: number | string) => Number(value).toLocaleString("fa-IR");
 const dollarCost = (usage: UsageTotals) => (Number(usage.costMicros) / 1_000_000)
@@ -99,6 +100,7 @@ export function WorkflowBuilder() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ key: string; startX: number; startY: number; x: number; y: number } | null>(null);
   const seenLiveEvents = useRef(new Set<string>());
+  const seenPublicationStates = useRef(new Map<string, string>());
   const openedAt = useRef(Date.now());
   const [steps, setSteps] = useState<Step[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -145,6 +147,12 @@ export function WorkflowBuilder() {
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
   const stepActivity = (step: Step) => {
+    const sending = live?.publications.find((item) => item.stepKey === step.key && item.status === "publishing");
+    if (sending) return { label: "در حال ارسال به کانال...", state: "running" };
+    const recentPublication = live?.publications.find((item) => item.stepKey === step.key &&
+      ["published", "failed"].includes(item.status) && Date.now() - new Date(item.updatedAt).getTime() < 10000);
+    if (recentPublication?.status === "published") return { label: "پیام ارسال شد", state: "completed" };
+    if (recentPublication?.status === "failed") return { label: "ارسال ناموفق بود", state: "failed" };
     const source = live?.sources.find((item) => item.stepKey === step.key);
     if (source?.status === "reading") return { label: "در حال خواندن منبع...", state: "running" };
     const active = live?.active.find((item) => item.stepKey === step.key);
@@ -172,12 +180,22 @@ export function WorkflowBuilder() {
 
   useEffect(() => {
     seenLiveEvents.current.clear();
+    seenPublicationStates.current.clear();
     openedAt.current = Date.now();
     setLive(null); setEdgePulses({});
     if (!workflowId) return;
     let active = true;
     let fetching = false;
     const timers = new Set<number>();
+    const flash = (key: string, id: string) => {
+      setEdgePulses((current) => ({ ...current, [key]: id }));
+      const timer = window.setTimeout(() => {
+        setEdgePulses((current) => { if (current[key] !== id) return current;
+          const next = { ...current }; delete next[key]; return next; });
+        timers.delete(timer);
+      }, 3600);
+      timers.add(timer);
+    };
     const refresh = async () => {
       if (fetching) return;
       fetching = true;
@@ -193,15 +211,17 @@ export function WorkflowBuilder() {
           if (event.type !== "step_completed" || !event.stepKey || new Date(event.createdAt).getTime() < openedAt.current) continue;
           for (const edge of edgesRef.current.filter((item) => item.sourceKey === event.stepKey &&
             (!item.condition?.decision || item.condition.decision === event.decision))) {
-            const key = `${edge.sourceKey}→${edge.targetKey}`;
-            setEdgePulses((current) => ({ ...current, [key]: event.id }));
-            const timer = window.setTimeout(() => {
-              setEdgePulses((current) => { if (current[key] !== event.id) return current;
-                const next = { ...current }; delete next[key]; return next; });
-              timers.delete(timer);
-            }, 1500);
-            timers.add(timer);
+            flash(`${edge.sourceKey}→${edge.targetKey}`, event.id);
           }
+        }
+        for (const publication of snapshot.publications) {
+          const previous = seenPublicationStates.current.get(publication.id);
+          seenPublicationStates.current.set(publication.id, publication.status);
+          if (publication.status !== "published" || previous === "published" ||
+            !publication.publishedAt || (previous === undefined &&
+              new Date(publication.publishedAt).getTime() < openedAt.current - 10_000)) continue;
+          for (const edge of edgesRef.current.filter((item) => item.targetKey === publication.stepKey))
+            flash(`${edge.sourceKey}→${edge.targetKey}`, `publication-${publication.id}`);
         }
       } catch { /* The next poll can recover without showing a fake running state. */ }
       finally { fetching = false; }
@@ -530,10 +550,12 @@ export function WorkflowBuilder() {
             const start = { x: from.position.x, y: from.position.y + 70 };
             const end = { x: to.position.x + nodeWidth, y: to.position.y + 70 };
             const path = stroke(start, end);
-            return <g key={edgeId(edge)} className={`graph-edge ${selectedEdge === edgeId(edge) ? "selected" : ""}`}>
+            const sending = live?.publications.some((item) => item.stepKey === edge.targetKey && item.status === "publishing");
+            return <g key={edgeId(edge)} className={`graph-edge ${selectedEdge === edgeId(edge) ? "selected" : ""} ${sending ? "sending" : ""}`}>
               <path className="edge-visible" d={path} />
+              {sending ? <circle className="edge-sending-glow" r="4"><animateMotion dur="2s" repeatCount="indefinite" path={path} /></circle> : null}
               {edgePulses[edgeId(edge)] ? <circle key={edgePulses[edgeId(edge)]} className="edge-glow" r="4">
-                <animateMotion dur="1.25s" fill="freeze" path={path} /></circle> : null}
+                <animateMotion dur="3.2s" fill="freeze" path={path} /></circle> : null}
               <path className="edge-hit" d={path} role="button" tabIndex={0} aria-label={`اتصال ${edgeName(edge.sourceKey)} به ${edgeName(edge.targetKey)}`}
                 onClick={() => { setSelectedEdge(edgeId(edge)); setSelectedKey(""); }}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedEdge(edgeId(edge)); setSelectedKey(""); } }} />
@@ -560,7 +582,7 @@ export function WorkflowBuilder() {
               step.type === "ai" ? "AI" : "کارت"}</span>
             <button type="button" className="graph-delete" title="حذف کارت" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => { event.stopPropagation(); remove(step.key); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button></div>
-          <span className="graph-role-label">{stepActivity(step) ? <><span className="graph-live-dot" />{stepActivity(step)!.label}</> :
+          <span className="graph-role-label">{stepActivity(step) ? <><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</> :
             isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>
           <strong>{step.type === "publish" ? "انتشار" : step.name}</strong><small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
