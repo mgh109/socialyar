@@ -22,6 +22,11 @@ type Activity = { run: { id: string; status: string; createdAt: string } | null;
 type UsageTotals = { requests: number; inputTokens: number | string; outputTokens: number | string;
   costMicros: number | string; unreportedTokens: number; unreportedCost: number };
 type WorkflowUsage = { totals: UsageTotals; byStep: Array<UsageTotals & { stepKey: string }> };
+type LiveState = {
+  events: Array<{ id: string; type: string; stepKey: string | null; createdAt: string; decision: string | null }>;
+  active: Array<{ stepKey: string; status: string }>;
+  sources: Array<{ stepKey: string; status: string; at: string; count?: number }>;
+};
 const faNumber = (value: number | string) => Number(value).toLocaleString("fa-IR");
 const dollarCost = (usage: UsageTotals) => (Number(usage.costMicros) / 1_000_000)
   .toLocaleString("fa-IR", { maximumFractionDigits: 4 });
@@ -93,8 +98,12 @@ export function WorkflowBuilder() {
   const router = useRouter();
   const canvasRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ key: string; startX: number; startY: number; x: number; y: number } | null>(null);
+  const seenLiveEvents = useRef(new Set<string>());
+  const openedAt = useRef(Date.now());
   const [steps, setSteps] = useState<Step[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
+  const edgesRef = useRef<Edge[]>([]);
+  edgesRef.current = edges;
   const [selectedKey, setSelectedKey] = useState("");
   const [connecting, setConnecting] = useState<string | null>(null);
   const [pointer, setPointer] = useState<Position | null>(null);
@@ -126,6 +135,8 @@ export function WorkflowBuilder() {
   const [usage, setUsage] = useState<WorkflowUsage | null>(null);
   const [usagePeriod, setUsagePeriod] = useState<"7d" | "30d" | "all">("30d");
   const [usageError, setUsageError] = useState("");
+  const [live, setLive] = useState<LiveState | null>(null);
+  const [edgePulses, setEdgePulses] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
   const selected = steps.find((step) => step.key === selectedKey);
@@ -133,6 +144,23 @@ export function WorkflowBuilder() {
   const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => ["rss_source", "api_source"].includes(step.type));
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
+  const stepActivity = (step: Step) => {
+    const source = live?.sources.find((item) => item.stepKey === step.key);
+    if (source?.status === "reading") return { label: "در حال خواندن منبع...", state: "running" };
+    const active = live?.active.find((item) => item.stepKey === step.key);
+    if (active?.status === "waiting_approval") return { label: "در انتظار تأیید شما", state: "waiting" };
+    if (active) return { label: step.type === "ai" || step.type === "comment_decision" ? "هوش مصنوعی در حال کار..." : "در حال پردازش...", state: "running" };
+    const recent = [...(live?.events ?? [])].reverse().find((item) => item.stepKey === step.key &&
+      Date.now() - new Date(item.createdAt).getTime() < 8000 &&
+      ["step_completed", "step_failed", "retry", "approval_requested"].includes(item.type));
+    if (recent?.type === "step_failed") return { label: "خطا؛ جزئیات در آخرین اجرا", state: "failed" };
+    if (recent?.type === "retry") return { label: "تلاش دوباره...", state: "running" };
+    if (recent?.type === "approval_requested") return { label: "در انتظار تأیید شما", state: "waiting" };
+    if (recent?.type === "step_completed") return { label: "این مرحله خروجی داد", state: "completed" };
+    if (source?.status === "error") return { label: "خواندن منبع ناموفق بود", state: "failed" };
+    if (source?.status === "read") return { label: `${faNumber(source.count ?? 0)} مورد خوانده شد`, state: "completed" };
+    return null;
+  };
   const edgeName = (key: string) => {
     const step = steps.find((item) => item.key === key);
     if (!step) return "کارت حذف‌شده";
@@ -141,6 +169,47 @@ export function WorkflowBuilder() {
   };
   const surfaceWidth = Math.max(viewport.width, ...steps.map((step) => step.position.x + nodeWidth + 48), 540);
   const surfaceHeight = Math.max(viewport.height, ...steps.map((step) => step.position.y + nodeHeight + 48), 400);
+
+  useEffect(() => {
+    seenLiveEvents.current.clear();
+    openedAt.current = Date.now();
+    setLive(null); setEdgePulses({});
+    if (!workflowId) return;
+    let active = true;
+    let fetching = false;
+    const timers = new Set<number>();
+    const refresh = async () => {
+      if (fetching) return;
+      fetching = true;
+      try {
+        const response = await apiFetch(`/workflows/${encodeURIComponent(workflowId)}/live`);
+        if (!response.ok) return;
+        const snapshot = await response.json() as LiveState;
+        if (!active) return;
+        setLive(snapshot);
+        for (const event of snapshot.events) {
+          if (seenLiveEvents.current.has(event.id)) continue;
+          seenLiveEvents.current.add(event.id);
+          if (event.type !== "step_completed" || !event.stepKey || new Date(event.createdAt).getTime() < openedAt.current) continue;
+          for (const edge of edgesRef.current.filter((item) => item.sourceKey === event.stepKey &&
+            (!item.condition?.decision || item.condition.decision === event.decision))) {
+            const key = `${edge.sourceKey}→${edge.targetKey}`;
+            setEdgePulses((current) => ({ ...current, [key]: event.id }));
+            const timer = window.setTimeout(() => {
+              setEdgePulses((current) => { if (current[key] !== event.id) return current;
+                const next = { ...current }; delete next[key]; return next; });
+              timers.delete(timer);
+            }, 1500);
+            timers.add(timer);
+          }
+        }
+      } catch { /* The next poll can recover without showing a fake running state. */ }
+      finally { fetching = false; }
+    };
+    void refresh();
+    const interval = window.setInterval(() => void refresh(), 2000);
+    return () => { active = false; window.clearInterval(interval); timers.forEach(window.clearTimeout); };
+  }, [workflowId]);
 
   useEffect(() => {
     if (!workflowId) { setUsage(null); return; }
@@ -463,7 +532,8 @@ export function WorkflowBuilder() {
             const path = stroke(start, end);
             return <g key={edgeId(edge)} className={`graph-edge ${selectedEdge === edgeId(edge) ? "selected" : ""}`}>
               <path className="edge-visible" d={path} />
-              <circle className="edge-glow" r="3.5"><animateMotion dur="2.6s" repeatCount="indefinite" path={path} /></circle>
+              {edgePulses[edgeId(edge)] ? <circle key={edgePulses[edgeId(edge)]} className="edge-glow" r="4">
+                <animateMotion dur="1.25s" fill="freeze" path={path} /></circle> : null}
               <path className="edge-hit" d={path} role="button" tabIndex={0} aria-label={`اتصال ${edgeName(edge.sourceKey)} به ${edgeName(edge.targetKey)}`}
                 onClick={() => { setSelectedEdge(edgeId(edge)); setSelectedKey(""); }}
                 onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedEdge(edgeId(edge)); setSelectedKey(""); } }} />
@@ -474,7 +544,7 @@ export function WorkflowBuilder() {
             y: steps.find((step) => step.key === connecting)!.position.y + 70 }, pointer)} /> : null}
         </svg>
         {!steps.length ? <div className="graph-empty">بوم خالی است. از «افزودن کارت» شروع کن.</div> : null}
-        {steps.map((step) => <article key={step.key} className={`graph-node ${isSource(step) ? "role-source" : isTerminal(step) ? "role-output" : "role-process"} ${selectedKey === step.key ? "selected" : ""}`}
+        {steps.map((step) => <article key={step.key} className={`graph-node ${isSource(step) ? "role-source" : isTerminal(step) ? "role-output" : "role-process"} ${selectedKey === step.key ? "selected" : ""} ${stepActivity(step)?.state ? `node-${stepActivity(step)?.state}` : ""}`}
           style={{ left: step.position.x, top: step.position.y }} onClick={() => { setSelectedKey(step.key); setSelectedEdge(null); }}>
           {!isSource(step) ? <button className="graph-port input" title="ورودی؛ خروجی یک کارت را اینجا رها کن"
             aria-label={`ورودی ${step.name}`} onPointerUp={(event) => { event.stopPropagation(); if (connecting) connect(connecting, step.key); }}
@@ -490,7 +560,8 @@ export function WorkflowBuilder() {
               step.type === "ai" ? "AI" : "کارت"}</span>
             <button type="button" className="graph-delete" title="حذف کارت" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => { event.stopPropagation(); remove(step.key); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button></div>
-          <span className="graph-role-label">{isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>
+          <span className="graph-role-label">{stepActivity(step) ? <><span className="graph-live-dot" />{stepActivity(step)!.label}</> :
+            isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>
           <strong>{step.type === "publish" ? "انتشار" : step.name}</strong><small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
