@@ -218,6 +218,23 @@ export const runSteps = pgTable("run_steps", {
   statusIdx: index("run_steps_status_idx").on(t.status),
 }));
 
+export const aiUsageEvents = pgTable("ai_usage_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  workflowId: uuid("workflow_id").references(() => workflows.id, { onDelete: "set null" }),
+  runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
+  runStepId: uuid("run_step_id").references(() => runSteps.id, { onDelete: "set null" }),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  costMicros: integer("cost_micros"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  workspaceCreatedIdx: index("ai_usage_workspace_created_idx").on(t.workspaceId, t.createdAt),
+  workflowCreatedIdx: index("ai_usage_workflow_created_idx").on(t.workflowId, t.createdAt),
+}));
+
 export const runEvents = pgTable("run_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   runId: uuid("run_id").notNull().references(() => runs.id, { onDelete: "cascade" }),
