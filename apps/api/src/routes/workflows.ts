@@ -243,17 +243,18 @@ export async function workflowRoutes(app: FastifyInstance) {
 
   app.get("/workflows/:workflowId/live", async (request, reply) => {
     const { workflowId } = z.object({ workflowId: z.string().uuid() }).parse(request.params);
-    const [workflow] = await db.select({ id: workflows.id, currentVersion: workflows.currentVersion })
+    const [workflow] = await db.select({ id: workflows.id, currentVersion: workflows.currentVersion, status: workflows.status })
       .from(workflows).where(and(eq(workflows.id, workflowId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
     if (!workflow) return reply.code(404).send({ error: "workflow_not_found" });
-    const [version] = await db.select({ id: workflowVersions.id }).from(workflowVersions)
+    const [version] = await db.select({ id: workflowVersions.id, snapshot: workflowVersions.snapshot }).from(workflowVersions)
       .where(and(eq(workflowVersions.workflowId, workflowId), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
-    if (!version) return { events: [], active: [], sources: [], publications: [] };
+    if (!version) return { events: [], active: [], sources: [], publications: [], nextPollAt: null };
     const sourceSteps = await db.select({ key: workflowSteps.key }).from(workflowSteps)
       .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source"])));
     const markerKeys = sourceSteps.map((step) => `source-live:${workflowId}:${version.id}:${step.key}`);
+    const pollKey = `news-poll:${workflowId}:${version.id}`;
     const [markers, events, active, publicationRows] = await Promise.all([
-      markerKeys.length ? redis.mget(...markerKeys) : Promise.resolve([] as Array<string | null>),
+      redis.mget(...markerKeys, pollKey),
       db.select({ id: runEvents.id, type: runEvents.type, createdAt: runEvents.createdAt,
         stepKey: workflowSteps.key, decision: runEvents.payload })
         .from(runEvents).innerJoin(runs, eq(runEvents.runId, runs.id))
@@ -278,7 +279,13 @@ export async function workflowRoutes(app: FastifyInstance) {
           or(eq(publications.status, "publishing"), gte(publications.updatedAt, new Date(Date.now() - 90_000)))))
         .orderBy(desc(publications.updatedAt)).limit(50),
     ]);
+    const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
+    const intervalMinutes = Number.isInteger(configured) && configured >= 1 && configured <= 10080 ? configured : 5;
+    const startedAt = Number(markers[sourceSteps.length]);
+    const nextPoll = startedAt + intervalMinutes * 60_000;
     return {
+      nextPollAt: workflow.status === "active" && Number.isFinite(startedAt) && startedAt > 0 && nextPoll > Date.now()
+        ? new Date(nextPoll).toISOString() : null,
       events: events.reverse().map((event) => ({ id: event.id, type: event.type,
         createdAt: event.createdAt, stepKey: event.stepKey,
         decision: typeof event.decision?.decision === "string" ? event.decision.decision : null })),
