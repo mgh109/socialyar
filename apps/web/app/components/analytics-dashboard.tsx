@@ -26,6 +26,14 @@ type Summary = {
   events: Array<{ type: string; value: number }>;
 };
 
+type UsageMetrics = { requests: number; inputTokens: number | string; outputTokens: number | string;
+  costMicros: number | string; unreportedTokens: number; unreportedCost: number };
+type AIUsageReport = { period: string; totals: UsageMetrics;
+  byWorkflow: Array<UsageMetrics & { workflowId: string | null; workflowName: string | null }>;
+  byModel: Array<UsageMetrics & { provider: string; model: string }> };
+const usageNumber = (value: number | string) => Number(value).toLocaleString("fa-IR");
+const usageCost = (value: number | string) => (Number(value) / 1_000_000).toLocaleString("fa-IR", { maximumFractionDigits: 4 });
+
 type PublicationRow = {
   publication: {
     id: string;
@@ -64,6 +72,9 @@ export function AnalyticsDashboard() {
   const workspaceId = getWorkspaceId();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [publications, setPublications] = useState<PublicationRow[]>([]);
+  const [usage, setUsage] = useState<AIUsageReport | null>(null);
+  const [usagePeriod, setUsagePeriod] = useState("30d");
+  const [usageError, setUsageError] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [message, setMessage] = useState("در حال دریافت آمار...");
   const [retrying, setRetrying] = useState<string | null>(null);
@@ -109,6 +120,19 @@ export function AnalyticsDashboard() {
     setPublications(await historyResponse.json());
     setMessage("آخرین وضعیت انتشارها");
   };
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    let active = true;
+    const refresh = () => void apiFetch(`/analytics/ai-usage?period=${usagePeriod}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("دریافت مصرف هوش مصنوعی ناموفق بود");
+        if (active) { setUsage(await response.json()); setUsageError(""); }
+      }).catch(() => { if (active) setUsageError("دریافت مصرف هوش مصنوعی ناموفق بود"); });
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [workspaceId, usagePeriod]);
 
   useEffect(() => {
     void load().catch((error) =>
@@ -195,6 +219,44 @@ export function AnalyticsDashboard() {
             <strong>{summary.totals.totalAttempts}</strong>
           </article>
         </div>
+
+        <section className="channel-performance ai-usage-section">
+          <div className="section-title-row">
+            <div><h2>مصرف هوش مصنوعی</h2><p>بر پایهٔ پاسخ واقعی سرویس؛ هر درخواست پس از پاسخ ثبت می‌شود و این بخش هر ۳۰ ثانیه تازه می‌شود.</p></div>
+            <select className="history-filter" aria-label="بازهٔ مصرف هوش مصنوعی" value={usagePeriod}
+              onChange={(event) => setUsagePeriod(event.target.value)}>
+              <option value="7d">۷ روز اخیر</option><option value="30d">۳۰ روز اخیر</option>
+              <option value="90d">۹۰ روز اخیر</option><option value="all">همهٔ زمان‌ها</option>
+            </select>
+          </div>
+          {usageError && <p role="alert">{usageError}</p>}
+          {usage && <>
+            <div className="metric-grid ai-usage-grid">
+              <article className="metric-card"><span>درخواست‌های AI</span><strong>{usageNumber(usage.totals.requests)}</strong></article>
+              <article className="metric-card"><span>توکن ورودی</span><strong>{usageNumber(usage.totals.inputTokens)}</strong></article>
+              <article className="metric-card"><span>توکن خروجی</span><strong>{usageNumber(usage.totals.outputTokens)}</strong></article>
+              <article className="metric-card"><span>هزینهٔ گزارش‌شده (دلار)</span><strong>${usageCost(usage.totals.costMicros)}</strong></article>
+            </div>
+            {(usage.totals.unreportedTokens > 0 || usage.totals.unreportedCost > 0) &&
+              <p className="usage-caveat">{usageNumber(usage.totals.unreportedTokens)} درخواست بدون آمار کامل توکن و {usageNumber(usage.totals.unreportedCost)} درخواست بدون هزینهٔ گزارش‌شده است؛ مبلغ بالا کل هزینهٔ قطعی نیست.</p>}
+            <div className="usage-breakdown">
+              <div><h3>مصرف هر جریان</h3>
+                {usage.byWorkflow.length ? usage.byWorkflow.map((row) => <div className="usage-row" key={row.workflowId ?? "preview"}>
+                  <span>{row.workflowName ?? (row.workflowId ? "جریان حذف‌شده" : "آزمون اتصال AI")}</span>
+                  <span>{usageNumber(row.requests)} درخواست · {usageNumber(Number(row.inputTokens) + Number(row.outputTokens))} توکن</span>
+                  <span>{row.unreportedCost ? "هزینهٔ ناقص · " : ""}${usageCost(row.costMicros)}</span>
+                </div>) : <p>هنوز مصرفی ثبت نشده است.</p>}
+              </div>
+              <div><h3>مصرف هر مدل</h3>
+                {usage.byModel.length ? usage.byModel.map((row) => <div className="usage-row" key={`${row.provider}:${row.model}`}>
+                  <span dir="ltr">{row.provider} / {row.model}</span>
+                  <span>{usageNumber(row.requests)} درخواست · {usageNumber(Number(row.inputTokens) + Number(row.outputTokens))} توکن</span>
+                  <span>{row.unreportedCost ? "هزینهٔ ناقص · " : ""}${usageCost(row.costMicros)}</span>
+                </div>) : <p>هنوز مصرفی ثبت نشده است.</p>}
+              </div>
+            </div>
+          </>}
+        </section>
 
         <section className="channel-performance">
           <div className="section-title-row">
