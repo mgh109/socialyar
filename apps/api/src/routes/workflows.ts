@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -13,6 +13,8 @@ import {
   contentItems,
   contentVariants,
   publications,
+  runEvents,
+  runSteps,
   runs,
   schedules,
   socialAccounts,
@@ -21,6 +23,7 @@ import {
   workflowVersions,
   workflows,
 } from "@socialyar/db";
+import { connection as redis } from "../queue";
 
 const stepSchema = z.object({
   key: z.string().min(1),
@@ -237,6 +240,49 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
 export async function workflowRoutes(app: FastifyInstance) {
   const db = getDb();
   app.addHook("onRequest", app.authenticate);
+
+  app.get("/workflows/:workflowId/live", async (request, reply) => {
+    const { workflowId } = z.object({ workflowId: z.string().uuid() }).parse(request.params);
+    const [workflow] = await db.select({ id: workflows.id, currentVersion: workflows.currentVersion })
+      .from(workflows).where(and(eq(workflows.id, workflowId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
+    if (!workflow) return reply.code(404).send({ error: "workflow_not_found" });
+    const [version] = await db.select({ id: workflowVersions.id }).from(workflowVersions)
+      .where(and(eq(workflowVersions.workflowId, workflowId), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
+    if (!version) return { events: [], active: [], sources: [] };
+    const sourceSteps = await db.select({ key: workflowSteps.key }).from(workflowSteps)
+      .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source"])));
+    const markerKeys = sourceSteps.map((step) => `source-live:${workflowId}:${version.id}:${step.key}`);
+    const [markers, events, active] = await Promise.all([
+      markerKeys.length ? redis.mget(...markerKeys) : Promise.resolve([] as Array<string | null>),
+      db.select({ id: runEvents.id, type: runEvents.type, createdAt: runEvents.createdAt,
+        stepKey: workflowSteps.key, decision: runEvents.payload })
+        .from(runEvents).innerJoin(runs, eq(runEvents.runId, runs.id))
+        .leftJoin(runSteps, eq(runEvents.runStepId, runSteps.id))
+        .leftJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
+        .where(and(eq(runs.workflowId, workflowId), eq(runs.workflowVersionId, version.id),
+          gte(runEvents.createdAt, new Date(Date.now() - 90_000))))
+        .orderBy(desc(runEvents.createdAt)).limit(150),
+      db.select({ stepKey: workflowSteps.key, status: runSteps.status, startedAt: runSteps.startedAt })
+        .from(runSteps).innerJoin(runs, eq(runSteps.runId, runs.id))
+        .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
+        .where(and(eq(runs.workflowId, workflowId), eq(runs.workflowVersionId, version.id),
+          inArray(runs.status, ["running", "waiting_approval"]),
+          inArray(runSteps.status, ["running", "retrying", "waiting_approval"])))
+        .orderBy(desc(runSteps.startedAt)).limit(100),
+    ]);
+    return {
+      events: events.reverse().map((event) => ({ id: event.id, type: event.type,
+        createdAt: event.createdAt, stepKey: event.stepKey,
+        decision: typeof event.decision?.decision === "string" ? event.decision.decision : null })),
+      active,
+      sources: sourceSteps.flatMap((step, index) => {
+        const raw = markers[index];
+        if (!raw) return [];
+        try { const marker = JSON.parse(raw) as { status: string; at: string; count?: number };
+          return [{ stepKey: step.key, ...marker }]; } catch { return []; }
+      }),
+    };
+  });
 
   app.get("/workflows/:workflowId/activity", async (request, reply) => {
     const { workflowId } = z.object({ workflowId: z.string().uuid() }).parse(request.params);
