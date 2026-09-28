@@ -25,7 +25,7 @@ type WorkflowUsage = { totals: UsageTotals; byStep: Array<UsageTotals & { stepKe
 type LiveState = {
   events: Array<{ id: string; type: string; stepKey: string | null; createdAt: string; decision: string | null }>;
   active: Array<{ stepKey: string; status: string }>;
-  sources: Array<{ stepKey: string; status: string; at: string; count?: number }>;
+  sources: Array<{ stepKey: string; status: string; at: string; count?: number; queuedCount?: number }>;
   publications: Array<{ id: string; stepKey: string; status: string; updatedAt: string; publishedAt: string | null }>;
 };
 const faNumber = (value: number | string) => Number(value).toLocaleString("fa-IR");
@@ -101,6 +101,7 @@ export function WorkflowBuilder() {
   const dragRef = useRef<{ key: string; startX: number; startY: number; x: number; y: number } | null>(null);
   const seenLiveEvents = useRef(new Set<string>());
   const seenPublicationStates = useRef(new Map<string, string>());
+  const seenSourceOutputs = useRef(new Set<string>());
   const openedAt = useRef(Date.now());
   const [steps, setSteps] = useState<Step[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -166,6 +167,8 @@ export function WorkflowBuilder() {
     if (recent?.type === "approval_requested") return { label: "در انتظار تأیید شما", state: "waiting" };
     if (recent?.type === "step_completed") return { label: "این مرحله خروجی داد", state: "completed" };
     if (source?.status === "error") return { label: "خواندن منبع ناموفق بود", state: "failed" };
+    if (source?.status === "queued") return { label: `${faNumber(source.queuedCount ?? 0)} خبر تازه وارد صف شد`, state: "completed" };
+    if (source?.status === "no_new") return { label: `${faNumber(source.count ?? 0)} خوانده شد · خبر تازه: ۰`, state: "idle" };
     if (source?.status === "read") return { label: `${faNumber(source.count ?? 0)} مورد خوانده شد`, state: "completed" };
     return null;
   };
@@ -181,6 +184,7 @@ export function WorkflowBuilder() {
   useEffect(() => {
     seenLiveEvents.current.clear();
     seenPublicationStates.current.clear();
+    seenSourceOutputs.current.clear();
     openedAt.current = Date.now();
     setLive(null); setEdgePulses({});
     if (!workflowId) return;
@@ -205,6 +209,15 @@ export function WorkflowBuilder() {
         const snapshot = await response.json() as LiveState;
         if (!active) return;
         setLive(snapshot);
+        for (const source of snapshot.sources) {
+          if (source.status !== "queued" || !source.queuedCount) continue;
+          const outputId = `${source.stepKey}:${source.at}`;
+          if (seenSourceOutputs.current.has(outputId)) continue;
+          seenSourceOutputs.current.add(outputId);
+          if (new Date(source.at).getTime() < openedAt.current - 10_000) continue;
+          for (const edge of edgesRef.current.filter((item) => item.sourceKey === source.stepKey))
+            flash(`${edge.sourceKey}→${edge.targetKey}`, `source-${outputId}`);
+        }
         for (const event of snapshot.events) {
           if (seenLiveEvents.current.has(event.id)) continue;
           seenLiveEvents.current.add(event.id);

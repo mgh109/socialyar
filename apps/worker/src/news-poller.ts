@@ -202,14 +202,14 @@ async function poll() {
           await connection.set(liveKey, JSON.stringify({ status: "reading", at: new Date().toISOString() }), "EX", 45);
           try { const result = await sourceCandidates(source, workflow.workspaceId);
             await connection.set(liveKey, JSON.stringify({ status: "read", at: new Date().toISOString(), count: result.items.length }), "EX", 12);
-            return { source, ...result, queued: 0, queueError: "" }; }
+            return { source, ...result, queued: 0, queueError: "", polled: true }; }
           catch (error) {
             console.error(`Source poll failed for ${source.key}`, error);
             await connection.set(liveKey, JSON.stringify({ status: "error", at: new Date().toISOString() }), "EX", 12);
             if (source.type === "api_source") await connection.set(`source-health:${workflow.id}:${version.id}:${source.key}`,
               JSON.stringify({ checkedAt: new Date().toISOString(), status: "error",
                 error: error instanceof Error ? error.message : String(error) }), "EX", 604800);
-            return { source, items: [] as NewsCandidate[], queued: 0, queueError: "" };
+            return { source, items: [] as NewsCandidate[], queued: 0, queueError: "", polled: false };
           }
         }));
         let queuedCount = 0;
@@ -230,7 +230,13 @@ async function poll() {
             }
           }
         }
-        for (const batch of batches) if (batch.source.type === "api_source" && "stats" in batch && batch.stats) {
+        for (const batch of batches) {
+          if (batch.polled) {
+            await connection.set(`source-live:${workflow.id}:${version.id}:${batch.source.key}`,
+              JSON.stringify({ status: batch.queueError ? "error" : batch.queued ? "queued" : "no_new",
+                at: new Date().toISOString(), count: batch.items.length, queuedCount: batch.queued }), "EX", 20);
+          }
+          if (batch.source.type !== "api_source" || !("stats" in batch) || !batch.stats) continue;
           await connection.set(`source-health:${workflow.id}:${version.id}:${batch.source.key}`,
             JSON.stringify({ checkedAt: new Date().toISOString(), status: batch.queueError ? "error" : "ok",
               ...batch.stats, queuedCount: batch.queued, ...(batch.queueError ? { error: `خطا در صف: ${batch.queueError}` } : {}) }), "EX", 604800);

@@ -259,13 +259,13 @@ export async function workflowRoutes(app: FastifyInstance) {
         .from(runEvents).innerJoin(runs, eq(runEvents.runId, runs.id))
         .leftJoin(runSteps, eq(runEvents.runStepId, runSteps.id))
         .leftJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
-        .where(and(eq(runs.workflowId, workflowId), eq(runs.workflowVersionId, version.id),
+        .where(and(eq(runs.workflowId, workflowId),
           gte(runEvents.createdAt, new Date(Date.now() - 90_000))))
         .orderBy(desc(runEvents.createdAt)).limit(150),
       db.select({ stepKey: workflowSteps.key, status: runSteps.status, startedAt: runSteps.startedAt })
         .from(runSteps).innerJoin(runs, eq(runSteps.runId, runs.id))
         .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
-        .where(and(eq(runs.workflowId, workflowId), eq(runs.workflowVersionId, version.id),
+        .where(and(eq(runs.workflowId, workflowId),
           inArray(runs.status, ["running", "waiting_approval"]),
           inArray(runSteps.status, ["running", "retrying", "waiting_approval"])))
         .orderBy(desc(runSteps.startedAt)).limit(100),
@@ -274,7 +274,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         .from(publications).innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
         .innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id))
         .innerJoin(runs, eq(contentItems.runId, runs.id))
-        .where(and(eq(runs.workflowId, workflowId), eq(runs.workflowVersionId, version.id),
+        .where(and(eq(runs.workflowId, workflowId),
           or(eq(publications.status, "publishing"), gte(publications.updatedAt, new Date(Date.now() - 90_000)))))
         .orderBy(desc(publications.updatedAt)).limit(50),
     ]);
