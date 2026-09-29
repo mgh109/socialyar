@@ -248,12 +248,12 @@ export async function workflowRoutes(app: FastifyInstance) {
     if (!workflow) return reply.code(404).send({ error: "workflow_not_found" });
     const [version] = await db.select({ id: workflowVersions.id, snapshot: workflowVersions.snapshot }).from(workflowVersions)
       .where(and(eq(workflowVersions.workflowId, workflowId), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
-    if (!version) return { events: [], active: [], sources: [], publications: [], nextPollAt: null };
+    if (!version) return { events: [], active: [], sources: [], publications: [], filters: [], nextPollAt: null };
     const sourceSteps = await db.select({ key: workflowSteps.key }).from(workflowSteps)
       .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source"])));
     const markerKeys = sourceSteps.map((step) => `source-live:${workflowId}:${version.id}:${step.key}`);
     const pollKey = `news-poll:${workflowId}:${version.id}`;
-    const [markers, events, active, publicationRows] = await Promise.all([
+    const [markers, events, active, publicationRows, filterRows] = await Promise.all([
       redis.mget(...markerKeys, pollKey),
       db.select({ id: runEvents.id, type: runEvents.type, createdAt: runEvents.createdAt,
         stepKey: workflowSteps.key, decision: runEvents.payload })
@@ -278,7 +278,21 @@ export async function workflowRoutes(app: FastifyInstance) {
         .where(and(eq(runs.workflowId, workflowId),
           or(eq(publications.status, "publishing"), gte(publications.updatedAt, new Date(Date.now() - 90_000)))))
         .orderBy(desc(publications.updatedAt)).limit(50),
+      db.select({ stepKey: workflowSteps.key, runId: runSteps.runId, status: runSteps.status,
+        output: runSteps.output, finishedAt: runSteps.finishedAt })
+        .from(runSteps).innerJoin(runs, eq(runSteps.runId, runs.id))
+        .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
+        .where(and(eq(runs.workflowId, workflowId), eq(workflowSteps.type, "filter"),
+          inArray(runSteps.status, ["completed", "skipped"])))
+        .orderBy(desc(runSteps.finishedAt)).limit(100),
     ]);
+    const latestFilters = new Map<string, { stepKey: string; runId: string; passed: boolean; title: string | null; at: Date | null }>();
+    for (const row of filterRows) {
+      if (latestFilters.has(row.stepKey)) continue;
+      latestFilters.set(row.stepKey, { stepKey: row.stepKey, runId: row.runId,
+        passed: row.status === "completed", title: typeof row.output?.title === "string" ? row.output.title : null,
+        at: row.finishedAt });
+    }
     const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
     const intervalMinutes = Number.isInteger(configured) && configured >= 1 && configured <= 10080 ? configured : 5;
     const startedAt = Number(markers[sourceSteps.length]);
@@ -290,6 +304,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         createdAt: event.createdAt, stepKey: event.stepKey,
         decision: typeof event.decision?.decision === "string" ? event.decision.decision : null })),
       active,
+      filters: [...latestFilters.values()],
       publications: publicationRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ?
         [{ id: row.id, stepKey: row.metadata.publishStepKey, status: row.status,
           updatedAt: row.updatedAt, publishedAt: row.publishedAt }] : []),

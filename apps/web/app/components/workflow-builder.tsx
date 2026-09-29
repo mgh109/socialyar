@@ -26,6 +26,7 @@ type LiveState = {
   nextPollAt: string | null;
   events: Array<{ id: string; type: string; stepKey: string | null; createdAt: string; decision: string | null }>;
   active: Array<{ stepKey: string; status: string }>;
+  filters: Array<{ stepKey: string; runId: string; passed: boolean; title: string | null; at: string | null }>;
   sources: Array<{ stepKey: string; status: string; at: string; count?: number; queuedCount?: number }>;
   publications: Array<{ id: string; stepKey: string; status: string; updatedAt: string; publishedAt: string | null }>;
 };
@@ -177,6 +178,9 @@ export function WorkflowBuilder() {
     if (recent?.type === "step_failed") return { label: "خطا؛ جزئیات در آخرین اجرا", state: "failed" };
     if (recent?.type === "retry") return { label: "تلاش دوباره...", state: "running" };
     if (recent?.type === "approval_requested") return { label: "در انتظار تأیید شما", state: "waiting" };
+    const filterResult = step.type === "filter" ? live?.filters?.find((item) => item.stepKey === step.key) : null;
+    if (filterResult) return { label: filterResult.passed ? "آخرین خبر عبور کرد" : "آخرین خبر رد شد",
+      state: filterResult.passed ? "completed" : "filtered" };
     if (recent?.type === "step_completed") return { label: "این مرحله خروجی داد", state: "completed" };
     if (source?.status === "error") return { label: "خواندن منبع ناموفق بود", state: "failed" };
     if (source?.status === "queued") return { label: `${faNumber(source.queuedCount ?? 0)} خبر تازه وارد صف شد`, state: "completed" };
@@ -629,6 +633,10 @@ export function WorkflowBuilder() {
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
           {step.type === "publish" ? <div className="graph-source-footer">{step.config.accountId ? "● آماده" : "○ تنظیم‌نشده"} · {publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "انتشار"}</div> : null}
+          {step.type === "filter" && live?.filters?.some((item) => item.stepKey === step.key) ?
+            <div className={`graph-source-footer graph-filter-footer ${live.filters.find((item) => item.stepKey === step.key)?.passed ? "passed" : "rejected"}`}>
+              {live.filters.find((item) => item.stepKey === step.key)?.passed ? "✓ عبور کرد" : "⊘ رد شد"} · آخرین خبر
+            </div> : null}
           {["ai", "comment_decision"].includes(step.type) && usage?.byStep.find((item) => item.stepKey === step.key) ?
             <div className="graph-source-footer graph-usage-footer">مصرف {usagePeriod === "7d" ? "۷ روز" : usagePeriod === "all" ? "کل" : "۳۰ روز"} · 
               {faNumber(usage.byStep.find((item) => item.stepKey === step.key)!.requests)} درخواست</div> : null}
@@ -649,6 +657,15 @@ export function WorkflowBuilder() {
             <option value="review">بررسی انسانی</option></select></label> : null}
         <button type="button" onClick={() => { const edge = edges.find((item) => edgeId(item) === selectedEdge); if (edge) removeEdge(edge); }}>حذف اتصال</button></div> : null}
       {selected ? <><div className="builder-selected-title"><small>کارت انتخاب‌شده</small><strong>{selected.name}</strong></div>
+        {selected.type === "filter" && live?.filters?.find((item) => item.stepKey === selected.key) ? (() => {
+          const result = live.filters.find((item) => item.stepKey === selected.key)!;
+          return <section className={`graph-filter-result ${result.passed ? "passed" : "rejected"}`} aria-label="آخرین نتیجهٔ شرط">
+            <strong>آخرین نتیجه: {result.passed ? "خبر عبور کرد" : "خبر رد شد"}</strong>
+            <span>{result.title || "خبر بدون عنوان"}</span>
+            {result.at ? <small>{new Date(result.at).toLocaleString("fa-IR")}</small> : null}
+            <Link href={`/runs/${result.runId}`}>دیدن جزئیات اجرا ←</Link>
+          </section>;
+        })() : null}
         {["ai", "comment_decision"].includes(selected.type) && workflowId ? <section className="card-usage-report" aria-label="مصرف این کارت">
           <strong>مصرف این کارت · {usagePeriod === "7d" ? "۷ روز اخیر" : usagePeriod === "all" ? "همهٔ زمان‌ها" : "۳۰ روز اخیر"}</strong>
           {selectedUsage ? <><span>{faNumber(selectedUsage.requests)} بار از مدل درخواست شده</span>

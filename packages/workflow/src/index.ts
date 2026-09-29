@@ -162,7 +162,7 @@ export async function executeRun(input: ExecuteRunInput) {
           const text = `${upstream.title ?? ""} ${upstream.text}`.toLocaleLowerCase();
           const matches = words.some((word) => text.includes(word));
           if ((step.config.mode === "exclude" ? !matches : matches) === false) {
-            await db.update(runSteps).set({ status: "skipped", output: { matched: false }, finishedAt: new Date() }).where(eq(runSteps.id, record.id));
+            await db.update(runSteps).set({ status: "skipped", output: { matched: false, title: upstream.title ?? null }, finishedAt: new Date() }).where(eq(runSteps.id, record.id));
             states.set(step.id, "skipped");
             continue;
           }
