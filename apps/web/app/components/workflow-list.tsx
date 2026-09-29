@@ -81,7 +81,8 @@ export function WorkflowList() {
           <h1 id="workflow-library-title">جریان‌های من</h1>
           <p>جریان‌های ذخیره‌شده را باز کن، ویرایش کن یا اجرا کن.</p>
         </div>
-        <Link className="primary-link" href="/workflows/new">+ جریان جدید</Link>
+        <div className="workflow-create-actions"><Link href="/workflows/new?ai=1">✦ ساخت با هوش مصنوعی</Link>
+          <Link className="primary-link" href="/workflows/new">+ جریان جدید</Link></div>
       </div>
       <nav className="workflow-shortcuts" aria-label="بخش‌های هور+">
         <Link href="/approvals">تأیید محتوا</Link>
