@@ -13,6 +13,7 @@ type Workflow = {
   updatedAt: string;
 };
 type Publication = { publication: { status: string; createdAt: string; publishedAt: string | null; externalUrl: string | null }; content: { title: string | null }; variant: { channel: string } };
+const statusLabels: Record<string, string> = { active: "فعال", draft: "پیش‌نویس", paused: "متوقف‌شده", inactive: "غیرفعال", archived: "بایگانی‌شده" };
 
 export function WorkflowList() {
   const [items, setItems] = useState<Workflow[]>([]);
@@ -92,14 +93,25 @@ export function WorkflowList() {
       <div className="workflow-library-grid">
         {items.map((workflow) => (
           <article className="card workflow-library-card" key={workflow.id}>
-            <span className="index">نسخه {workflow.currentVersion} · {workflow.status}</span>
+            <Link className="workflow-card-link" href={`/workflows/new?id=${workflow.id}`} aria-label={`باز کردن جریان ${workflow.name}`} />
+            <div className="workflow-card-top">
+              <span className={`workflow-card-status ${workflow.status === "active" ? "is-active" : ""}`}><i aria-hidden="true" />{statusLabels[workflow.status] ?? "وضعیت نامشخص"}</span>
+              <details className="workflow-card-menu" onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => { if (event.key === "Escape") event.currentTarget.open = false; }}
+                onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}>
+                <summary aria-label={`گزینه‌های جریان ${workflow.name}`} title="گزینه‌های جریان">⋯</summary>
+                <div className="workflow-card-popover">
+                  <button type="button" disabled={deletingId !== null} onClick={() => void deleteWorkflow(workflow)} aria-label={`حذف جریان ${workflow.name}`}>
+                    {deletingId === workflow.id ? "در حال حذف..." : "حذف جریان"}
+                  </button>
+                </div>
+              </details>
+            </div>
             <h2>{workflow.name}</h2>
-            <p>{workflow.description || "توضیحی ثبت نشده"}</p>
+            <p>{workflow.description || "هنوز توضیحی برای این جریان ثبت نشده است."}</p>
             <div className="workflow-library-actions">
-              <Link className="workflow-library-action" href={`/workflows/new?id=${workflow.id}`}>باز کردن جریان ←</Link>
-              <button type="button" className="workflow-delete" disabled={deletingId !== null} onClick={() => void deleteWorkflow(workflow)} aria-label={`حذف جریان ${workflow.name}`}>
-                {deletingId === workflow.id ? "در حال حذف..." : "حذف"}
-              </button>
+              <span className="workflow-card-version">نسخهٔ {workflow.currentVersion.toLocaleString("fa-IR")}</span>
+              <span className="workflow-library-action" aria-hidden="true">باز کردن جریان ←</span>
             </div>
           </article>
         ))}
