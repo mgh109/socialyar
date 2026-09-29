@@ -1391,6 +1391,14 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .graph-node.node-completed .graph-role-label { color:var(--green); }
 .graph-node.node-failed .graph-role-label { color:var(--red); }
 .graph-node.node-waiting .graph-role-label { color:var(--amber); }
+.graph-node.node-filtered .graph-role-label,.graph-filter-footer.rejected { color:var(--amber); }
+.graph-filter-footer.passed { color:var(--green); }
+.graph-filter-result { display:flex; flex-direction:column; gap:5px; padding:11px 12px; margin-bottom:16px; border:1px solid var(--border); border-radius:9px; background:var(--panel2); font-size:12px; line-height:1.6; }
+.graph-filter-result.passed strong { color:var(--green); }
+.graph-filter-result.rejected strong { color:var(--amber); }
+.graph-filter-result span { overflow-wrap:anywhere; }
+.graph-filter-result small { color:var(--muted); }
+.graph-filter-result a { color:var(--accent-text); font-weight:600; }
 .graph-source-schedule { display:flex; align-items:center; justify-content:space-between; gap:5px; font-size:10px; white-space:nowrap; }
 .graph-source-schedule span:last-child { direction:rtl; font-variant-numeric:tabular-nums; color:var(--accent-text); }
 @keyframes node-spin { to { transform:rotate(360deg); } }
