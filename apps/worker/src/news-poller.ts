@@ -128,7 +128,7 @@ async function sourceCandidates(source: typeof workflowSteps.$inferSelect, works
         uniqueId: `api-feedback:${connection.id}:${source.key}:${groupId}:${fingerprint}`,
         context, comments });
     }
-    return { items: groups, stats };
+    return { items: source.config.includeIndividual === true ? [...groups, ...parsed.reverse()] : groups, stats };
   }
   const kind = source.config.sourceKind;
   const urls = kind === "rss" ? [source.config.feedUrl] :
@@ -213,11 +213,12 @@ async function poll() {
           }
         }));
         let queuedCount = 0;
+        const commentCap = 60;
         // Round robin keeps one busy source from starving the others.
-        for (let index = 0; index < 100 && queuedCount < 15; index++) {
+        for (let index = 0; index < 100 && queuedCount < commentCap + 15; index++) {
           for (const batch of batches) {
             const item = batch.items[index];
-            if (!item || queuedCount >= 15) continue;
+            if (!item || batch.queued >= (batch.source.type === "api_source" ? commentCap : 15)) continue;
             try {
               if (await queueItem(workflow.id, version.id, item.title, item.text, item.url,
                 item.imageUrl, item.legacyId, item.uniqueId, batch.source.key,
