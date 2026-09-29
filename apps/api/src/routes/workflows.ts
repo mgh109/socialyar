@@ -2,11 +2,15 @@ import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { generateWorkflowBlueprint, type AIConnection, type AIRequestUsage } from "@socialyar/ai";
 import { graphProblem } from "@socialyar/workflow/graph";
 import {
   getDb,
-  aiSettings,
   aiProfiles,
+  aiSettings,
+  aiUsageEvents,
+  ensureAIUsageStorage,
+  decryptSecret,
   apiConnections,
   ensureCommentStorage,
   approvals,
@@ -61,6 +65,17 @@ const updateWorkflowSchema = z.object({
   steps: z.array(stepSchema),
   connections: z.array(connectionSchema).default([]),
 });
+
+const blueprintSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  nodes: z.array(z.object({ id: z.string().min(1).max(40), type: z.enum([
+    "rss_source", "api_source", "manual_input", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action",
+  ]), name: z.string().trim().min(1).max(70), config: z.record(z.unknown()).default({}) })).min(2).max(12),
+  edges: z.array(z.object({ from: z.string(), to: z.string(), decision: z.enum(["approve", "reject", "reply", "review"]).optional() })).min(1).max(24),
+});
+const generatorInputSchema = z.object({ request: z.string().trim().min(20).max(4000),
+  profileId: z.union([z.literal("default"), z.string().uuid()]).optional() });
+const safeText = (value: unknown, max = 1000) => typeof value === "string" ? value.trim().slice(0, max) : "";
 
 async function insertGraph(
   tx: ReturnType<typeof getDb>,
@@ -240,6 +255,95 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
 export async function workflowRoutes(app: FastifyInstance) {
   const db = getDb();
   app.addHook("onRequest", app.authenticate);
+
+  app.post("/workflows/generate", async (request, reply) => {
+    const input = generatorInputSchema.parse(request.body);
+    const workspaceId = request.auth.workspaceId;
+    const [profile] = input.profileId && input.profileId !== "default" ? await db.select().from(aiProfiles)
+      .where(and(eq(aiProfiles.id, input.profileId), eq(aiProfiles.workspaceId, workspaceId))).limit(1) :
+      await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
+    if (!profile) return reply.code(409).send({ error: "ai_not_configured" });
+    const [accountRows, connectionRows] = await Promise.all([
+      db.select({ id: socialAccounts.id, label: socialAccounts.displayName, channel: socialAccounts.channel })
+        .from(socialAccounts).where(and(eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.isActive, true))),
+      db.select({ id: apiConnections.id, label: apiConnections.name }).from(apiConnections)
+        .where(eq(apiConnections.workspaceId, workspaceId)),
+    ]);
+    const accounts = accountRows.filter((item) => ["eitaa", "telegram", "website"].includes(item.channel));
+    const validAccounts = new Set(accounts.map((item) => item.id));
+    const validConnections = new Set(connectionRows.map((item) => item.id));
+    const usageReport: { value: AIRequestUsage | null } = { value: null };
+    let raw: string;
+    try {
+      raw = await generateWorkflowBlueprint({ provider: profile.provider as AIConnection["provider"],
+        model: profile.model, token: decryptSecret(profile.encryptedToken), onUsage: async (report) => {
+          usageReport.value = report;
+          try {
+            await ensureAIUsageStorage();
+            await db.insert(aiUsageEvents).values({ workspaceId, ...report });
+          } catch (error) { request.log.error({ error }, "Could not record workflow generation usage"); }
+        } }, input.request, {
+        accounts: accounts.map((item) => ({ id: item.id, label: `${item.label || item.channel} (${item.channel})` })),
+        apiConnections: connectionRows.map((item) => ({ id: item.id, label: item.label })),
+      });
+    } catch (error) {
+      request.log.error({ error }, "Workflow generation failed");
+      return reply.code(502).send({ error: "ai_provider_error" });
+    }
+    let blueprint: z.infer<typeof blueprintSchema>;
+    try { blueprint = blueprintSchema.parse(JSON.parse(raw)); }
+    catch { return reply.code(502).send({ error: "ai_graph_invalid", usage: usageReport.value }); }
+    const ids = new Set(blueprint.nodes.map((node) => node.id));
+    if (ids.size !== blueprint.nodes.length) return reply.code(502).send({ error: "ai_graph_invalid", usage: usageReport.value });
+    const connections = blueprint.edges.map((edge) => ({ sourceKey: edge.from, targetKey: edge.to,
+      condition: edge.decision ? { decision: edge.decision } : null }));
+    if (graphProblem(blueprint.nodes.map((node) => ({ key: node.id, type: node.type })), connections, true) ||
+      blueprint.edges.some((edge) => edge.decision && blueprint.nodes.find((node) => node.id === edge.from)?.type !== "comment_decision"))
+      return reply.code(502).send({ error: "ai_graph_invalid", usage: usageReport.value });
+    const depths = new Map(blueprint.nodes.filter((node) => ["rss_source", "api_source", "manual_input"].includes(node.type))
+      .map((node) => [node.id, 0]));
+    for (let i = 0; i < blueprint.nodes.length; i++) for (const edge of blueprint.edges) {
+      const depth = depths.get(edge.from);
+      if (depth !== undefined) depths.set(edge.to, Math.max(depths.get(edge.to) ?? 0, depth + 1));
+    }
+    const maxDepth = Math.max(...depths.values());
+    const rows = new Map<number, number>();
+    const warnings: string[] = [];
+    const steps = blueprint.nodes.map((node) => {
+      const config = node.config;
+      const kind = ["rss", "eitaa", "bale"].includes(String(config.sourceKind)) ? String(config.sourceKind) : "rss";
+      const accountId = validAccounts.has(String(config.accountId)) ? String(config.accountId) : "";
+      const connectionId = validConnections.has(String(config.connectionId)) ? String(config.connectionId) : "";
+      const text = (key: string, max?: number) => safeText(config[key], max);
+      const suppliedFeed = text("feedUrl", 500);
+      const suppliedChannel = text("channel", 100);
+      const mapped: Record<string, unknown> = node.type === "rss_source" ?
+        kind === "rss" ? { sourceKind: kind, feedUrl: input.request.includes(suppliedFeed) && suppliedFeed ? suppliedFeed : "" } :
+          { sourceKind: kind, channel: input.request.includes(suppliedChannel) && suppliedChannel ? suppliedChannel : "" } :
+        node.type === "filter" ? { keywords: text("keywords", 500), mode: config.mode === "exclude" ? "exclude" : "include" } :
+        node.type === "ai" ? { profileId: input.profileId ?? "default", aiMode: config.aiMode === "feedback" ? "feedback" : "rewrite",
+          instructions: text("instructions", 3000) } :
+        node.type === "comment_decision" ? { profileId: input.profileId ?? "default", rules: text("rules", 3000) } :
+        node.type === "publish" ? { accountId, publishIntervalSeconds: Math.max(30, Math.min(604800,
+          Number.isInteger(config.publishIntervalSeconds) ? Number(config.publishIntervalSeconds) : 30)) } :
+        node.type === "api_source" ? { connectionId, path: text("path", 300) || "/comments", itemsPath: "data.comments",
+          idField: "id", textField: "text", contextField: "context", readMode: ["single", "batch", "post"].includes(String(config.readMode)) ? config.readMode : "single",
+          batchLimit: Math.max(1, Math.min(1000, Number.isInteger(config.batchLimit) ? Number(config.batchLimit) : 10)), postIdField: "postId", postId: text("postId", 100) } :
+        node.type === "api_action" ? { connectionId, path: text("path", 300) || "/comments/moderate",
+          action: ["approve", "reject", "reply"].includes(String(config.action)) ? config.action : "approve", method: "POST",
+          idField: "commentId", statusField: "status", replyField: "reply" } : {};
+      if (node.type === "publish" && !accountId) warnings.push(`مقصد انتشار کارت «${node.name}» را انتخاب کن.`);
+      if (["api_source", "api_action"].includes(node.type) && !connectionId) warnings.push(`اتصال کارت «${node.name}» را انتخاب کن.`);
+      if (node.type === "rss_source" && !(mapped.feedUrl || mapped.channel)) warnings.push(`نشانی کارت «${node.name}» را وارد کن.`);
+      if (node.type === "filter" && !mapped.keywords) warnings.push(`واژه‌های شرط «${node.name}» را وارد کن.`);
+      const depth = depths.get(node.id) ?? 0;
+      const row = rows.get(depth) ?? 0; rows.set(depth, row + 1);
+      return { key: node.id, type: node.type, name: node.name, config: mapped,
+        position: { x: 36 + (maxDepth - depth) * 250, y: 130 + row * 185 } };
+    });
+    return { name: blueprint.name, steps, connections, warnings,
+      usage: usageReport.value };
+  });
 
   app.get("/workflows/:workflowId/live", async (request, reply) => {
     const { workflowId } = z.object({ workflowId: z.string().uuid() }).parse(request.params);

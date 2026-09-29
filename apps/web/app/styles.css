@@ -1042,6 +1042,8 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .workflow-library-card h2 { margin:16px 0 6px; font-size:17px; line-height:1.5; }
 .workflow-library-card p { color:var(--muted); line-height:1.6; margin-bottom:20px; overflow-wrap:anywhere; }
 .workflow-card-version { color:var(--muted); font-size:12px; }
+.workflow-create-actions { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
+.workflow-create-actions > a:first-child { border:1px solid var(--green); border-radius:8px; padding:10px 13px; color:var(--accent-text); background:var(--panel); font-size:13px; font-weight:600; }
 .workflow-library-card:hover .workflow-library-action { text-decoration:underline; }
 .workflow-shortcuts { display:flex; flex-wrap:wrap; gap:10px; margin:22px 0 0; }
 .workflow-shortcuts a { border:1px solid var(--border); border-radius:8px; background:var(--panel); padding:9px 14px; font-size:14px; }
@@ -1293,6 +1295,23 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .graph-palette summary:hover,.graph-icon-action:hover,.graph-activity summary:hover { border-color:var(--green); color:var(--accent-text); }
 .graph-icon-action { cursor:pointer; min-width:34px; }
 .graph-icon-action:disabled { opacity:.5; cursor:default; }
+.graph-ai-create { border-color:var(--green); color:var(--accent-text); }
+.workflow-generator-backdrop { position:fixed; inset:0; z-index:100; display:flex; justify-content:center; align-items:center; padding:18px; background:rgba(10,12,20,.64); }
+.workflow-generator { width:min(620px,100%); max-height:min(92vh,850px); overflow:auto; display:flex; flex-direction:column; gap:15px; padding:23px; border:1px solid var(--border); border-radius:15px; background:var(--panel); box-shadow:0 20px 60px rgba(0,0,0,.3); }
+.workflow-generator-heading { display:flex; align-items:start; justify-content:space-between; gap:10px; }
+.workflow-generator-heading h2 { margin:3px 0 0; font-size:21px; }
+.workflow-generator-heading small,.workflow-generator > p { color:var(--muted); }
+.workflow-generator-heading button { border:0; background:transparent; color:var(--muted); font-size:25px; cursor:pointer; }
+.workflow-generator > p { margin:0; line-height:1.8; font-size:13px; }
+.workflow-generator label { display:grid; gap:7px; font-size:13px; }
+.workflow-generator textarea,.workflow-generator select { width:100%; border:1px solid var(--border); border-radius:9px; background:var(--panel2); color:var(--text); padding:11px 12px; font:inherit; }
+.workflow-generator textarea { min-height:135px; resize:vertical; line-height:1.9; }
+.workflow-generator > button,.workflow-generator-result > button { align-self:flex-start; }
+.workflow-generator-error { color:var(--red) !important; }
+.workflow-generator-cost,.workflow-generator-result { display:flex; flex-direction:column; gap:7px; padding:13px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); font-size:13px; }
+.workflow-generator-cost small { color:var(--muted); }
+.workflow-generator-result ol { margin:3px 0; padding-inline-start:22px; display:flex; flex-wrap:wrap; gap:6px 25px; }
+.workflow-generator-warnings { display:flex; flex-direction:column; gap:4px; color:var(--amber); font-size:12px; }
 .graph-canvas-status { color:var(--muted); }
 .graph-canvas-status.active { color:var(--accent-text); }
 .graph-activity { position:relative; direction:rtl; }

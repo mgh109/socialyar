@@ -9,6 +9,17 @@ export type AIRequestUsage = { provider: AIConnection["provider"]; model: string
 export type AIConnection = { provider: "openai" | "openrouter" | "gapgpt"; model: string; token: string;
   onUsage?: (usage: AIRequestUsage) => Promise<void> };
 
+export async function generateWorkflowBlueprint(connection: AIConnection, request: string, available: {
+  accounts: Array<{ id: string; label: string }>;
+  apiConnections: Array<{ id: string; label: string }>;
+}) {
+  const raw = await chatCompletion(connection, [
+    { role: "system", content: `You design a Persian news or comment automation workflow. Respond with one JSON object only, no markdown. Shape: {"name":"Persian short name","nodes":[{"id":"unique-short-id","type":"rss_source|api_source|manual_input|filter|ai|comment_decision|human_approval|draft|publish|api_action","name":"Persian label","config":{}}],"edges":[{"from":"id","to":"id","decision":"approve|reject|reply|review (only for comment_decision outputs)"}]}. 2 to 12 nodes. Every non-source node needs an incoming edge; every branch ends at draft, publish or api_action; no cycles or edges into sources. Source kinds: rss/eitaa/bale with feedUrl/channel. Filter: keywords and mode include/exclude. AI: aiMode rewrite/feedback, instructions. Comment decision: rules. API source: connectionId, path, readMode single/batch/post, batchLimit. API action: connectionId, path, action approve/reject/reply. Publish: accountId and publishIntervalSeconds (minimum 30). Use only account and API connection IDs given below. Never invent URLs, channel identifiers, credentials or IDs. If a required value was not supplied, leave it empty in config; the user will complete the draft. If no output account is identified, end with draft. Prefer human approval before publishing when the request asks for review. Available accounts: ${JSON.stringify(available.accounts)}. Available API connections: ${JSON.stringify(available.apiConnections)}.` },
+    { role: "user", content: request.slice(0, 4000) },
+  ]);
+  return raw.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
+}
+
 export async function generateNewsDraft(connection: AIConnection, article: { title: string; text: string; url?: string }, instructions?: string) {
   return chatCompletion(connection, [
     { role: "system", content: `شما دبیر خبر فارسی هستید. فقط بر اساس متن ورودی، خلاصه‌ای کوتاه، دقیق و بی‌طرف بنویس. واقعیت یا نقل‌قول تازه نساز. اگر اطلاعات کافی نیست، همین را شفاف بگو.${instructions?.trim() ? `\nدستورهای سبک و قالب کاربر (در صورت تعارض با دقت و صحت خبر، دقت مقدم است):\n${instructions.trim().slice(0, 3000)}` : ""}` },
