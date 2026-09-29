@@ -181,7 +181,7 @@ export async function runRoutes(app: FastifyInstance) {
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
     const { action, stepKey, edit } = z.object({ action: z.enum(["approve", "reject"]), stepKey: z.string().optional(),
       edit: z.object({ title: z.string().trim().max(300).nullable().optional(),
-        text: z.string().trim().min(1).max(20000) }).optional() }).parse(request.body);
+        text: z.string().trim().min(1).max(20000).optional(), reply: z.string().trim().min(1).max(3000).optional() }).optional() }).parse(request.body);
     const [owned] = await db.select({ run: runs }).from(runs)
       .innerJoin(workflows, eq(runs.workflowId, workflows.id))
       .where(and(eq(runs.id, runId), eq(workflows.workspaceId, request.auth.workspaceId))).limit(1);
@@ -193,6 +193,8 @@ export async function runRoutes(app: FastifyInstance) {
       .where(and(eq(runSteps.runId, runId), eq(runSteps.status, "waiting_approval"),
         ...(stepKey ? [eq(workflowSteps.key, stepKey)] : []))).limit(1);
     if (!pending) return reply.code(409).send({ error: "approval_step_not_found" });
+    if (action === "approve" && pending.step.output?.decision === "reply" &&
+      !(edit?.reply || pending.step.output.reply)) return reply.code(409).send({ error: "reply_text_required" });
     const next = "queued";
     const [claimed] = await db.update(runs).set({ status: next, finishedAt: null })
       .where(and(eq(runs.id, runId), eq(runs.status, "waiting_approval"))).returning();

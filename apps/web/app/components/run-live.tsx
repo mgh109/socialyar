@@ -38,7 +38,8 @@ export function RunLive({ runId }: { runId: string }) {
   const [run, setRun] = useState<RunData | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [steps, setSteps] = useState<Array<{ key: string; name: string; type: string; status: string | null;
-    output: { text?: string; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } } | null;
+    output: { text?: string; reply?: string; commentId?: string;
+      feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } } | null;
     error: { message?: string } | null; attempt: number | null }>>([]);
   const [connected, setConnected] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
@@ -149,6 +150,7 @@ export function RunLive({ runId }: { runId: string }) {
             <div className="run-output-ready" key={step.key}>
               <strong>{step.name} · منتظر تصمیم شما</strong>
               {step.output?.text ? <p>{step.output.text.slice(0, 700)}</p> : null}
+              {step.output?.reply ? <p>پاسخ پیشنهادی: {step.output.reply}</p> : null}
               <button className="primary-button" disabled={actionBusy} onClick={() => void resolve("approve", step.key)}>تأیید این شاخه</button>
               <button className="ghost-button" disabled={actionBusy} onClick={() => void resolve("reject", step.key)}>رد این شاخه</button>
               {actionError ? <span role="alert">{actionError}</span> : null}
