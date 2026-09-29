@@ -13,6 +13,8 @@ type Edge = { sourceKey: string; targetKey: string; condition?: { decision?: str
 type ApiConnection = { id: string; name: string; baseUrl: string; authType: "bearer" | "api_key"; headerName: string | null };
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 type AIProfile = { id: string; name: string; provider: string; model: string };
+type GeneratedBlueprint = { name: string; steps: Step[]; connections: Edge[]; warnings: string[];
+  usage: { provider: string; model: string; inputTokens: number | null; outputTokens: number | null; costMicros: number | null } | null };
 type SourcePreview = { status: "ok"; rawCount: number; matchedCount: number; selectedCount: number;
   validCount: number; pagesFetched: number; capped: boolean; availablePaths: string[]; samples: Array<{ id: string; text: string }> };
 type SourceHealth = { status: "ok" | "error" | "not_checked"; checkedAt?: string; error?: string;
@@ -132,6 +134,13 @@ export function WorkflowBuilder() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [aiReady, setAiReady] = useState(false);
   const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([]);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [generatorRequest, setGeneratorRequest] = useState("");
+  const [generatorProfile, setGeneratorProfile] = useState("default");
+  const [generatorBusy, setGeneratorBusy] = useState(false);
+  const [generatorError, setGeneratorError] = useState("");
+  const [generated, setGenerated] = useState<GeneratedBlueprint | null>(null);
+  const [generationUsage, setGenerationUsage] = useState<GeneratedBlueprint["usage"]>(null);
   const [apiConnections, setApiConnections] = useState<ApiConnection[]>([]);
   const [connectionFormOpen, setConnectionFormOpen] = useState(false);
   const [connectionEditingId, setConnectionEditingId] = useState<string | null>(null);
@@ -307,10 +316,13 @@ export function WorkflowBuilder() {
   useEffect(() => {
     void Promise.all([apiFetch("/social-accounts"), apiFetch("/settings/ai/profiles"), apiFetch("/api-connections")]).then(async ([a, ai, apis]) => {
       if (a.ok) setAccounts(await a.json());
-      if (ai.ok) { const data = await ai.json(); setAiProfiles(data.profiles); setAiReady(data.profiles.length > 0); }
+      if (ai.ok) { const data = await ai.json(); setAiProfiles(data.profiles); setAiReady(data.profiles.length > 0);
+        setGeneratorProfile(data.profiles[0]?.id ?? "default"); }
       if (apis.ok) setApiConnections(await apis.json());
     }).catch(() => {});
-    const id = new URLSearchParams(window.location.search).get("id");
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("ai") === "1") setGeneratorOpen(true);
+    const id = params.get("id");
     if (!id) return;
     const refresh = () => void apiFetch(`/workflows/${encodeURIComponent(id)}/activity`)
       .then(async (response) => response.ok ? response.json() : null).then(setActivity).catch(() => {});
@@ -491,6 +503,33 @@ export function WorkflowBuilder() {
     }));
     setMessage("کارت‌ها مرتب شدند؛ تغییرات را ذخیره کن.");
   };
+  const generateWorkflow = async () => {
+    if (generatorRequest.trim().length < 20) { setGeneratorError("هدف جریان را با جزئیات بیشتری بنویس."); return; }
+    setGeneratorBusy(true); setGeneratorError(""); setGenerated(null); setGenerationUsage(null);
+    try {
+      const response = await apiFetch("/workflows/generate", { method: "POST",
+        body: JSON.stringify({ request: generatorRequest.trim(), profileId: generatorProfile }) });
+      const data = await response.json() as GeneratedBlueprint & { error?: string };
+      setGenerationUsage(data.usage ?? null);
+      if (!response.ok) throw new Error(data.error === "ai_not_configured" ? "ابتدا یک مدل و توکن هوش مصنوعی تنظیم کن." :
+        data.error === "ai_graph_invalid" ? "مدل ساختار جریان معتبری برنگرداند. درخواست را واضح‌تر بنویس و دوباره امتحان کن." :
+        "ساخت جریان ناموفق بود. اتصال مدل را بررسی کن و دوباره تلاش کن.");
+      setGenerated(data);
+    } catch (error) { setGeneratorError(error instanceof Error ? error.message : "ساخت جریان ناموفق بود."); }
+    finally { setGeneratorBusy(false); }
+  };
+  const applyGeneratedWorkflow = () => {
+    if (!generated) return;
+    if (steps.length && !window.confirm("کارت‌های فعلی با پیشنهاد جدید جایگزین شوند؟ تغییرات ذخیره‌نشده از دست می‌روند.")) return;
+    const keys = new Map(generated.steps.map((step) => [step.key, freshKey()]));
+    setSteps(generated.steps.map((step) => ({ ...step, key: keys.get(step.key)!,
+      config: ["ai", "comment_decision"].includes(step.type) ? { ...step.config, profileId: generatorProfile } : step.config })));
+    setEdges(generated.connections.map((edge) => ({ ...edge,
+      sourceKey: keys.get(edge.sourceKey)!, targetKey: keys.get(edge.targetKey)! })));
+    setName(generated.name); setSelectedKey(""); setSelectedEdge(null); setAutoEnabled(false);
+    setMessage("پیشنهاد AI روی بوم قرار گرفت؛ تنظیمات کارت‌ها را بررسی و پیش‌نویس را ذخیره کن.");
+    setGeneratorOpen(false);
+  };
   const save = async (active = autoEnabled) => {
     setBusy(true); setMessage("در حال ذخیره...");
     try {
@@ -549,6 +588,7 @@ export function WorkflowBuilder() {
       </div></header>
     <div className="builder-layout"><section className="builder-workspace" aria-label="بوم جریان">
       <div className="graph-frame"><div className="graph-canvas-controls"><div className="graph-canvas-actions">
+        {!workflowId ? <button type="button" className="graph-icon-action graph-ai-create" onClick={() => setGeneratorOpen(true)}>✦ ساخت با هوش مصنوعی</button> : null}
         <div className="graph-palette"><details><summary>+ افزودن کارت</summary><div className="graph-palette-menu">
         {types.map((item) => <button key={item.type} type="button" onClick={(event) => {
           add(item.type); event.currentTarget.closest("details")?.removeAttribute("open");
@@ -574,6 +614,33 @@ export function WorkflowBuilder() {
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
         {activity.run ? <Link href={`/runs/${activity.run.id}`}>دیدن آخرین اجرا و تحلیل ←</Link> : null}
         {activity.publication?.externalUrl ? <a href={activity.publication.externalUrl} target="_blank" rel="noreferrer">دیدن خبر ↗</a> : null}</div></details> : null}</div></div>
+      {generatorOpen && !workflowId ? <div className="workflow-generator-backdrop" role="presentation" onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !generatorBusy) setGeneratorOpen(false);
+      }}><section className="workflow-generator" role="dialog" aria-modal="true" aria-labelledby="workflow-generator-title" dir="rtl">
+        <div className="workflow-generator-heading"><div><small>دستیار ساخت جریان</small><h2 id="workflow-generator-title">جریانت را توضیح بده</h2></div>
+          <button type="button" aria-label="بستن" onClick={() => setGeneratorOpen(false)} disabled={generatorBusy}>×</button></div>
+        <p>منبع، شرط‌ها، هوش مصنوعی، تأیید انسانی و مقصد را به زبان خودت بنویس. نتیجه به‌صورت پیش‌نویس روی بوم می‌آید.</p>
+        <label><span>مدل سازنده</span><select value={generatorProfile} onChange={(event) => setGeneratorProfile(event.target.value)}>
+          {aiProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}</select></label>
+        {!aiProfiles.length ? <Link href="/settings/ai">ابتدا یک مدل و توکن ثبت کن ←</Link> : null}
+        <label><span>توضیح جریان</span><textarea value={generatorRequest} onChange={(event) => setGeneratorRequest(event.target.value)}
+          placeholder="مثلاً خبرهای ورزشی را از این RSS بخوان، فقط خبرهای فوتبال را نگه دار، با مدل فارسی بازنویسی کن، برای تأیید من بفرست و بعد در کانال ایتا منتشر کن. فاصلهٔ ارسال ۳۰ ثانیه باشد."
+          maxLength={4000} /></label>
+        <button type="button" className="primary-button" onClick={() => void generateWorkflow()} disabled={generatorBusy || !aiProfiles.length}>
+          {generatorBusy ? "در حال طراحی جریان..." : "پیشنهاد ساخت جریان"}</button>
+        {generatorError ? <p className="workflow-generator-error" role="alert">{generatorError}</p> : null}
+        {generationUsage ? <div className="workflow-generator-cost"><strong>مصرف همین درخواست</strong><span>
+          {generationUsage.costMicros === null ? "هزینه توسط سرویس گزارش نشده" :
+            `هزینهٔ گزارش‌شده: ${(generationUsage.costMicros / 1_000_000).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} دلار`}
+        </span><small>ورودی: {generationUsage.inputTokens === null ? "گزارش نشده" : faNumber(generationUsage.inputTokens)} توکن · خروجی: {generationUsage.outputTokens === null ? "گزارش نشده" : faNumber(generationUsage.outputTokens)} توکن</small></div> : null}
+        {generated ? <div className="workflow-generator-result"><strong>{generated.name}</strong>
+          <span>{faNumber(generated.steps.length)} کارت · {faNumber(generated.connections.length)} اتصال</span>
+          <ol>{generated.steps.map((step) => <li key={step.key}>{step.name}</li>)}</ol>
+          {generated.warnings.length ? <div className="workflow-generator-warnings"><strong>قبل از فعال‌سازی تکمیل کن:</strong>
+            {generated.warnings.map((warning, index) => <span key={index}>{warning}</span>)}</div> : null}
+          <button type="button" className="primary-button" onClick={applyGeneratedWorkflow}>نمایش پیش‌نویس روی بوم</button>
+        </div> : null}
+      </section></div> : null}
       <div className="graph-scroll" ref={canvasRef} onPointerUp={(event) => {
         if (connecting && event.target === event.currentTarget) { setConnecting(null); setPointer(null); }
       }}><div className="graph-surface" style={{ width: surfaceWidth, height: surfaceHeight }}>
@@ -638,7 +705,7 @@ export function WorkflowBuilder() {
               {live.filters.find((item) => item.stepKey === step.key)?.passed ? "✓ عبور کرد" : "⊘ رد شد"} · آخرین خبر
             </div> : null}
           {["ai", "comment_decision"].includes(step.type) && usage?.byStep.find((item) => item.stepKey === step.key) ?
-            <div className="graph-source-footer graph-usage-footer">مصرف {usagePeriod === "7d" ? "۷ روز" : usagePeriod === "all" ? "کل" : "۳۰ روز"} · 
+            <div className="graph-source-footer graph-usage-footer">مصرف {usagePeriod === "7d" ? "۷ روز" : usagePeriod === "all" ? "کل" : "۳۰ روز"} ·
               {faNumber(usage.byStep.find((item) => item.stepKey === step.key)!.requests)} درخواست</div> : null}
           {!isTerminal(step) ? <button className={`graph-port output ${connecting === step.key ? "active" : ""}`}
             title="خروجی؛ به ورودی کارت بعدی بکش یا کلیک کن" aria-label={`خروجی ${step.name}`}
