@@ -14,6 +14,7 @@ type ApiConnection = { id: string; name: string; baseUrl: string; authType: "bea
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 type AIProfile = { id: string; name: string; provider: string; model: string };
 type GeneratedBlueprint = { name: string; steps: Step[]; connections: Edge[]; warnings: string[];
+  templateUsed?: boolean;
   usage: { provider: string; model: string; inputTokens: number | null; outputTokens: number | null; costMicros: number | null } | null };
 type SourcePreview = { status: "ok"; rawCount: number; matchedCount: number; selectedCount: number;
   validCount: number; pagesFetched: number; capped: boolean; availablePaths: string[]; samples: Array<{ id: string; text: string }> };
@@ -68,7 +69,8 @@ const errors: Record<string, string> = {
   invalid_api_step: "اتصال، مسیر یا فیلدهای کارت API معتبر نیست.",
   invalid_comment_decision: "قواعد بررسی کامنت را وارد کن.",
   invalid_decision_branch: "برای هر خروجی کارت تصمیم، نتیجهٔ شاخه را انتخاب کن.",
-  invalid_feedback_path: "منبع گروهی را به کارت AI با حالت «تحلیل بازخورد» وصل کن؛ این مسیر نباید به اقدام تکی کامنت برسد.",
+  invalid_feedback_path: "منبع گروهی را به «تحلیل بازخورد» وصل کن. برای اقدام تکی، گزینهٔ «هر کامنت جداگانه» را روی همان منبع فعال کن.",
+  reply_requires_approval: "کارت ارسال پاسخ باید مستقیم بعد از کارت تأیید انسانی باشد.",
 };
 const nodeWidth = 190;
 const nodeHeight = 150;
@@ -377,7 +379,7 @@ export function WorkflowBuilder() {
       type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
       { profileId: aiProfiles[0]?.id ?? "default", aiMode: "rewrite" } : type === "api_source" ?
       { connectionId: apiConnections[0]?.id ?? "", path: "/comments", itemsPath: "data.comments", idField: "id", textField: "text", contextField: "context",
-        readMode: "single", batchLimit: 10, postIdField: "postId", postId: "" } :
+        readMode: "single", batchLimit: 10, includeIndividual: false, postIdField: "postId", postId: "" } :
       type === "comment_decision" ? { profileId: aiProfiles[0]?.id ?? "default", rules: "" } :
       type === "api_action" ? { connectionId: apiConnections[0]?.id ?? "", path: "/comments/moderate", action: "approve",
         method: "POST", idField: "commentId", statusField: "status", replyField: "reply" } : {};
@@ -439,7 +441,7 @@ export function WorkflowBuilder() {
     const type = kind === "api" ? "api_source" : kind === "manual" ? "manual_input" : "rss_source";
     const config = kind === "api" ? { connectionId: apiConnections[0]?.id ?? "", path: "/comments",
       itemsPath: "data.comments", idField: "id", textField: "text", contextField: "context", readMode: "single",
-      batchLimit: 10, postIdField: "postId", postId: "" } : kind === "manual" ? {} :
+      batchLimit: 10, includeIndividual: false, postIdField: "postId", postId: "" } : kind === "manual" ? {} :
       kind === "rss" ? { sourceKind: "rss", feedUrl: "" } : { sourceKind: kind, channel: "" };
     setSteps((current) => current.map((step) => step.key === key ? { ...step, type, name: "منبع", config } : step));
     setMessage("نوع منبع تغییر کرد؛ تنظیماتش را تکمیل و ذخیره کن.");
@@ -633,6 +635,8 @@ export function WorkflowBuilder() {
           {generationUsage.costMicros === null ? "هزینه توسط سرویس گزارش نشده" :
             `هزینهٔ گزارش‌شده: ${(generationUsage.costMicros / 1_000_000).toLocaleString("fa-IR", { maximumFractionDigits: 6 })} دلار`}
         </span><small>ورودی: {generationUsage.inputTokens === null ? "گزارش نشده" : faNumber(generationUsage.inputTokens)} توکن · خروجی: {generationUsage.outputTokens === null ? "گزارش نشده" : faNumber(generationUsage.outputTokens)} توکن</small></div> : null}
+        {generated?.templateUsed ? <div className="workflow-generator-cost"><strong>هزینهٔ ساخت: ۰ دلار</strong>
+          <small>این درخواست با الگوی آمادهٔ مدیریت کامنت ساخته شد؛ برای ساخت بوم از مدل درخواست تازه‌ای گرفته نشد. تحلیل کامنت‌ها هنگام اجرای جریان مصرف جداگانه دارد.</small></div> : null}
         {generated ? <div className="workflow-generator-result"><strong>{generated.name}</strong>
           <span>{faNumber(generated.steps.length)} کارت · {faNumber(generated.connections.length)} اتصال</span>
           <ol>{generated.steps.map((step) => <li key={step.key}>{step.name}</li>)}</ol>
@@ -797,6 +801,9 @@ export function WorkflowBuilder() {
               <option value="batch">گروهی؛ آخرین کامنت‌ها</option>
               <option value="post">گروهی؛ کامنت‌های یک نوشته</option></select></label>
             {selected.config.readMode === "batch" || selected.config.readMode === "post" ? <>
+              <label className="builder-check"><input type="checkbox" checked={selected.config.includeIndividual === true}
+                onChange={(event) => update(selected.key, "includeIndividual", event.target.checked)} />
+                <span>در کنار تحلیل گروهی، هر کامنت تازه را جداگانه برای تصمیم و اقدام هم بفرست</span></label>
               <label><span>تعداد کامنت برای تحلیل</span><select value={selected.config.readAll === true ? "all" :
                 [10, 25, 50].includes(Number(selected.config.batchLimit ?? 10)) ? String(selected.config.batchLimit ?? 10) : "custom"}
                 onChange={(event) => { const value = event.target.value;
