@@ -10,7 +10,7 @@ type Step = typeof workflowSteps.$inferSelect;
 type Edge = typeof workflowConnections.$inferSelect;
 type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
   videoUrl?: string | null; queuedForPublication?: boolean; commentId?: string; context?: string;
-  decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string;
+  decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string; approved?: boolean;
   comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
 
 function transientAIError(error: unknown) {
@@ -112,6 +112,13 @@ export async function executeRun(input: ExecuteRunInput) {
       if (parents.length && !activeParent) { states.set(step.id, "skipped"); continue; }
       const parentStep = activeParent && steps.find((item) => item.id === activeParent.sourceStepId);
       const upstream = parentStep ? outputs[parentStep.key] as News | undefined : undefined;
+      // A grouped source emits both a report run and individual comment runs.
+      // Each run only enters the compatible branch of the graph.
+      if ((step.type === "ai" && step.config.aiMode === "feedback" && !upstream?.comments?.length) ||
+        (step.type === "comment_decision" && !upstream?.commentId)) {
+        states.set(step.id, "skipped");
+        continue;
+      }
       const [record] = prior
         ? await db.update(runSteps).set({ status: "running", attempt: prior.attempt + 1, startedAt: new Date(), error: null })
           .where(eq(runSteps.id, prior.id)).returning()
@@ -229,6 +236,8 @@ export async function executeRun(input: ExecuteRunInput) {
           const action = String(step.config.action);
           if (!["approve", "reject", "reply"].includes(action)) throw new Error("اقدام API معتبر نیست");
           if (action === "reply" && !upstream.reply) throw new Error("متن پاسخ برای کامنت موجود نیست");
+          if (action === "reply" && (parentStep?.type !== "human_approval" || upstream.approved !== true))
+            throw new Error("ارسال پاسخ فقط پس از تأیید انسانی همان کامنت مجاز است");
           await ensureCommentStorage();
           const [workflow] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows).where(eq(workflows.id, run.workflowId)).limit(1);
           if (!workflow) throw new Error("جریان پیدا نشد");
