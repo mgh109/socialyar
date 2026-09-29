@@ -1312,6 +1312,9 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .workflow-generator-cost small { color:var(--muted); }
 .workflow-generator-result ol { margin:3px 0; padding-inline-start:22px; display:flex; flex-wrap:wrap; gap:6px 25px; }
 .workflow-generator-warnings { display:flex; flex-direction:column; gap:4px; color:var(--amber); font-size:12px; }
+.builder-settings label.builder-check { display:flex; align-items:flex-start; gap:8px; line-height:1.8; cursor:pointer; }
+.builder-check input { flex:none; width:16px; height:16px; margin-top:4px; accent-color:var(--green); }
+.workflow-approval-comment { padding:11px; border:1px solid var(--border); border-radius:8px; background:var(--panel2); white-space:pre-wrap; }
 .graph-canvas-status { color:var(--muted); }
 .graph-canvas-status.active { color:var(--accent-text); }
 .graph-activity { position:relative; direction:rtl; }
