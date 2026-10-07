@@ -47,6 +47,14 @@ services:
       WEB_ORIGIN: http://localhost:3000
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       HOOR_SECRET_KEY: ${HOOR_SECRET_KEY:-}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      YOUTUBE_REDIRECT_URI: ${YOUTUBE_REDIRECT_URI:-http://localhost:4000/youtube/oauth/callback}
+      YOUTUBE_WEB_ORIGIN: ${YOUTUBE_WEB_ORIGIN:-http://localhost:3000}
+      YOUTUBE_PROJECT_VERIFIED: ${YOUTUBE_PROJECT_VERIFIED:-false}
+      YOUTUBE_MEDIA_DIR: /data/youtube
+    volumes:
+      - youtube-media:/data/youtube
     ports:
       - "4000:4000"
     depends_on:
@@ -66,6 +74,13 @@ services:
       PUBLISHER_CONCURRENCY: "2"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       HOOR_SECRET_KEY: ${HOOR_SECRET_KEY:-}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      YOUTUBE_REDIRECT_URI: ${YOUTUBE_REDIRECT_URI:-http://localhost:4000/youtube/oauth/callback}
+      YOUTUBE_PROJECT_VERIFIED: ${YOUTUBE_PROJECT_VERIFIED:-false}
+      YOUTUBE_MEDIA_DIR: /data/youtube
+    volumes:
+      - youtube-media:/data/youtube
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,3 +103,4 @@ services:
 
 volumes:
   pgdata:
+  youtube-media:

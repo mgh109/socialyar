@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { Queue } from "bullmq";
-import { contentItems, contentVariants, getDb, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows } from "@socialyar/db";
+import { contentItems, contentVariants, getDb, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows, youtubeItems, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
 import { connection, reservePublicationSlot } from "./queue";
 
 const publicationQueue = new Queue("publication-jobs", { connection });
@@ -24,8 +25,40 @@ export async function enqueueAutoPublication(runId: string) {
   for (const publishStep of publishSteps) {
     const generated = row.run.output?.[publishStep.key] as { text?: string; title?: string; url?: string;
       imageUrl?: string; videoUrl?: string } | undefined;
-    if (!generated?.text) continue;
+    const [youtubeAccount] = typeof publishStep.config.accountId === "string" ? await db.select().from(socialAccounts)
+      .where(and(eq(socialAccounts.id, publishStep.config.accountId), eq(socialAccounts.workspaceId, row.workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true))).limit(1) : [];
     try {
+    if (youtubeAccount) {
+      if (!generated) continue; // Respect upstream filters and approval gates.
+      const videoUrl = generated?.videoUrl ?? publishStep.config.videoUrl;
+      let videoMediaId: string | undefined; let coverMediaId: string | undefined;
+      if (typeof videoUrl === "string" && videoUrl) {
+        const video = await fetchYoutubeMedia(videoUrl, 250_000_000, "video");
+        videoMediaId = (await storeYoutubeMedia(row.workspaceId, video.bytes)).mediaId;
+      }
+      const coverUrl = publishStep.config.coverUrl ?? generated?.imageUrl;
+      if (typeof coverUrl === "string" && coverUrl) {
+        const cover = await fetchYoutubeMedia(coverUrl, 2_000_000, "image");
+        coverMediaId = (await storeYoutubeMedia(row.workspaceId, cover.bytes)).mediaId;
+      }
+      const itemKey = videoMediaId ?? createHash("sha256").update(`missing:${runId}`).digest("hex");
+      const inserted = await db.insert(youtubeItems).values({ workspaceId: row.workspaceId, workflowId: row.run.workflowId, runId,
+        stepKey: publishStep.key, itemKey, accountId: youtubeAccount.id,
+        channelName: youtubeAccount.displayName ?? youtubeAccount.externalAccountId,
+        title: String(publishStep.config.youtubeTitle || generated?.title || "ویدئوی جدید"),
+        description: String(publishStep.config.youtubeDescription ?? generated?.text ?? ""),
+        settings: { videoMediaId, coverMediaId, connection: publishStep.config.connection,
+          privacy: publishStep.config.privacy ?? "private", tags: publishStep.config.tags ?? [], madeForKids: publishStep.config.madeForKids === true },
+        scheduledAt: typeof publishStep.config.scheduledAt === "string" && publishStep.config.scheduledAt ? new Date(publishStep.config.scheduledAt) : null,
+        status: videoMediaId ? "waiting_approval" : "waiting_video",
+      }).onConflictDoNothing().returning({ id: youtubeItems.id });
+      if (!inserted.length) {
+        await db.insert(runEvents).values({ runId, type: "step_completed", message: "یوتیوب: این ویدئو قبلاً ثبت شده است؛ آپلود تکراری انجام نمی‌شود.",
+          payload: { stepKey: publishStep.key, channel: youtubeAccount.displayName, itemKey, result: "duplicate_skipped" } });
+      }
+      continue;
+    }
+    if (!generated?.text) continue;
     const path: string[] = [];
     const visited = new Set<string>();
     let key: unknown = publishStep.key;
@@ -62,7 +95,7 @@ export async function enqueueAutoPublication(runId: string) {
     if (!variant) {
       [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: account.channel,
         title: content.title, body: generated.text,
-        settings: { imageUrl: generated.imageUrl ?? null, videoUrl: generated.videoUrl ?? null,
+        settings: { imageUrl: generated.imageUrl ?? null, videoUrl: generated.videoUrl ?? null, connection: publishStep.config.connection,
           publishIntervalSeconds }, status: "approved", generatedBy: "ai" }).returning();
     } else if (variant.settings.publishIntervalSeconds !== publishIntervalSeconds) {
       [variant] = await db.update(contentVariants).set({ settings: { ...variant.settings, publishIntervalSeconds } })
@@ -84,6 +117,20 @@ export async function enqueueAutoPublication(runId: string) {
       backoff: { type: "exponential", delay: 5000 }, removeOnComplete: 1000,
     });
     } catch (error) {
+      if (youtubeAccount && generated) {
+        const message = error instanceof Error ? error.message : "Video preparation failed";
+        await db.insert(youtubeItems).values({ workspaceId: row.workspaceId, workflowId: row.run.workflowId, runId,
+          stepKey: publishStep.key, itemKey: `preparation:${runId}`, accountId: youtubeAccount.id,
+          channelName: youtubeAccount.displayName ?? youtubeAccount.externalAccountId,
+          title: String(publishStep.config.youtubeTitle || generated.title || "ویدئوی جدید"),
+          description: String(publishStep.config.youtubeDescription || generated.text || ""), status: "failed", error: message,
+          settings: { connection: publishStep.config.connection, sourceVideoUrl: generated.videoUrl ?? publishStep.config.videoUrl,
+            sourceCoverUrl: publishStep.config.coverUrl ?? generated.imageUrl,
+            privacy: publishStep.config.privacy ?? "private", tags: publishStep.config.tags ?? [], madeForKids: publishStep.config.madeForKids === true },
+          scheduledAt: typeof publishStep.config.scheduledAt === "string" && publishStep.config.scheduledAt ? new Date(publishStep.config.scheduledAt) : null,
+          logs: [{ channel: youtubeAccount.displayName, time: new Date().toISOString(), result: "preparation_failed", error: message }],
+        }).onConflictDoNothing();
+      }
       console.error(`Publication branch ${publishStep.key} failed for run ${runId}`, error);
       await db.insert(runEvents).values({ runId, type: "step_failed", message: `انتشار ${publishStep.name}: ${error instanceof Error ? error.message : "خطا"}` });
     }

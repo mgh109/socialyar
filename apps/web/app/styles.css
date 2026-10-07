@@ -1424,6 +1424,18 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .graph-source-schedule { display:flex; align-items:center; justify-content:space-between; gap:5px; font-size:10px; white-space:nowrap; }
 .graph-source-schedule span:last-child { direction:rtl; font-variant-numeric:tabular-nums; color:var(--accent-text); }
 @keyframes node-spin { to { transform:rotate(360deg); } }
+.youtube-panel,.youtube-review { display:flex; flex-direction:column; gap:12px; padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--panel2); margin-block:12px; }
+.youtube-panel label,.youtube-review label { display:flex; flex-direction:column; gap:6px; }
+.youtube-panel input,.youtube-panel select,.youtube-panel textarea,.youtube-review input,.youtube-review textarea { max-width:100%; padding:9px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:var(--text); }
+.youtube-panel button,.youtube-review button { padding:9px; border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+.youtube-panel button:disabled,.youtube-review button:disabled { opacity:.5; cursor:default; }
+.youtube-review p,.youtube-panel p { overflow-wrap:anywhere; }
+.graph-node strong:has(svg) { display:flex; align-items:center; gap:6px; }
+.graph-node a { font-size:11px; color:var(--accent-text); }
+.connection-selector,.proxy-row { display:flex; flex-direction:column; gap:10px; border:1px solid var(--border); border-radius:9px; padding:14px; margin-block:12px; }
+.connection-selector label,.proxy-row label { display:flex; flex-direction:column; gap:6px; }
+.connection-result { font-size:12px; overflow-wrap:anywhere; }
+.graph-connection-label { font-size:10px; line-height:1.4; color:var(--accent-text); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 @keyframes node-scan { to { transform:translateX(-120px); } }
 @keyframes node-breathe { 50% { opacity:.28; transform:scale(.75); } }
 @media (prefers-reduced-motion:reduce) { .graph-node.node-running .graph-live-dot,.graph-live-spinner,.graph-node.node-running::after { animation:none; } .graph-lines .edge-sending-glow { display:none; } }

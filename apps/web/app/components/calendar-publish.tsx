@@ -1,5 +1,6 @@
 "use client";
 import { apiFetch, getWorkspaceId } from "../lib/session";
+import { ConnectionHistory } from "./connection-history";
 
 import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
@@ -39,7 +40,7 @@ type CalendarRow = {
     id: string;
     title: string | null;
   };
-  publication: { status: string; externalUrl: string | null; error: { message?: string } | null; attempt: number } | null;
+  publication: { id: string; status: string; externalUrl: string | null; error: { message?: string; deliveryUnknown?: boolean } | null; attempt: number } | null;
 };
 type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 
@@ -227,10 +228,11 @@ export function CalendarPublish() {
                     <span>{row.publication?.status ?? row.schedule.status}</span>
                     {row.publication?.externalUrl ? <a href={row.publication.externalUrl} target="_blank" rel="noreferrer">مشاهده خروجی</a> : null}
                     {row.publication?.error?.message ? <small role="alert">{row.publication.error.message}</small> : null}
+                    {row.publication ? <ConnectionHistory publicationId={row.publication.id} /> : null}
                     <button
                       className="ghost-button"
                       onClick={() => publishNow(row.schedule.id)}
-                      disabled={busy || !["scheduled", "failed"].includes(row.schedule.status)}
+                      disabled={busy || row.publication?.error?.deliveryUnknown === true || !["scheduled", "failed"].includes(row.schedule.status)}
                     >
                       انتشار همین حالا
                     </button>

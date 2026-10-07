@@ -6,7 +6,7 @@ import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Channel = "telegram" | "website" | "instagram" | "x" | "linkedin" | "eitaa";
+type Channel = "telegram" | "website" | "instagram" | "x" | "linkedin" | "eitaa" | "youtube";
 
 type Account = {
   id: string;
@@ -22,6 +22,7 @@ const channelMeta: Record<
   Channel,
   { label: string; description: string; native: boolean }
 > = {
+  youtube: { label: "یوتیوب", description: "اتصال کانال با ورود گوگل و OAuth", native: true },
   eitaa: { label: "ایتا", description: "ارسال خبر به کانال با توکن ایتایار", native: true },
   telegram: {
     label: "Telegram",
@@ -104,6 +105,13 @@ export function ConnectionsManager() {
 
     const credentials: Record<string, string> = {};
 
+    if (channel === "youtube") {
+      setBusy(true);
+      try { const response = await apiFetch("/youtube/connect", { method: "POST" }); const data = await response.json();
+        if (!response.ok) throw new Error(data.message ?? data.error ?? "اتصال گوگل در سرور تنظیم نشده است"); window.location.assign(data.url);
+      } catch (error) { setMessage(error instanceof Error ? error.message : "خطای اتصال گوگل"); } finally { setBusy(false); }
+      return;
+    }
     if (channel === "telegram" || channel === "eitaa") {
       credentials.botToken = botToken;
       if (chatId) credentials.chatId = chatId;
@@ -175,7 +183,7 @@ export function ConnectionsManager() {
     setMessage(`در حال تست ${channelMeta[account.channel].label}...`);
     try {
       const response = await apiFetch(
-        `/social-accounts/${account.id}/test`,
+        account.channel === "youtube" ? `/youtube/accounts/${account.id}/test` : `/social-accounts/${account.id}/test`,
         { method: "POST" },
       );
       const data = await response.json();
@@ -194,8 +202,8 @@ export function ConnectionsManager() {
     setBusy(true);
     try {
       const response = await apiFetch(
-        `/social-accounts/${account.id}`,
-        { method: "DELETE" },
+        account.channel === "youtube" ? `/youtube/accounts/${account.id}/disconnect` : `/social-accounts/${account.id}`,
+        { method: account.channel === "youtube" ? "POST" : "DELETE" },
       );
       if (!response.ok && response.status !== 204) {
         throw new Error("Delete failed");
@@ -305,6 +313,16 @@ export function ConnectionsManager() {
         </div>
 
         <aside className="connection-form-panel">
+          <button type="button" disabled={busy} onClick={async () => {
+            setBusy(true); try { const r = await apiFetch("/youtube/health", { method: "POST" }); const data = await r.json();
+              setMessage(data.checks ? data.checks.map((c: { service: string; reachable: boolean; error?: string }) => `${c.service}: ${c.reachable ? "در دسترس" : c.error ?? "قطع"}`).join(" · ") : "بررسی شبکه ناموفق بود");
+            } catch (e) { setMessage(e instanceof Error ? e.message : "خطای بررسی شبکه"); } finally { setBusy(false); }
+          }}>بررسی دسترسی سرور به گوگل و یوتیوب</button>
+          <button type="button" disabled={busy} onClick={async () => {
+            setBusy(true); try { const r = await apiFetch("/youtube/connect", { method: "POST" }); const data = await r.json();
+              if (!r.ok) throw new Error(data.message ?? data.error); window.location.assign(data.url);
+            } catch (e) { setMessage(e instanceof Error ? e.message : "اتصال گوگل ناموفق بود"); } finally { setBusy(false); }
+          }}>▶ اتصال یوتیوب با گوگل</button>
           <form className="connection-form" onSubmit={submit}>
             <h2>اتصال جدید</h2>
 

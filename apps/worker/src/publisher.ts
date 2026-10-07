@@ -11,6 +11,12 @@ import {
   runs,
   schedules,
   socialAccounts,
+  publishingTransport,
+  publicationConnectionEvents,
+  AmbiguousDeliveryError,
+  isConnectionError,
+  connectionErrorReason,
+  definitelyNotSent,
 } from "@socialyar/db";
 
 export async function executePublication(input: {
@@ -30,6 +36,7 @@ export async function executePublication(input: {
     throw new Error("Publication not found");
   }
   if (publication.status === "published" || publication.status === "cancelled") return;
+  if (publication.externalId) return; // A confirmed remote send must never be replayed after a local write failure.
 
   const [variant] = await db
     .select()
@@ -90,9 +97,17 @@ export async function executePublication(input: {
     .where(and(eq(publications.id, publication.id), eq(publications.status, "queued"))).returning();
   if (!claimed) return;
 
+  let transport: Awaited<ReturnType<typeof publishingTransport>> | undefined;
+  let confirmed: Awaited<ReturnType<typeof publishToChannel>> | undefined;
   try {
     if (!account) throw new Error(`No active social account configured for ${variant.channel}`);
+    if (variant.channel === "telegram" || variant.channel === "instagram") {
+      transport = await publishingTransport(publication.workspaceId, variant.settings.connection, variant.channel, async (event) => {
+        await db.insert(publicationConnectionEvents).values({ workspaceId: publication.workspaceId, publicationId: publication.id, ...event });
+      });
+    }
     const result = await publishToChannel({
+      fetch: transport?.fetch,
       publicationId: publication.id,
       channel: variant.channel,
       title: variant.title,
@@ -104,6 +119,9 @@ export async function executePublication(input: {
         : account.credentials,
       externalAccountId: account.externalAccountId,
     });
+    confirmed = result;
+    if (transport) await db.insert(publicationConnectionEvents).values({ workspaceId: publication.workspaceId, publicationId: publication.id,
+      ...transport.getRoute(), result: "published" });
 
     await db.transaction(async (tx) => {
       await tx
@@ -139,19 +157,27 @@ export async function executePublication(input: {
 
     return result;
   } catch (error) {
+    const unknown = error instanceof AmbiguousDeliveryError || (error as { code?: string })?.code === "DELIVERY_UNKNOWN" ||
+      Boolean(transport && isConnectionError(error) && !definitelyNotSent(error));
     const details = {
       message:
-        error instanceof Error ? error.message : "Unknown publication error",
+        unknown ? new AmbiguousDeliveryError().message : isConnectionError(error) ? connectionErrorReason(error) : error instanceof Error ? error.message : "Unknown publication error",
+      deliveryUnknown: unknown,
       attempt: input.attempt,
       maxAttempts: input.maxAttempts,
     };
 
-    const finalAttempt = input.attempt >= input.maxAttempts;
+    // Telegram has no sendMessage idempotency key or API to confirm a lost response.
+    // Hold unknown deliveries for manual destination review instead of blindly retrying.
+    const finalAttempt = input.attempt >= input.maxAttempts || unknown || Boolean(confirmed);
+    if (transport) await db.insert(publicationConnectionEvents).values({ workspaceId: publication.workspaceId, publicationId: publication.id,
+      ...transport.getRoute(), result: unknown ? "delivery_unknown" : "failed", error: details.message });
 
     await db
       .update(publications)
       .set({
         status: finalAttempt ? "failed" : "queued",
+        ...(confirmed ? { externalId: confirmed.externalId, externalUrl: confirmed.externalUrl ?? null, publishedAt: new Date(confirmed.publishedAt) } : {}),
         error: details,
         updatedAt: new Date(),
       })
@@ -178,5 +204,5 @@ export async function executePublication(input: {
     }
 
     throw error;
-  }
+  } finally { await transport?.close(); }
 }

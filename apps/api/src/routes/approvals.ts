@@ -318,6 +318,9 @@ export async function approvalRoutes(app: FastifyInstance) {
     if (publication.status === "published" || publication.status === "publishing") {
       return reply.code(409).send({ error: "publication_already_in_progress_or_published" });
     }
+    if (publication.externalId || publication.error?.deliveryUnknown === true) {
+      return reply.code(409).send({ error: "delivery_already_confirmed_or_unknown_check_destination_before_retry" });
+    }
 
     const existingJob = await publicationQueue.getJob(
       `publication-${publication.id}`,

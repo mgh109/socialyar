@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "./brand-logo";
 import { TopMenu } from "./top-menu";
+import { YoutubePanel, YoutubeIcon, youtubeStatus, type YoutubeItem } from "./youtube-panel";
+import { ConnectionSelector, type SavedProxy } from "./connection-selector";
 import { apiFetch } from "../lib/session";
 
 type Position = { x: number; y: number };
@@ -26,6 +28,7 @@ type UsageTotals = { requests: number; inputTokens: number | string; outputToken
   costMicros: number | string; unreportedTokens: number; unreportedCost: number };
 type WorkflowUsage = { totals: UsageTotals; byStep: Array<UsageTotals & { stepKey: string }> };
 type LiveState = {
+  connections?: Array<{ stepKey: string; route: string; proxyName: string | null }>;
   nextPollAt: string | null;
   events: Array<{ id: string; type: string; stepKey: string | null; createdAt: string; decision: string | null }>;
   active: Array<{ stepKey: string; status: string }>;
@@ -39,7 +42,7 @@ const dollarCost = (usage: UsageTotals) => (Number(usage.costMicros) / 1_000_000
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "RSS", eitaa: "ایتا", bale: "بله" };
-const publishNames: Record<string, string> = { eitaa: "ایتا", telegram: "تلگرام", website: "وب‌سایت" };
+const publishNames: Record<string, string> = { youtube: "یوتیوب", eitaa: "ایتا", telegram: "تلگرام", website: "وب‌سایت" };
 const pollPresets = [1, 5, 15, 60, 1440];
 const publishPresets = [30, 60, 300, 3600, 86400];
 function durationLabel(minutes: number) {
@@ -65,6 +68,7 @@ const errors: Record<string, string> = {
   eitaa_account_not_found: "اتصال مقصد انتشار معتبر یا فعال نیست.", ai_token_not_configured: "توکن AI را تنظیم کن.",
   ai_profile_not_found: "مدل AI انتخاب‌شده موجود نیست؛ یک مدل معتبر انتخاب کن.",
   invalid_publish_interval: "فاصلهٔ انتشار معتبر نیست.",
+  invalid_publishing_connection: "مسیر اتصال معتبر نیست؛ یک پروکسی فعال از همین فضای کاری انتخاب کنید.",
   duplicate_publish_channel: "هر کانال خروجی را فقط به یک کارت انتشار وصل کن.",
   invalid_api_step: "اتصال، مسیر یا فیلدهای کارت API معتبر نیست.",
   invalid_comment_decision: "قواعد بررسی کامنت را وارد کن.",
@@ -131,6 +135,8 @@ export function WorkflowBuilder() {
   const [name, setName] = useState("جریان جدید");
   const [pollIntervalMinutes, setPollIntervalMinutes] = useState(5);
   const [prompt, setPrompt] = useState("");
+  const [youtubeItems, setYoutubeItems] = useState<YoutubeItem[]>([]);
+  const [savedProxies, setSavedProxies] = useState<SavedProxy[]>([]);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
   const [autoEnabled, setAutoEnabled] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -166,12 +172,35 @@ export function WorkflowBuilder() {
   const [edgePulses, setEdgePulses] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
+  const refreshYoutube = () => {
+    if (!workflowId) return;
+    void apiFetch(`/youtube/items?workflowId=${workflowId}`).then((r) => r.ok ? r.json() : []).then(setYoutubeItems);
+  };
+  useEffect(() => { refreshYoutube(); const timer = setInterval(refreshYoutube, 3000); return () => clearInterval(timer); }, [workflowId]);
+  useEffect(() => { void apiFetch("/proxies").then((r) => r.ok ? r.json() : []).then(setSavedProxies).catch(() => {}); }, [selectedKey]);
+  const cardConnection = (step: Step) => {
+    const channel = accounts.find((a) => a.id === step.config.accountId)?.channel;
+    if (!["youtube", "telegram", "instagram"].includes(channel ?? "")) return "اتصال مستقیم";
+    const policy = step.config.connection as { mode?: string; proxyId?: string } | undefined;
+    const item = youtubeItems.find((i) => i.stepKey === step.key);
+    const lastRoute = [...(item?.logs ?? [])].reverse().find((log) => log.route);
+    if (lastRoute) return lastRoute.route === "proxy" ? `آخرین اجرا با پروکسی: ${lastRoute.proxyName}` : "آخرین اجرا: مستقیم";
+    const lastConnection = live?.connections?.find((event) => event.stepKey === step.key);
+    if (lastConnection) return lastConnection.route === "proxy" ? `آخرین اجرا با پروکسی: ${lastConnection.proxyName}` : "آخرین اجرا: مستقیم";
+    const name = savedProxies.find((p) => p.id === policy?.proxyId)?.name ?? "انتخاب‌نشده یا حذف‌شده";
+    return policy?.mode === "proxy" ? `پروکسی: ${name}` : policy?.mode === "auto" ? `خودکار: مستقیم ← ${name}` : "اتصال مستقیم";
+  };
   const selected = steps.find((step) => step.key === selectedKey);
   const selectedUsage = usage?.byStep.find((item) => item.stepKey === selectedKey);
   const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => ["rss_source", "api_source"].includes(step.type));
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
   const stepActivity = (step: Step) => {
+    if (step.type === "publish" && accounts.find((a) => a.id === step.config.accountId)?.channel === "youtube") {
+      const item = youtubeItems.find((i) => i.stepKey === step.key);
+      return { label: youtubeStatus(item), state: item?.status === "uploading" || item?.status === "processing" ? "running" :
+        item?.status === "published" ? "completed" : item?.status === "failed" ? "failed" : "waiting" };
+    }
     const sending = live?.publications.find((item) => item.stepKey === step.key && item.status === "publishing");
     if (sending) return { label: "در حال ارسال به کانال...", state: "running" };
     const recentPublication = live?.publications.find((item) => item.stepKey === step.key &&
@@ -691,7 +720,9 @@ export function WorkflowBuilder() {
               onClick={(event) => { event.stopPropagation(); remove(step.key); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button></div>
           <span className="graph-role-label">{stepActivity(step) ? <><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</> :
             isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>
-          <strong>{step.type === "publish" ? "انتشار" : step.name}</strong><small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
+          <strong>{step.type === "publish" && accounts.find((a) => a.id === step.config.accountId)?.channel === "youtube" ? <><YoutubeIcon /> یوتیوب</> : step.type === "publish" ? "انتشار شبکه‌ها" : step.name}</strong>
+          {youtubeItems.find((i) => i.stepKey === step.key)?.status === "published" ? <a onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer" href={`https://www.youtube.com/watch?v=${youtubeItems.find((i) => i.stepKey === step.key)?.videoId}`}>مشاهده در یوتیوب</a> : null}
+          <small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
             step.type === "publish" ? publishAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "مقصد را انتخاب کن" :
@@ -703,7 +734,7 @@ export function WorkflowBuilder() {
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
-          {step.type === "publish" ? <div className="graph-source-footer">{step.config.accountId ? "● آماده" : "○ تنظیم‌نشده"} · {publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "انتشار"}</div> : null}
+          {step.type === "publish" ? <div className="graph-source-footer graph-connection-label" title={cardConnection(step)}>{step.config.accountId ? cardConnection(step) : "○ مقصد انتخاب نشده است"}</div> : null}
           {step.type === "filter" && live?.filters?.some((item) => item.stepKey === step.key) ?
             <div className={`graph-source-footer graph-filter-footer ${live.filters.find((item) => item.stepKey === step.key)?.passed ? "passed" : "rejected"}`}>
               {live.filters.find((item) => item.stepKey === step.key)?.passed ? "✓ عبور کرد" : "⊘ رد شد"} · آخرین خبر
@@ -887,7 +918,13 @@ export function WorkflowBuilder() {
         {selected.type === "publish" ? <><label><span>مقصد انتشار</span><select value={String(selected.config.accountId ?? "")}
           onChange={(event) => update(selected.key, "accountId", event.target.value)}><option value="">انتخاب مقصد</option>
           {publishAccounts.map((account) => <option key={account.id} value={account.id}>{publishNames[account.channel]} · {account.displayName ?? account.externalAccountId}</option>)}</select></label>
-          <label><span>فاصلهٔ انتشار در همین کانال</span><select
+          {["youtube", "telegram", "instagram"].includes(accounts.find((a) => a.id === selected.config.accountId)?.channel ?? "") ?
+            <ConnectionSelector key={String(selected.config.accountId)} target={accounts.find((a) => a.id === selected.config.accountId)!.channel as "youtube" | "telegram" | "instagram"}
+              value={selected.config.connection} onChange={(value) => update(selected.key, "connection", value)} /> : null}
+          <a href="/connections">اتصال کانال یوتیوب با گوگل</a>
+          {accounts.find((a) => a.id === selected.config.accountId)?.channel === "youtube" ? <YoutubePanel key={`${selected.key}-${selected.config.accountId}`} workflowId={workflowId} stepKey={selected.key}
+            accountId={String(selected.config.accountId)} config={selected.config} update={(key, value) => update(selected.key, key, value)} items={youtubeItems} refresh={refreshYoutube} /> : null}
+          {accounts.find((a) => a.id === selected.config.accountId)?.channel !== "youtube" ? <><label><span>فاصلهٔ انتشار در همین کانال</span><select
             value={publishPresets.includes(Number(selected.config.publishIntervalSeconds ?? 30)) ?
               String(selected.config.publishIntervalSeconds ?? 30) : "custom"}
             onChange={(event) => update(selected.key, "publishIntervalSeconds", event.target.value === "custom" ? 600 : Number(event.target.value))}>
@@ -899,7 +936,7 @@ export function WorkflowBuilder() {
               onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))} /></label> : null}
           <small className="builder-note">این فاصله بین دو پیام همان مقصد اعمال می‌شود؛ تنظیم روزانه یعنی هر ۲۴ ساعت حداکثر یک ارسال.</small>
           {!publishAccounts.length ? <Link href="/connections">+ اتصال مقصد انتشار</Link> : null}
-          <small className="builder-note">ایتا، تلگرام و وب‌سایت آمادهٔ انتشارند. اینستاگرام و بله پس از پیاده‌سازی و آزمایش ناشرشان اضافه می‌شوند.</small></> : null}
+          <small className="builder-note">ایتا، تلگرام و وب‌سایت آمادهٔ انتشارند. اینستاگرام و بله پس از پیاده‌سازی و آزمایش ناشرشان اضافه می‌شوند.</small></> : null}</> : null}
         {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
           onChange={(event) => update(selected.key, "profileId", event.target.value)}>
           {!aiProfiles.some((profile) => profile.id === String(selected.config.profileId ?? "default")) ?

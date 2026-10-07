@@ -16,7 +16,7 @@ export const workflowStatus = pgEnum("workflow_status", ["draft", "active", "pau
 export const runStatus = pgEnum("run_status", ["queued", "running", "waiting_approval", "failed", "completed", "cancelled"]);
 export const runStepStatus = pgEnum("run_step_status", ["queued", "running", "retrying", "waiting_approval", "failed", "completed", "skipped"]);
 export const runEventType = pgEnum("run_event_type", ["run_started", "step_started", "step_completed", "step_failed", "retry", "fallback", "approval_requested", "approval_resolved", "run_completed", "run_failed"]);
-export const channel = pgEnum("channel", ["instagram", "telegram", "website", "x", "linkedin", "eitaa"]);
+export const channel = pgEnum("channel", ["instagram", "telegram", "website", "x", "linkedin", "eitaa", "youtube"]);
 export const contentStatus = pgEnum("content_status", ["draft", "generated", "waiting_approval", "approved", "rejected", "scheduled", "published", "failed"]);
 export const approvalStatus = pgEnum("approval_status", ["pending", "approved", "rejected", "changes_requested"]);
 export const publicationStatus = pgEnum("publication_status", ["queued", "publishing", "published", "failed", "cancelled"]);
@@ -374,3 +374,70 @@ export const reports = pgTable("reports", {
 }, (t) => ({
   workspacePeriodIdx: index("reports_workspace_period_idx").on(t.workspaceId, t.periodStart, t.periodEnd),
 }));
+
+export const youtubeItems = pgTable("youtube_items", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+  workflowId: uuid("workflow_id").notNull().references(() => workflows.id),
+  runId: uuid("run_id").references(() => runs.id),
+  stepKey: text("step_key").notNull(),
+  itemKey: text("item_key").notNull(),
+  accountId: uuid("account_id").notNull().references(() => socialAccounts.id),
+  channelName: text("channel_name").notNull(),
+  status: text("status").default("waiting_video").notNull(),
+  title: text("title").notNull(),
+  description: text("description").default("").notNull(),
+  settings: jsonb("settings").$type<Record<string, unknown>>().default({}).notNull(),
+  progress: integer("progress").default(0).notNull(),
+  approvedBy: uuid("approved_by").references(() => users.id),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  sessionEnc: text("session_enc"),
+  videoId: text("video_id"),
+  actualPrivacy: text("actual_privacy"),
+  error: text("error"),
+  logs: jsonb("logs").$type<Array<Record<string, unknown>>>().default([]).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ once: uniqueIndex("youtube_items_once").on(t.workflowId, t.stepKey, t.itemKey) }));
+export const youtubeOAuthStates = pgTable("youtube_oauth_states", {
+  id: text("id").primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+  verifierEnc: text("verifier_enc").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+export const publishingProxies = pgTable("publishing_proxies", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  protocol: text("protocol").notNull(),
+  host: text("host").notNull(),
+  port: integer("port").notNull(),
+  authEnc: text("auth_enc"),
+  isActive: boolean("is_active").default(true).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+export const connectionChecks = pgTable("connection_checks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  proxyId: uuid("proxy_id").references(() => publishingProxies.id, { onDelete: "set null" }),
+  target: text("target").notNull(),
+  config: jsonb("config").$type<Record<string, unknown>>().default({}).notNull(),
+  status: text("status").default("queued").notNull(),
+  result: jsonb("result").$type<Record<string, unknown> | null>(),
+  checkedAt: timestamp("checked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+export const publicationConnectionEvents = pgTable("publication_connection_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  publicationId: uuid("publication_id").references(() => publications.id, { onDelete: "cascade" }),
+  youtubeItemId: uuid("youtube_item_id").references(() => youtubeItems.id, { onDelete: "cascade" }),
+  route: text("route").notNull(),
+  proxyName: text("proxy_name"),
+  result: text("result").notNull(),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});

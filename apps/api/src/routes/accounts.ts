@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { decryptSecret, encryptSecret, getDb, socialAccounts } from "@socialyar/db";
 
-const channelSchema = z.enum(["instagram", "telegram", "website", "x", "linkedin", "eitaa"]);
+const channelSchema = z.enum(["instagram", "telegram", "website", "x", "linkedin", "eitaa", "youtube"]);
 
 const createAccountSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -133,6 +133,7 @@ export async function accountRoutes(app: FastifyInstance) {
 
   app.post("/social-accounts", async (request, reply) => {
     const input = createAccountSchema.parse(request.body);
+    if (input.channel === "youtube") return reply.code(400).send({ error: "youtube_requires_google_oauth" });
     if (input.channel === "eitaa" && (typeof input.credentials.botToken !== "string" || !input.credentials.botToken || typeof input.credentials.chatId !== "string" || !input.credentials.chatId)) {
       return reply.code(400).send({ error: "eitaa_token_and_chat_required" });
     }
@@ -171,6 +172,7 @@ export async function accountRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "social_account_not_found" });
     }
 
+    if (current.channel === "youtube" && (input.credentials || input.externalAccountId || input.isActive)) return reply.code(400).send({ error: "use_youtube_oauth_routes" });
     const [updated] = await db
       .update(socialAccounts)
       .set({
@@ -200,6 +202,9 @@ export async function accountRoutes(app: FastifyInstance) {
     const { accountId } = z
       .object({ accountId: z.string().uuid() })
       .parse(request.params);
+
+    const [account] = await db.select().from(socialAccounts).where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, request.auth.workspaceId)));
+    if (account?.channel === "youtube") return reply.code(400).send({ error: "use_youtube_disconnect_to_revoke_google_access" });
 
     const [deleted] = await db
       .delete(socialAccounts)

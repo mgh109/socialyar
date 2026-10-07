@@ -1,4 +1,5 @@
 "use client";
+import { YoutubeApprovalQueue } from "./youtube-panel";
 import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
@@ -199,6 +200,7 @@ export function ApprovalCenter() {
           <p className="workflow-approval-empty">در حال حاضر خبری منتظر تأیید انسانی نیست.</p>}
       </section>
 
+      <YoutubeApprovalQueue />
       <section className="approval-shell">
         <aside className="approval-queue">
           <div className="approval-heading">

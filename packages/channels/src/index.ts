@@ -5,6 +5,7 @@ import { isIP } from "node:net";
 export type ChannelCredentials = Record<string, unknown>;
 
 export type PublishRequest = {
+  fetch?: typeof fetch;
   publicationId?: string;
   channel: Channel;
   title?: string | null;
@@ -50,7 +51,7 @@ async function publishTelegram(
     throw new Error("Missing Telegram chatId");
   }
 
-  const response = await fetch(
+  const response = await (request.fetch ?? fetch)(
     `https://api.telegram.org/bot${botToken}/sendMessage`,
     {
       method: "POST",
@@ -65,11 +66,19 @@ async function publishTelegram(
     },
   );
 
-  const data = (await response.json()) as {
+  let data: {
     ok?: boolean;
     description?: string;
     result?: { message_id?: number; chat?: { username?: string } };
   };
+  try { data = await response.json(); }
+  catch {
+    if (response.ok) throw Object.assign(new Error("Telegram delivery is unknown; inspect the destination before retrying"), { code: "DELIVERY_UNKNOWN" });
+    throw new Error(`Telegram returned HTTP ${response.status}`);
+  }
+  if (response.ok && data.ok !== false && !data.result?.message_id) {
+    throw Object.assign(new Error("Telegram delivery is unknown; inspect the destination before retrying"), { code: "DELIVERY_UNKNOWN" });
+  }
 
   if (!response.ok || !data.ok || !data.result?.message_id) {
     throw new Error(
@@ -272,6 +281,7 @@ async function publishFallbackWebhook(
 export async function publishToChannel(
   request: PublishRequest,
 ): Promise<PublishResult> {
+  if (request.channel === "youtube") throw new Error("YouTube requires its human-approved upload queue");
   try {
     switch (request.channel) {
       case "telegram":
@@ -288,7 +298,7 @@ export async function publishToChannel(
         );
     }
   } catch (primaryError) {
-    if (typeof request.credentials.fallbackWebhookUrl === "string") {
+    if (!request.fetch && typeof request.credentials.fallbackWebhookUrl === "string") {
       return publishFallbackWebhook(request);
     }
 

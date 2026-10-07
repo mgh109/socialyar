@@ -4,6 +4,7 @@ import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/session";
+import { ConnectionHistory } from "./connection-history";
 
 type RunData = {
   id: string;
@@ -115,6 +116,7 @@ export function RunLive({ runId }: { runId: string }) {
 
       <section className="run-layout">
         <div className="run-main">
+          <ConnectionHistory runId={runId} />
           <div className="canvas-title">
             <div>
               <h1>اجرای جاری</h1>

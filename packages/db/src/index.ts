@@ -3,3 +3,7 @@ export * from "./schema";
 export { encryptSecret, decryptSecret, secretConfigurationProblem } from "./secrets";
 export { ensureCommentStorage } from "./comment-storage";
 export { ensureAIUsageStorage } from "./ai-usage";
+export * from "./youtube";
+export * from "./youtube-upload";
+export * from "./publishing-connection";
+export * from "./connection-check";

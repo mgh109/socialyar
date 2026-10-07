@@ -17,6 +17,9 @@ import {
   contentItems,
   contentVariants,
   publications,
+  youtubeItems,
+  validateConnectionPolicy,
+  publicationConnectionEvents,
   runEvents,
   runSteps,
   runs,
@@ -248,7 +251,11 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     const [account] = await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, workspaceId),
         eq(socialAccounts.isActive, true))).limit(1);
-    if (!account || !["eitaa", "telegram", "website"].includes(account.channel)) return "eitaa_account_not_found";
+    if (!account || !["eitaa", "telegram", "website", "youtube"].includes(account.channel)) return "eitaa_account_not_found";
+    if (["youtube", "telegram", "instagram"].includes(account.channel)) {
+      try { await validateConnectionPolicy(workspaceId, publisher.config.connection); }
+      catch { return "invalid_publishing_connection"; }
+    }
   }
   const accountIds = sorted.filter((step) => step.type === "publish").map((step) => step.config.accountId);
   if (new Set(accountIds).size !== accountIds.length) return "duplicate_publish_channel";
@@ -302,7 +309,7 @@ export async function workflowRoutes(app: FastifyInstance) {
       db.select({ id: apiConnections.id, label: apiConnections.name }).from(apiConnections)
         .where(eq(apiConnections.workspaceId, workspaceId)),
     ]);
-    const accounts = accountRows.filter((item) => ["eitaa", "telegram", "website"].includes(item.channel));
+    const accounts = accountRows.filter((item) => ["eitaa", "telegram", "website", "youtube"].includes(item.channel));
     const validAccounts = new Set(accounts.map((item) => item.id));
     const validConnections = new Set(connectionRows.map((item) => item.id));
     const usageReport: { value: AIRequestUsage | null } = { value: null };
@@ -430,6 +437,12 @@ export async function workflowRoutes(app: FastifyInstance) {
           inArray(runSteps.status, ["completed", "skipped"])))
         .orderBy(desc(runSteps.finishedAt)).limit(100),
     ]);
+    const connectionRows = await db.select({ metadata: contentItems.metadata, route: publicationConnectionEvents.route, proxyName: publicationConnectionEvents.proxyName })
+      .from(publicationConnectionEvents).innerJoin(publications, eq(publicationConnectionEvents.publicationId, publications.id))
+      .innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
+      .innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id)).innerJoin(runs, eq(contentItems.runId, runs.id))
+      .where(and(eq(runs.workflowId, workflowId), eq(publicationConnectionEvents.workspaceId, request.auth.workspaceId)))
+      .orderBy(desc(publicationConnectionEvents.createdAt)).limit(50);
     const latestFilters = new Map<string, { stepKey: string; runId: string; passed: boolean; title: string | null; at: Date | null }>();
     for (const row of filterRows) {
       if (latestFilters.has(row.stepKey)) continue;
@@ -449,6 +462,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         decision: typeof event.decision?.decision === "string" ? event.decision.decision : null })),
       active,
       filters: [...latestFilters.values()],
+      connections: connectionRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ? [{ stepKey: row.metadata.publishStepKey, route: row.route, proxyName: row.proxyName }] : []),
       publications: publicationRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ?
         [{ id: row.id, stepKey: row.metadata.publishStepKey, status: row.status,
           updatedAt: row.updatedAt, publishedAt: row.publishedAt }] : []),
@@ -613,6 +627,8 @@ export async function workflowRoutes(app: FastifyInstance) {
         .innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
         .where(inArray(contentVariants.contentItemId, workflowContentIds)).limit(1);
       if (publication) return "has_publications";
+      const [youtubeItem] = await tx.select({ id: youtubeItems.id }).from(youtubeItems).where(eq(youtubeItems.workflowId, workflowId)).limit(1);
+      if (youtubeItem) return "has_publications";
       const [schedule] = await tx.select({ id: schedules.id }).from(schedules)
         .innerJoin(contentVariants, eq(schedules.contentVariantId, contentVariants.id))
         .where(inArray(contentVariants.contentItemId, workflowContentIds)).limit(1);

@@ -2,6 +2,8 @@ import { Worker } from "bullmq";
 import { closeDb } from "@socialyar/db";
 import { executeRun } from "@socialyar/workflow";
 import { executePublication } from "./publisher";
+import { executeYoutube } from "./youtube";
+import { executeConnectionCheck } from "./connection-check";
 import { closeAutoPublisher, enqueueAutoPublication } from "./auto-publish";
 import { startNewsPoller } from "./news-poller";
 import { connection } from "./queue";
@@ -28,6 +30,7 @@ const workflowWorker = new Worker(
 const publicationWorker = new Worker(
   "publication-jobs",
   async (job) => {
+    if (job.name === "youtube-publish") return executeYoutube(job.data.youtubeItemId);
     const data = job.data as { publicationId: string };
     const maxAttempts = Number(job.opts.attempts ?? 1);
 
@@ -44,6 +47,7 @@ const publicationWorker = new Worker(
 );
 
 const stopNewsPoller = startNewsPoller();
+const connectionCheckWorker = new Worker("connection-checks", (job) => executeConnectionCheck(job.data.checkId), { connection, concurrency: 2 });
 
 workflowWorker.on("completed", (job) => {
   console.log(`Run job ${job.id} completed`);
@@ -68,6 +72,7 @@ const shutdown = async () => {
   await Promise.all([
     workflowWorker.close(),
     publicationWorker.close(),
+    connectionCheckWorker.close(),
     closeAutoPublisher(),
     stopNewsPoller(),
   ]);

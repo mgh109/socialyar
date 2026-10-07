@@ -13,6 +13,8 @@ import { aiSettingsRoutes } from "./routes/ai-settings";
 import { apiConnectionRoutes } from "./routes/api-connections";
 import { authPlugin } from "./auth";
 import { closeQueue } from "./queue";
+import { youtubeRoutes } from "./routes/youtube";
+import { proxyRoutes } from "./routes/proxies";
  
 const app = Fastify({ logger: true });
 
@@ -244,6 +246,8 @@ await app.register(runRoutes);
 await app.register(contentRoutes);
 await app.register(approvalRoutes);
 await app.register(accountRoutes);
+await app.register(youtubeRoutes);
+await app.register(proxyRoutes);
 await app.register(analyticsRoutes);
 
 const port = Number(process.env.PORT ?? 4000);
