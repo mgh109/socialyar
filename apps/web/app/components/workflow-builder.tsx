@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "./brand-logo";
 import { TopMenu } from "./top-menu";
+import type { CalendarItem } from "@socialyar/shared";
+import { calendarLabels } from "./calendar-detail";
 import { CollectionPanel } from "./collection-panel";
 import { YoutubePanel, YoutubeIcon, youtubeStatus, type YoutubeItem } from "./youtube-panel";
 import { ConnectionSelector, type SavedProxy } from "./connection-selector";
@@ -43,7 +45,7 @@ const dollarCost = (usage: UsageTotals) => (Number(usage.costMicros) / 1_000_000
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input", "collection_source"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "خبرخوان", eitaa: "ایتا", bale: "بله" };
-const publishNames: Record<string, string> = { youtube: "یوتیوب", eitaa: "ایتا", telegram: "تلگرام", website: "وب‌سایت" };
+const publishNames: Record<string, string> = { youtube: "یوتیوب", eitaa: "ایتا", bale: "بله", instagram: "اینستاگرام", telegram: "تلگرام", website: "وب‌سایت" };
 const pollPresets = [1, 5, 15, 60, 1440];
 const publishPresets = [30, 60, 300, 3600, 86400];
 function durationLabel(minutes: number) {
@@ -52,7 +54,7 @@ function durationLabel(minutes: number) {
 }
 const types = [
   { type: "source", label: "منبع" },
-  { type: "collection_source", label: "مجموعه از اکسل" },
+  { type: "collection_source", label: "مجموعه از اکسل / گوگل‌شیت" },
   { type: "filter", label: "شرط" },
   { type: "ai", label: "هوش مصنوعی" },
   { type: "human_approval", label: "تأیید انسانی" },
@@ -137,6 +139,7 @@ export function WorkflowBuilder() {
   const [name, setName] = useState("جریان جدید");
   const [pollIntervalMinutes, setPollIntervalMinutes] = useState(5);
   const [prompt, setPrompt] = useState("");
+  const [collectionOutputs,setCollectionOutputs]=useState<CalendarItem[]>([]);
   const [youtubeItems, setYoutubeItems] = useState<YoutubeItem[]>([]);
   const [savedProxies, setSavedProxies] = useState<SavedProxy[]>([]);
   const [workflowId, setWorkflowId] = useState<string | null>(null);
@@ -176,7 +179,8 @@ export function WorkflowBuilder() {
   const [message, setMessage] = useState("آماده ذخیره");
   const refreshYoutube = () => {
     if (!workflowId) return;
-    void apiFetch(`/youtube/items?workflowId=${workflowId}`).then((r) => r.ok ? r.json() : []).then(setYoutubeItems);
+    void apiFetch(`/youtube/items?workflowId=${workflowId}`).then((r) => r.ok ? r.json() : []).then(setYoutubeItems).catch(()=>{});
+    void apiFetch(`/calendar/items?workflowId=${workflowId}`).then((r)=>r.ok?r.json():[]).then((items:CalendarItem[])=>setCollectionOutputs(items.filter((i)=>i.workflowId===workflowId && i.settings.collectionId && i.kind==="variant"))).catch(()=>{});
   };
   useEffect(() => { refreshYoutube(); const timer = setInterval(refreshYoutube, 3000); return () => clearInterval(timer); }, [workflowId]);
   useEffect(() => { void apiFetch("/proxies").then((r) => r.ok ? r.json() : []).then(setSavedProxies).catch(() => {}); }, [selectedKey]);
@@ -200,6 +204,11 @@ export function WorkflowBuilder() {
   const stepActivity = (step: Step) => {
     if (step.type === "collection_source") {
       const outputs=youtubeItems.filter((i) => i.settings.collectionSourceKey===step.key);
+      const other=collectionOutputs.filter((i)=>i.settings.collectionSourceKey===step.key);
+      if(other.some((i)=>i.status==="sending"))return {label:"در حال ارسال مجموعه",state:"running"};
+      if(other.some((i)=>i.status==="failed"))return {label:"بعضی مقصدها نیازمند بررسی‌اند",state:"failed"};
+      if(other.some((i)=>i.status==="waiting_approval"))return {label:"خروجی‌ها منتظر تأیید",state:"waiting"};
+      if(other.length && !outputs.length)return {label:`${faNumber(other.length)} خروجی در تقویم`,state:"completed"};
       const preparing=outputs.filter((i) => i.status==="preparing").length;
       const failed=outputs.filter((i) => i.status==="failed").length;
       if (preparing) return { label:`دریافت ${faNumber(preparing)} فایل`,state:"running" };
@@ -214,6 +223,8 @@ export function WorkflowBuilder() {
     }
     const sending = live?.publications.find((item) => item.stepKey === step.key && ["publishing", "sending"].includes(item.status));
     if (sending) return { label: "در حال ارسال به کانال...", state: "running" };
+    const imported=step.type==="publish" ? collectionOutputs.filter((i)=>i.stepKey===step.key) : [];
+    if(imported.length){const item=imported.find((i)=>i.status==="sending") ?? imported.find((i)=>i.status==="failed") ?? imported.find((i)=>i.status==="waiting_approval") ?? imported[0];return {label:calendarLabels[item.status],state:item.status==="sending"?"running":item.status==="failed"?"failed":item.status==="published"?"completed":"waiting"};}
     const calendarItem = step.type === "publish" ? live?.publications.find((item) => item.stepKey === step.key) : null;
     if (calendarItem) {
       const statuses: Record<string, { label: string; state: string }> = { waiting_approval: { label: "منتظر تأیید", state: "waiting" }, scheduled: { label: "زمان‌بندی‌شده", state: "waiting" },
@@ -513,7 +524,7 @@ export function WorkflowBuilder() {
   const connect = (sourceKey: string, targetKey: string) => {
     const source = steps.find((step) => step.key === sourceKey), target = steps.find((step) => step.key === targetKey);
     setConnecting(null); setPointer(null);
-    if (source?.type === "collection_source" && target?.type !== "publish") { setMessage("کارت مجموعه را مستقیم به کارت انتشار یوتیوب وصل کن."); return; }
+    if (source?.type === "collection_source" && target?.type !== "publish") { setMessage("کارت مجموعه را مستقیم به کارت‌های انتشار وصل کن."); return; }
     if (!source || !target || sourceKey === targetKey || isTerminal(source) || isSource(target)) {
       setMessage("این دو کارت نمی‌توانند در این جهت وصل شوند."); return;
     }
@@ -748,7 +759,7 @@ export function WorkflowBuilder() {
             step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال سرویس را انتخاب کن" :
             step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
             step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
-            step.type === "collection_source" ? "اکسل، ویدئوها و برنامه انتشار" : step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>
+            step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>
           {step.type === "rss_source" ? <div className="graph-source-footer graph-source-schedule"><span>{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
@@ -803,8 +814,8 @@ export function WorkflowBuilder() {
           <option value="rss">RSS</option><option value="eitaa">کانال ایتا</option><option value="bale">کانال بله</option>
           <option value="api">کامنت API</option><option value="manual">ورودی دستی</option></select></label> : null}
         {selected.type === "collection_source" ? <CollectionPanel key={selected.key} workflowId={workflowId} stepKey={selected.key}
-          targets={steps.filter((s) => s.type === "publish" && accounts.find((a) => a.id === s.config.accountId)?.channel === "youtube" && edges.some((e) => e.sourceKey === selected.key && e.targetKey === s.key))}
-          config={selected.config} update={(key,value) => update(selected.key,key,value)} refresh={refreshYoutube} items={youtubeItems} /> : null}
+          targets={steps.filter((s) => s.type === "publish" && ["youtube", "telegram", "eitaa", "bale", "instagram", "website"].includes(accounts.find((a) => a.id === s.config.accountId)?.channel ?? "") && edges.some((e) => e.sourceKey === selected.key && e.targetKey === s.key)).map((s)=>({...s,config:{...s.config,collectionChannel:accounts.find((a)=>a.id===s.config.accountId)?.channel}}))}
+          config={selected.config} update={(key,value) => update(selected.key,key,value)} refresh={refreshYoutube} items={youtubeItems} calendarOutputs={collectionOutputs} /> : null}
         {selected.type === "rss_source" ? <>
           {selected.config.sourceKind === "eitaa" || selected.config.sourceKind === "bale" ? <label><span>شناسه یا لینک کانال</span>
             <input dir="ltr" placeholder={selected.config.sourceKind === "bale" ? "https://ble.ir/channel" : "https://eitaa.com/channel"}

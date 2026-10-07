@@ -17,6 +17,7 @@ import {
   isConnectionError,
   connectionErrorReason,
   definitelyNotSent,
+  fetchCollectionMedia,
 } from "@socialyar/db";
 
 export async function executePublication(input: {
@@ -100,6 +101,7 @@ export async function executePublication(input: {
   if (!claimed) return;
 
   let transport: Awaited<ReturnType<typeof publishingTransport>> | undefined;
+  let sendAttempted=false;
   let confirmed: Awaited<ReturnType<typeof publishToChannel>> | undefined;
   try {
     if (!account) throw new Error(`No active social account configured for ${variant.channel}`);
@@ -108,17 +110,27 @@ export async function executePublication(input: {
         await db.insert(publicationConnectionEvents).values({ workspaceId: publication.workspaceId, publicationId: publication.id, ...event });
       });
     }
+    let media:Blob|undefined;
+    const mediaUrl=variant.settings.videoUrl || variant.settings.imageUrl;
+    if(variant.settings.collectionId && variant.channel!=="instagram" && ["eitaa","bale","telegram"].includes(variant.channel) && typeof mediaUrl==="string"){
+      const file=await fetchCollectionMedia(publication.workspaceId,mediaUrl,variant.settings.videoUrl?"video":"image",variant.settings.mediaConnection);
+      if(file.bytes.length>(variant.channel==="eitaa" ? variant.settings.videoUrl?20_000_000:5_000_000 : 50_000_000))throw new Error("حجم فایل برای مقصد بیش از حد مجاز است.");
+      media=new Blob([new Uint8Array(file.bytes)],{type:file.type});
+    }
+    sendAttempted=true;
     const result = await publishToChannel({
+      media,providerState:variant.settings,
+      saveProviderState:async(state)=>{await db.update(contentVariants).set({settings:{...variant.settings,...state}}).where(eq(contentVariants.id,variant.id));},
       fetch: transport?.fetch,
       publicationId: publication.id,
       channel: variant.channel,
       title: variant.title,
       content: variant.body,
-      imageUrl: variant.channel === "eitaa" && typeof variant.settings.imageUrl === "string" ? variant.settings.imageUrl : null,
-      videoUrl: variant.channel === "eitaa" && typeof variant.settings.videoUrl === "string" ? variant.settings.videoUrl : null,
-      credentials: variant.channel === "eitaa" && typeof account.credentials.botTokenEnc === "string"
+      imageUrl: typeof variant.settings.imageUrl === "string" ? variant.settings.imageUrl : null,
+      videoUrl: typeof variant.settings.videoUrl === "string" ? variant.settings.videoUrl : null,
+      credentials: typeof account.credentials.botTokenEnc === "string"
         ? { ...account.credentials, botToken: decryptSecret(account.credentials.botTokenEnc) }
-        : account.credentials,
+        : typeof account.credentials.accessTokenEnc === "string" ? {...account.credentials,accessToken:decryptSecret(account.credentials.accessTokenEnc)} : account.credentials,
       externalAccountId: account.externalAccountId,
     });
     confirmed = result;
@@ -160,7 +172,7 @@ export async function executePublication(input: {
     return result;
   } catch (error) {
     const unknown = error instanceof AmbiguousDeliveryError || (error as { code?: string })?.code === "DELIVERY_UNKNOWN" ||
-      Boolean(transport && isConnectionError(error) && !definitelyNotSent(error));
+      Boolean(sendAttempted && isConnectionError(error) && !definitelyNotSent(error));
     const details = {
       message:
         unknown ? new AmbiguousDeliveryError().message : isConnectionError(error) ? connectionErrorReason(error) : error instanceof Error ? error.message : "Unknown publication error",

@@ -10,7 +10,7 @@ import { faDigits } from "../lib/persian-calendar";
 import { persianError } from "../lib/persian";
 
 export const calendarLabels = { draft: "پیش‌نویس", preparing: "منتظر دریافت فایل", waiting_approval: "منتظر تأیید", scheduled: "زمان‌بندی‌شده", queued: "در صف", sending: "در حال ارسال", published: "منتشرشده", failed: "ناموفق", stopped: "متوقف‌شده" };
-export const networkLabels: Record<string,string> = { youtube: "یوتیوب", telegram: "تلگرام", instagram: "اینستاگرام", eitaa: "ایتا", website: "وب‌سایت", x: "ایکس", linkedin: "لینکدین" };
+export const networkLabels: Record<string,string> = { youtube: "یوتیوب", telegram: "تلگرام", instagram: "اینستاگرام", eitaa: "ایتا", bale: "بله", website: "وب‌سایت", x: "ایکس", linkedin: "لینکدین" };
 export type CalendarAccount = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, timezone, error, message }: { item: CalendarItem; accounts: CalendarAccount[]; busy: boolean; timezone: string; error: string; message: string;
   close: () => void; mutate: (item: CalendarItem, action: string, data?: Record<string, unknown>) => Promise<boolean>; schedule: (item: CalendarItem) => void }) {

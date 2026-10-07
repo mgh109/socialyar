@@ -77,7 +77,7 @@ export async function enqueueAutoPublication(runId: string) {
     const [account] = await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, row.workspaceId),
         eq(socialAccounts.isActive, true))).limit(1);
-    if (!account || !["eitaa", "telegram", "website"].includes(account.channel))
+    if (!account || !["eitaa", "telegram", "bale", "instagram", "website"].includes(account.channel))
       throw new Error("مقصد انتشار معتبر یا فعال نیست");
 
     const existing = await db.select().from(contentItems).where(eq(contentItems.runId, runId));
@@ -113,8 +113,8 @@ export async function enqueueAutoPublication(runId: string) {
     await db.update(contentVariants).set({ settings: { ...variant.settings, pacedInQueue: true } })
       .where(eq(contentVariants.id, variant.id));
     await publicationQueue.add("publish-content", { publicationId: publication.id }, {
-      jobId: `publication-${publication.id}`, delay, attempts: 3,
-      backoff: { type: "exponential", delay: 5000 }, removeOnComplete: 1000,
+      jobId: `publication-${publication.id}`, delay, attempts: account.channel==="instagram" ? 10 : 3,
+      backoff: { type: account.channel==="instagram" ? "fixed" : "exponential", delay: account.channel==="instagram" ? 60000 : 5000 }, removeOnComplete: 1000,
     });
     } catch (error) {
       if (youtubeAccount && generated) {

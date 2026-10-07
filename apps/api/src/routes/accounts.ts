@@ -3,7 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { decryptSecret, encryptSecret, getDb, socialAccounts } from "@socialyar/db";
 
-const channelSchema = z.enum(["instagram", "telegram", "website", "x", "linkedin", "eitaa", "youtube"]);
+const channelSchema = z.enum(["instagram", "telegram", "website", "x", "linkedin", "eitaa", "youtube", "bale"]);
 
 const createAccountSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -39,6 +39,7 @@ function safeAccount(account: typeof socialAccounts.$inferSelect) {
 async function testTelegram(
   externalAccountId: string,
   credentials: Record<string, unknown>,
+  channel="telegram",
 ) {
   const botToken =
     typeof credentials.botToken === "string" ? credentials.botToken : "";
@@ -47,8 +48,9 @@ async function testTelegram(
     throw new Error("botToken is required");
   }
 
+  const origin=channel==="bale" ? "https://tapi.bale.ai" : "https://api.telegram.org";
   const botResponse = await fetch(
-    `https://api.telegram.org/bot${botToken}/getMe`,
+    `${origin}/bot${botToken}/getMe`,
   );
   const botData = (await botResponse.json()) as {
     ok?: boolean;
@@ -66,7 +68,7 @@ async function testTelegram(
       : externalAccountId;
 
   const chatResponse = await fetch(
-    `https://api.telegram.org/bot${botToken}/getChat?chat_id=${encodeURIComponent(chatId)}`,
+    `${origin}/bot${botToken}/getChat?chat_id=${encodeURIComponent(chatId)}`,
   );
   const chatData = (await chatResponse.json()) as {
     ok?: boolean;
@@ -80,7 +82,7 @@ async function testTelegram(
 
   return {
     ok: true,
-    provider: "telegram-bot-api",
+    provider: channel==="bale" ? "bale-bot-api" : "telegram-bot-api",
     identity: {
       bot: botData.result?.username ?? botData.result?.first_name ?? "Telegram Bot",
       chat: chatData.result?.username ?? chatData.result?.title ?? chatId,
@@ -134,10 +136,11 @@ export async function accountRoutes(app: FastifyInstance) {
   app.post("/social-accounts", async (request, reply) => {
     const input = createAccountSchema.parse(request.body);
     if (input.channel === "youtube") return reply.code(400).send({ error: "youtube_requires_google_oauth" });
-    if (input.channel === "eitaa" && (typeof input.credentials.botToken !== "string" || !input.credentials.botToken || typeof input.credentials.chatId !== "string" || !input.credentials.chatId)) {
-      return reply.code(400).send({ error: "eitaa_token_and_chat_required" });
+    if (["eitaa","bale"].includes(input.channel) && (typeof input.credentials.botToken !== "string" || !input.credentials.botToken || typeof input.credentials.chatId !== "string" || !input.credentials.chatId)) {
+      return reply.code(400).send({ error: input.channel === "bale" ? "توکن و شناسه کانال بله لازم است." : "eitaa_token_and_chat_required" });
     }
-    const credentials = input.channel === "eitaa"
+    if(input.channel==="instagram" && (typeof input.credentials.accessToken!=="string" || !input.credentials.accessToken || !/^v\d+\.\d+$/.test(String(input.credentials.apiVersion)) || !/^\d+$/.test(input.externalAccountId)))return reply.code(400).send({error:"شناسه رسمی، توکن انتشار و نسخه API اینستاگرام را وارد کنید."});
+    const credentials = input.channel === "instagram" ? {apiVersion:input.credentials.apiVersion,loginType:input.credentials.loginType,accessTokenEnc:encryptSecret(input.credentials.accessToken as string)} : ["eitaa","bale"].includes(input.channel)
       ? { chatId: input.credentials.chatId, botTokenEnc: encryptSecret(input.credentials.botToken as string) }
       : input.credentials;
 
@@ -183,11 +186,11 @@ export async function accountRoutes(app: FastifyInstance) {
             ? current.displayName
             : input.displayName,
         credentials: input.credentials
-          ? current.channel === "eitaa"
+          ? ["eitaa","bale"].includes(current.channel)
             ? { chatId: input.credentials.chatId ?? current.credentials.chatId,
                 botTokenEnc: typeof input.credentials.botToken === "string"
                   ? encryptSecret(input.credentials.botToken) : current.credentials.botTokenEnc }
-            : { ...current.credentials, ...input.credentials }
+            : current.channel === "instagram" ? { ...current.credentials,apiVersion:input.credentials.apiVersion ?? current.credentials.apiVersion,loginType:input.credentials.loginType ?? current.credentials.loginType,...(typeof input.credentials.accessToken==="string" ? {accessTokenEnc:encryptSecret(input.credentials.accessToken)} : {}) } : { ...current.credentials, ...input.credentials }
           : current.credentials,
         isActive: input.isActive ?? current.isActive,
         updatedAt: new Date(),
@@ -234,13 +237,21 @@ export async function accountRoutes(app: FastifyInstance) {
     }
 
     try {
-      if (account.channel === "telegram") {
+      if (account.channel === "telegram" || account.channel === "bale") {
         return await testTelegram(
           account.externalAccountId,
-          account.credentials,
+          typeof account.credentials.botTokenEnc==="string" ? {...account.credentials,botToken:decryptSecret(account.credentials.botTokenEnc)} : account.credentials,
+          account.channel,
         );
       }
 
+      if(account.channel==="instagram"){
+        const token=typeof account.credentials.accessTokenEnc==="string" ? decryptSecret(account.credentials.accessTokenEnc) : "";
+        if(!token)throw new Error("توکن رسمی اینستاگرام ثبت نشده است.");
+        const origin=account.credentials.loginType==="facebook" ? "https://graph.facebook.com" : "https://graph.instagram.com";
+        const version=String(account.credentials.apiVersion);if(!/^v\d+\.\d+$/.test(version) || !/^\d+$/.test(account.externalAccountId))throw new Error("تنظیم اتصال اینستاگرام معتبر نیست.");
+        const r=await fetch(`${origin}/${version}/${account.externalAccountId}?fields=id,username`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});const data=await r.json();if(!r.ok || !data.id)throw new Error(data.error?.message ?? "اتصال رسمی ناموفق بود.");return {ok:true,provider:"instagram-graph-api",identity:{username:data.username},publishingPermissionVerified:false};
+      }
       if (account.channel === "website") {
         return await testWebsite(account.credentials);
       }

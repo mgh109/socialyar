@@ -4,7 +4,8 @@ export type SheetData = { headers: string[]; rows: string[][] };
 export type ColumnMapping = Record<string, number>;
 export function inferMapping(headers: string[]): ColumnMapping {
   const result: ColumnMapping = {};
-  for (const [key, label] of collectionColumns) result[key] = headers.findIndex((h) => h.trim() === label || h.trim().toLowerCase() === key.toLowerCase());
+  const aliases:Record<string,string[]>={id:["شناسه"],description:["text","body","caption","متن","کپشن"],coverUrl:["imageurl","لینک تصویر","لینک تصویر / کاور"],videoUrl:["لینک فایل ویدئو"],order:["ترتیب"]};
+  for (const [key, label] of collectionColumns) result[key] = headers.findIndex((h) => h.trim() === label || h.trim().toLowerCase() === key.toLowerCase() || aliases[key]?.includes(h.trim().toLowerCase()));
   return result;
 }
 export async function readCollectionSheet(file: File): Promise<SheetData> {
@@ -30,7 +31,7 @@ export async function readCollectionSheet(file: File): Promise<SheetData> {
   return { headers: rows[0] ?? [], rows: rows.slice(1).filter((r) => r.some((v) => v.trim())) };
 }
 export function mapCollectionRows(sheet: SheetData, mapping: ColumnMapping, defaults: Partial<CollectionRow> = {}) {
-  for (const key of ["id", "title", "videoUrl"]) if ((mapping[key] ?? -1) < 0) throw new Error("ستون شناسه محتوا، عنوان و لینک ویدئو را مشخص کنید.");
+  for (const key of ["id", "title"]) if ((mapping[key] ?? -1) < 0) throw new Error("ستون شناسه محتوا و عنوان را مشخص کنید.");
   const rows: CollectionRow[] = []; const errors: string[] = []; const ids = new Set<string>(); const orders = new Set<number>();
   sheet.rows.forEach((values, index) => {
     const get = (key: string) => values[mapping[key]]?.trim() ?? "";
@@ -48,7 +49,8 @@ export function mapCollectionRows(sheet: SheetData, mapping: ColumnMapping, defa
       if (type && !videoTypes[type]) throw new Error("نوع محتوا باید ویدئو یا Shorts باشد.");
       if (privacy && !privacies[privacy]) throw new Error("وضعیت نمایش معتبر نیست.");
       if (kids && !["true", "false", "بله", "خیر", "1", "0"].includes(kids)) throw new Error("مخصوص کودکان را بله یا خیر وارد کنید.");
-      const row = collectionRowSchema.parse({ ...defaults, id: get("id"), order: get("order") ? Number(latinDigits(get("order"))) : index + 1,
+      const specific=Object.fromEntries(["youtubeDescription","instagramCaption","telegramText","eitaaText","baleText"].filter((key)=>(mapping[key]??-1)>=0).map((key)=>[key,get(key)]));
+      const row = collectionRowSchema.parse({ ...defaults,...specific, id: get("id"), order: get("order") ? Number(latinDigits(get("order"))) : index + 1,
         title: get("title"), description: get("description"), videoUrl: get("videoUrl"), coverUrl: get("coverUrl"), scheduledAt,
         videoType: type ? videoTypes[type] : defaults.videoType ?? "video", privacy: privacy ? privacies[privacy] : defaults.privacy ?? "private",
         playlist: get("playlist") || defaults.playlist || "", tags: get("tags") ? get("tags").split(/[,،]/).map((v) => v.trim()).filter(Boolean) : defaults.tags ?? [],
@@ -75,7 +77,7 @@ export async function downloadCollectionTemplate() {
   sheet.columns = collectionColumns.map(([key,header]) => ({ key, header, width: ["description","videoUrl","coverUrl"].includes(key) ? 40 : 22 }));
   sheet.getRow(1).font = { bold: true }; sheet.getColumn("id").numFmt = "@"; sheet.getColumn("date").numFmt = "@"; sheet.getColumn("time").numFmt = "@";
   const help = workbook.addWorksheet("راهنما", { views: [{ rightToLeft: true }] }); help.getColumn(1).width = 100;
-  ["هر ردیف یک ویدئو است. شناسه محتوا ثابت، یکتا و متنی باشد؛ بعداً عوض نشود.", "عنوان و لینک HTTPS ویدئو الزامی‌اند. برای دراپ‌باکس لینک اشتراک عمومی فایل را وارد کنید.",
+  ["هر ردیف یک محتوا است. شناسه محتوا ثابت، یکتا و متنی باشد؛ بعداً عوض نشود.", "شناسه و عنوان الزامی‌اند؛ لینک ویدئو برای یوتیوب الزامی است. برای دراپ‌باکس لینک اشتراک عمومی فایل را وارد کنید.",
     "تاریخ را متنی و شمسی مانند ۱۴۰۵/۰۷/۲۰ و ساعت را مانند ۱۸:۰۰ وارد کنید. تاریخ خالی را می‌توان در کارت زمان‌بندی کرد.",
     "نوع محتوا: video یا shorts. وضعیت نمایش: private، public یا unlisted. مخصوص کودکان: بله یا خیر.",
     "برچسب‌ها با ویرگول جدا شوند. نام پلی‌لیست یا شناسه PL… قابل استفاده است.", "برای به‌روزرسانی، نسخه کامل مجموعه را با همان شناسه‌ها بارگذاری کنید. حذف‌ها فقط با تأیید اعمال می‌شوند."].forEach((v) => help.addRow([v]));

@@ -1,20 +1,32 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { collectionDiff, collectionRowSchema, collectionRowsSchema } from "@socialyar/shared";
+import { collectionDiff, collectionRowSchema, collectionRowsSchema, validateCollectionDestination, collectionDestinations, collectionBody, collectionTextChanged } from "@socialyar/shared";
 import { getDb, contentCollections, collectionImportEvents, youtubeItems, workflows, workflowVersions, workflowSteps, workflowConnections,
-  socialAccounts, validateConnectionPolicy, youtubeToken, publishingTransport, googleJson, fetchCollectionMedia, storeYoutubeMedia } from "@socialyar/db";
+  collectionSheetSnapshots, fetchGoogleSheet, socialAccounts, validateConnectionPolicy, youtubeToken, publishingTransport, googleJson, fetchCollectionMedia, storeYoutubeMedia } from "@socialyar/db";
 import { connectionCheckQueue, publicationQueue } from "../queue";
+import { previewCollectionDestination, applyCollectionDestination } from "./collection-destinations";
 const scope = z.object({ workflowId: z.string().uuid(), sourceStepKey: z.string().min(1), targetStepKey: z.string().min(1) });
 const previewSchema = scope.extend({ rows: collectionRowsSchema, detectRemovals: z.boolean().default(true) });
 const applySchema = previewSchema.extend({ revision: z.number().int().min(0), selected: z.array(z.object({ id: z.string(), version: z.number().nullable(), updatedAt: z.string().nullable() })).min(1).max(500) });
 class ImportConflict extends Error {}
 export async function contentCollectionRoutes(app: FastifyInstance, options: { database?: ReturnType<typeof getDb>; queue?: Pick<typeof publicationQueue,"add"> } = {}) {
   const db = options.database ?? getDb(); const queue = options.queue ?? publicationQueue; app.addHook("onRequest", app.authenticate);
+  app.post("/content-collections/google-sheet",async(request,reply)=>{
+    const input=scope.extend({ url:z.string().url(),gid:z.string().regex(/^\d{1,15}$/).default("0") }).parse(request.body);
+    try { await destination(db,request.auth.workspaceId,input);return await fetchGoogleSheet(input.url,input.gid); }
+    catch(e){return reply.code(422).send({error:e instanceof Error ? e.message : "خواندن شیت ناموفق بود."});}
+  });
+  app.get("/content-collections/google-sheet/snapshot",async(request)=>{
+    const input=z.object({workflowId:z.string().uuid(),sourceStepKey:z.string()}).parse(request.query);
+    const [snapshot]=await db.select().from(collectionSheetSnapshots).where(and(eq(collectionSheetSnapshots.workspaceId,request.auth.workspaceId),eq(collectionSheetSnapshots.workflowId,input.workflowId),eq(collectionSheetSnapshots.sourceStepKey,input.sourceStepKey)));
+    return snapshot ?? null;
+  });
   app.post("/content-collections/update-published", async (request,reply) => {
     const input = scope.extend({ row:collectionRowSchema, revision:z.number().int(), version:z.number().int(), updatedAt:z.string().datetime() }).parse(request.body);
     try {
-      await destination(db,request.auth.workspaceId,input);
+      const target = await destination(db,request.auth.workspaceId,input);
+      if (target.account.channel !== "youtube") throw new ImportConflict("ویرایش محتوای منتشرشده فقط برای یوتیوب پشتیبانی می‌شود.");
       await db.transaction(async (tx) => {
         const [collection] = await tx.select().from(contentCollections).where(collectionWhere(request.auth.workspaceId,input)).for("update");
         if (!collection || collection.revision!==input.revision) throw new ImportConflict("مجموعه تغییر کرده است؛ پیش‌نمایش را تازه کنید.");
@@ -30,7 +42,7 @@ export async function contentCollectionRoutes(app: FastifyInstance, options: { d
           const current = await googleJson(await transport.fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status&id=${encodeURIComponent(item.videoId!)}`,{ headers,signal:AbortSignal.timeout(15000) }));
           const video = current.items?.[0]; if (!video) throw new Error("ویدئوی منتشرشده در کانال پیدا نشد.");
           const fields = change.fields; const title=fields.includes("title") ? input.row.title : video.snippet.title;
-          const description=fields.includes("description") ? input.row.description : video.snippet.description;
+          const description=collectionTextChanged(fields,"youtube") ? collectionBody(input.row,"youtube") : video.snippet.description;
           const tags=fields.includes("tags") ? input.row.tags : video.snippet.tags ?? [];
           const privacy=fields.includes("privacy") ? privateOnly ? "private" : input.row.privacy : video.status.privacyStatus;
           const madeForKids=fields.includes("madeForKids") ? input.row.madeForKids : video.status.selfDeclaredMadeForKids ?? false;
@@ -74,7 +86,9 @@ export async function contentCollectionRoutes(app: FastifyInstance, options: { d
   app.post("/content-collections/preview", { bodyLimit: 4_000_000 }, async (request, reply) => {
     const input = previewSchema.parse(request.body);
     try {
-      await destination(db, request.auth.workspaceId, input);
+      const target = await destination(db, request.auth.workspaceId, input);
+      validateCollectionDestination(input.rows, target.account.channel);
+      if (target.account.channel !== "youtube") return await previewCollectionDestination(db, request.auth.workspaceId, input);
       const [collection] = await db.select().from(contentCollections).where(collectionWhere(request.auth.workspaceId, input));
       const ids = collection?.records.map((r) => r.itemId) ?? [];
       const items = ids.length ? await db.select().from(youtubeItems).where(and(eq(youtubeItems.workspaceId, request.auth.workspaceId), inArray(youtubeItems.id, ids))) : [];
@@ -87,6 +101,8 @@ export async function contentCollectionRoutes(app: FastifyInstance, options: { d
       const target = await destination(db, request.auth.workspaceId, input);
       await validateConnectionPolicy(request.auth.workspaceId, target.step.config.connection);
       await validateConnectionPolicy(request.auth.workspaceId, target.source.config.mediaConnection);
+      validateCollectionDestination(input.rows, target.account.channel);
+      if (target.account.channel !== "youtube") return await applyCollectionDestination(db, request.auth, input, target);
       const result = await db.transaction(async (tx) => {
         await tx.insert(contentCollections).values({ workspaceId: request.auth.workspaceId, workflowId: input.workflowId,
           sourceStepKey: input.sourceStepKey, targetStepKey: input.targetStepKey }).onConflictDoNothing();
@@ -118,7 +134,7 @@ export async function contentCollectionRoutes(app: FastifyInstance, options: { d
             if (!old || change.fields.includes("coverUrl")) { delete settings.coverMediaId; settings.sourceCoverUrl = row.coverUrl; }
             const prepare = !settings.videoMediaId || Boolean(settings.coverUrl && !settings.coverMediaId) || change.fields.includes("videoType");
             const values = { settings, title: !old || change.fields.includes("title") ? row.title : old.title,
-              description: !old || change.fields.includes("description") ? row.description : old.description,
+              description: !old || collectionTextChanged(change.fields,"youtube") ? collectionBody(row,"youtube") : old.description,
               scheduledAt: !old || change.fields.includes("scheduledAt") ? row.scheduledAt ? new Date(row.scheduledAt) : null : old.scheduledAt,
               status: prepare ? "waiting_video" : "waiting_approval", approvedAt: null, approvedBy: null, error: null,
               queueVersion: (old?.queueVersion ?? -1) + 1, updatedAt: new Date() };
@@ -165,9 +181,16 @@ async function destination(db: ReturnType<typeof getDb>, workspaceId: string, in
   const step = steps.find((s) => s.key === input.targetStepKey && s.type === "publish");
   if (!source || !step) throw new ImportConflict("کارت مجموعه و انتشار را ذخیره کنید.");
   const [edge] = await db.select().from(workflowConnections).where(and(eq(workflowConnections.workflowVersionId, version.id), eq(workflowConnections.sourceStepId, source.id), eq(workflowConnections.targetStepId, step.id)));
-  if (!edge) throw new ImportConflict("کارت مجموعه را مستقیم به کارت انتشار یوتیوب وصل و جریان را ذخیره کنید.");
-  if (!z.string().uuid().safeParse(step.config.accountId).success) throw new ImportConflict("کانال یوتیوب را در کارت مقصد انتخاب و جریان را ذخیره کنید.");
-  const [account] = await db.select().from(socialAccounts).where(and(eq(socialAccounts.id, String(step.config.accountId)), eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true)));
-  if (!account) throw new ImportConflict("در کارت مقصد، کانال فعال یوتیوب را انتخاب کنید.");
+  if (!edge) throw new ImportConflict("کارت مجموعه را مستقیم به کارت انتشار وصل و جریان را ذخیره کنید.");
+  if (!z.string().uuid().safeParse(step.config.accountId).success) throw new ImportConflict("حساب را در کارت مقصد انتخاب و جریان را ذخیره کنید.");
+  const [account] = await db.select().from(socialAccounts).where(and(eq(socialAccounts.id, String(step.config.accountId)), eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.isActive, true)));
+  if (!account || !collectionDestinations.includes(account.channel as typeof collectionDestinations[number])) throw new ImportConflict("در کارت مقصد، حساب فعال و پشتیبانی‌شده را انتخاب کنید.");
+  const [existing]=await db.select().from(contentCollections).where(collectionWhere(workspaceId,input));
+  if(existing?.records.length){
+    const first=existing.records[0].itemId;
+    const [video]=await db.select({accountId:youtubeItems.accountId}).from(youtubeItems).where(and(eq(youtubeItems.id,first),eq(youtubeItems.workspaceId,workspaceId)));
+    if(video && (account.channel!=="youtube" || video.accountId!==account.id))throw new ImportConflict("مقصد مجموعه ثبت‌شده را تغییر ندهید؛ کارت انتشار جدید متصل کنید.");
+    if(!video && account.channel==="youtube")throw new ImportConflict("برای مقصد یوتیوب، کارت انتشار جدید متصل کنید.");
+  }
   return { step, account, source };
 }

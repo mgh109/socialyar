@@ -252,7 +252,7 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     const [account] = await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, workspaceId),
         eq(socialAccounts.isActive, true))).limit(1);
-    if (!account || !["eitaa", "telegram", "website", "youtube"].includes(account.channel)) return "eitaa_account_not_found";
+    if (!account || !["eitaa", "telegram", "bale", "instagram", "website", "youtube"].includes(account.channel)) return "eitaa_account_not_found";
     if (["youtube", "telegram", "instagram"].includes(account.channel)) {
       try { await validateConnectionPolicy(workspaceId, publisher.config.connection); }
       catch { return "invalid_publishing_connection"; }
@@ -310,7 +310,7 @@ export async function workflowRoutes(app: FastifyInstance) {
       db.select({ id: apiConnections.id, label: apiConnections.name }).from(apiConnections)
         .where(eq(apiConnections.workspaceId, workspaceId)),
     ]);
-    const accounts = accountRows.filter((item) => ["eitaa", "telegram", "website", "youtube"].includes(item.channel));
+    const accounts = accountRows.filter((item) => ["eitaa", "telegram", "bale", "instagram", "website", "youtube"].includes(item.channel));
     const validAccounts = new Set(accounts.map((item) => item.id));
     const validConnections = new Set(connectionRows.map((item) => item.id));
     const usageReport: { value: AIRequestUsage | null } = { value: null };
