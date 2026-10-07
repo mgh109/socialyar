@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { calendarStatus } from "@socialyar/shared";
 import { generateWorkflowBlueprint, type AIConnection, type AIRequestUsage } from "@socialyar/ai";
 import { graphProblem } from "@socialyar/workflow/graph";
 import {
@@ -422,12 +423,12 @@ export async function workflowRoutes(app: FastifyInstance) {
           inArray(runSteps.status, ["running", "retrying", "waiting_approval"])))
         .orderBy(desc(runSteps.startedAt)).limit(100),
       db.select({ id: publications.id, status: publications.status, updatedAt: publications.updatedAt,
-        publishedAt: publications.publishedAt, metadata: contentItems.metadata })
+        publishedAt: publications.publishedAt, metadata: contentItems.metadata, settings: contentVariants.settings, contentStatus: contentVariants.status, scheduledAt: schedules.scheduledAt })
         .from(publications).innerJoin(contentVariants, eq(publications.contentVariantId, contentVariants.id))
         .innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id))
         .innerJoin(runs, eq(contentItems.runId, runs.id))
-        .where(and(eq(runs.workflowId, workflowId),
-          or(eq(publications.status, "publishing"), gte(publications.updatedAt, new Date(Date.now() - 90_000)))))
+        .leftJoin(schedules, eq(publications.scheduleId, schedules.id))
+        .where(and(eq(runs.workflowId, workflowId), eq(publications.workspaceId, request.auth.workspaceId)))
         .orderBy(desc(publications.updatedAt)).limit(50),
       db.select({ stepKey: workflowSteps.key, runId: runSteps.runId, status: runSteps.status,
         output: runSteps.output, finishedAt: runSteps.finishedAt })
@@ -464,7 +465,10 @@ export async function workflowRoutes(app: FastifyInstance) {
       filters: [...latestFilters.values()],
       connections: connectionRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ? [{ stepKey: row.metadata.publishStepKey, route: row.route, proxyName: row.proxyName }] : []),
       publications: publicationRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ?
-        [{ id: row.id, stepKey: row.metadata.publishStepKey, status: row.status,
+        [{ id: row.id, stepKey: row.metadata.publishStepKey, status: calendarStatus({
+          rawStatus: row.settings.calendarPaused === true ? "cancelled" : row.status === "cancelled" && row.settings.calendarHold === true ? row.contentStatus : row.status,
+          contentStatus: row.contentStatus, scheduledAt: row.settings.calendarUnscheduled === true ? null : row.scheduledAt,
+          approved: ["approved", "scheduled"].includes(row.contentStatus) }),
           updatedAt: row.updatedAt, publishedAt: row.publishedAt }] : []),
       sources: sourceSteps.flatMap((step, index) => {
         const raw = markers[index];

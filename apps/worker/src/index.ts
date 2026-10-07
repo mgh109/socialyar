@@ -30,7 +30,7 @@ const workflowWorker = new Worker(
 const publicationWorker = new Worker(
   "publication-jobs",
   async (job) => {
-    if (job.name === "youtube-publish") return executeYoutube(job.data.youtubeItemId);
+    if (job.name === "youtube-publish") return executeYoutube(job.data.youtubeItemId, undefined, job.data.queueVersion ?? 0);
     const data = job.data as { publicationId: string };
     const maxAttempts = Number(job.opts.attempts ?? 1);
 
@@ -38,6 +38,7 @@ const publicationWorker = new Worker(
       publicationId: data.publicationId,
       attempt: job.attemptsMade + 1,
       maxAttempts,
+      queueVersion: job.data.queueVersion ?? 0,
     });
   },
   {

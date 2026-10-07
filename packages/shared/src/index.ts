@@ -1,4 +1,5 @@
 import { z } from "zod";
+export * from "./calendar";
 
 export const channelSchema = z.enum(["instagram", "telegram", "website", "x", "linkedin", "eitaa", "youtube"]);
 export type Channel = z.infer<typeof channelSchema>;

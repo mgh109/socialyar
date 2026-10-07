@@ -264,6 +264,7 @@ export const contentItems = pgTable("content_items", {
 }));
 
 export const contentVariants = pgTable("content_variants", {
+  calendarVersion: integer("calendar_version").default(0).notNull(),
   id: uuid("id").defaultRandom().primaryKey(),
   contentItemId: uuid("content_item_id").notNull().references(() => contentItems.id, { onDelete: "cascade" }),
   channel: channel("channel").notNull(),
@@ -316,6 +317,7 @@ export const schedules = pgTable("schedules", {
 }));
 
 export const publications = pgTable("publications", {
+  queueVersion: integer("queue_version").default(0).notNull(),
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   contentVariantId: uuid("content_variant_id").notNull().references(() => contentVariants.id, { onDelete: "cascade" }),
@@ -376,6 +378,7 @@ export const reports = pgTable("reports", {
 }));
 
 export const youtubeItems = pgTable("youtube_items", {
+  queueVersion: integer("queue_version").default(0).notNull(),
   id: uuid("id").defaultRandom().primaryKey(),
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
   workflowId: uuid("workflow_id").notNull().references(() => workflows.id),
@@ -439,5 +442,16 @@ export const publicationConnectionEvents = pgTable("publication_connection_event
   proxyName: text("proxy_name"),
   result: text("result").notNull(),
   error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const calendarActions = pgTable("calendar_actions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  sourceId: uuid("source_id").notNull(),
+  kind: text("kind").notNull(),
+  action: text("action").notNull(),
+  detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+  userId: uuid("user_id").references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

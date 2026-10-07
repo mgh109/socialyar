@@ -23,8 +23,8 @@ export async function executePublication(input: {
   publicationId: string;
   attempt: number;
   maxAttempts: number;
-}) {
-  const db = getDb();
+  queueVersion?: number;
+}, db = getDb()) {
 
   const [publication] = await db
     .select()
@@ -36,6 +36,7 @@ export async function executePublication(input: {
     throw new Error("Publication not found");
   }
   if (publication.status === "published" || publication.status === "cancelled") return;
+  if (publication.queueVersion !== (input.queueVersion ?? 0)) return;
   if (publication.externalId) return; // A confirmed remote send must never be replayed after a local write failure.
 
   const [variant] = await db
@@ -47,6 +48,7 @@ export async function executePublication(input: {
   if (!variant) {
     throw new Error("Content variant not found");
   }
+  if (!["approved", "scheduled"].includes(variant.status)) return;
 
   const account = publication.socialAccountId
     ? (
@@ -94,7 +96,7 @@ export async function executePublication(input: {
       socialAccountId: account?.id ?? null,
       updatedAt: new Date(),
     })
-    .where(and(eq(publications.id, publication.id), eq(publications.status, "queued"))).returning();
+    .where(and(eq(publications.id, publication.id), eq(publications.status, "queued"), eq(publications.queueVersion, input.queueVersion ?? 0))).returning();
   if (!claimed) return;
 
   let transport: Awaited<ReturnType<typeof publishingTransport>> | undefined;

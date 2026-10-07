@@ -107,7 +107,7 @@ export async function enqueueAutoPublication(runId: string) {
       [publication] = await db.insert(publications).values({ workspaceId: row.workspaceId,
         contentVariantId: variant.id, socialAccountId: account.id, status: "queued" }).returning();
     }
-    if (publication.status === "published" || publication.status === "publishing") continue;
+    if (["published", "publishing", "cancelled", "failed"].includes(publication.status) || publication.queueVersion > 0) continue;
     if (await publicationQueue.getJob(`publication-${publication.id}`)) continue;
     const delay = await reservePublicationSlot(account.id, publishIntervalSeconds);
     await db.update(contentVariants).set({ settings: { ...variant.settings, pacedInQueue: true } })

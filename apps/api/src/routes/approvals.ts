@@ -10,7 +10,7 @@ import {
   schedules,
   socialAccounts,
 } from "@socialyar/db";
-import { publicationQueue } from "../queue";
+import { mutateCalendarItem } from "./calendar";
 
 const resolveApprovalSchema = z.object({
   action: z.enum(["approve", "reject", "changes_requested"]),
@@ -23,26 +23,6 @@ const scheduleSchema = z.object({
   socialAccountId: z.string().uuid(),
   smartSchedule: z.boolean().default(false),
 });
-
-async function enqueuePublication(
-  publicationId: string,
-  scheduledAt: Date,
-) {
-  const delay = Math.max(0, scheduledAt.getTime() - Date.now());
-
-  await publicationQueue.add(
-    "publish-content",
-    { publicationId },
-    {
-      jobId: `publication-${publicationId}`,
-      delay,
-      attempts: 3,
-      backoff: { type: "exponential", delay: 5000 },
-      removeOnComplete: 1000,
-      removeOnFail: 1000,
-    },
-  );
-}
 
 export async function approvalRoutes(app: FastifyInstance) {
   const db = getDb();
@@ -103,20 +83,18 @@ export async function approvalRoutes(app: FastifyInstance) {
     }
 
     if (current.status !== "pending") return reply.code(409).send({ error: "approval_already_resolved" });
+    if (input.action === "approve" || input.action === "reject") {
+      const [variant] = await db.select().from(contentVariants).where(eq(contentVariants.id, current.contentVariantId));
+      if (!variant) return reply.code(404).send({ error: "variant_not_found" });
+      const result = await mutateCalendarItem(db, request.auth, { kind: "variant", id: variant.id }, { action: input.action, version: variant.calendarVersion });
+      if (result.status !== 200) return reply.code(result.status).send(result.body);
+      const [resolved] = await db.select().from(approvals).where(eq(approvals.id, current.id));
+      const [updated] = await db.select().from(contentVariants).where(eq(contentVariants.id, variant.id));
+      return { approval: resolved, variant: updated };
+    }
 
-    const nextApprovalStatus =
-      input.action === "approve"
-        ? "approved"
-        : input.action === "reject"
-          ? "rejected"
-          : "changes_requested";
-
-    const nextContentStatus =
-      input.action === "approve"
-        ? "approved"
-        : input.action === "reject"
-          ? "rejected"
-          : "draft";
+    const nextApprovalStatus = "changes_requested" as const;
+    const nextContentStatus = "draft" as const;
 
     const result = await db.transaction(async (tx) => {
       const [approval] = await tx
@@ -186,71 +164,13 @@ export async function approvalRoutes(app: FastifyInstance) {
     const scheduledAt = new Date(input.scheduledAt);
     if (scheduledAt.getTime() <= Date.now()) return reply.code(400).send({ error: "schedule_must_be_in_future" });
 
-    const result = await db.transaction(async (tx) => {
-      const [claimed] = await tx.update(contentVariants)
-        .set({ status: "scheduled", updatedAt: new Date() })
-        .where(and(eq(contentVariants.id, variant.id), eq(contentVariants.status, "approved")))
-        .returning({ id: contentVariants.id });
-      if (!claimed) return null;
-      const [schedule] = await tx
-        .insert(schedules)
-        .values({
-          workspaceId: content.workspaceId,
-          contentVariantId: variant.id,
-          socialAccountId: input.socialAccountId,
-          scheduledAt,
-          timezone: input.timezone,
-          smartSchedule: input.smartSchedule,
-        })
-        .returning();
-
-      const [publication] = await tx
-        .insert(publications)
-        .values({
-          workspaceId: content.workspaceId,
-          contentVariantId: variant.id,
-          scheduleId: schedule.id,
-          socialAccountId: input.socialAccountId,
-          status: "queued",
-        })
-        .returning();
-
-      return { schedule, publication };
+    const result = await mutateCalendarItem(db, request.auth, { kind: "variant", id: variant.id }, {
+      action: "schedule", version: variant.calendarVersion, scheduledAt: input.scheduledAt, timezone: input.timezone, accountId: input.socialAccountId,
     });
-    if (!result) return reply.code(409).send({ error: "variant_already_scheduled" });
-
-    try {
-      await enqueuePublication(result.publication.id, scheduledAt);
-    } catch (error) {
-      await db.transaction(async (tx) => {
-        await tx
-          .update(publications)
-          .set({
-            status: "failed",
-            error: {
-              message:
-                error instanceof Error ? error.message : "Queue unavailable",
-            },
-            updatedAt: new Date(),
-          })
-          .where(eq(publications.id, result.publication.id));
-
-        await tx
-          .update(schedules)
-          .set({
-            status: "failed",
-            updatedAt: new Date(),
-          })
-          .where(eq(schedules.id, result.schedule.id));
-      });
-
-      return reply.code(503).send({
-        error: "publication_queue_unavailable",
-        scheduleId: result.schedule.id,
-      });
-    }
-
-    return reply.code(201).send(result);
+    if (result.status !== 200) return reply.code(result.status).send(result.body);
+    const [publication] = await db.select().from(publications).where(eq(publications.contentVariantId, variant.id)).orderBy(desc(publications.createdAt)).limit(1);
+    const [schedule] = publication?.scheduleId ? await db.select().from(schedules).where(eq(schedules.id, publication.scheduleId)) : [];
+    return reply.code(201).send({ schedule, publication });
   });
 
   app.get("/calendar", async (request) => {
@@ -322,43 +242,13 @@ export async function approvalRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: "delivery_already_confirmed_or_unknown_check_destination_before_retry" });
     }
 
-    const existingJob = await publicationQueue.getJob(
-      `publication-${publication.id}`,
-    );
-
-    if (existingJob) {
-      await existingJob.remove();
-    }
-
-    await publicationQueue.add(
-      "publish-content",
-      { publicationId: publication.id },
-      {
-        jobId: `publication-${publication.id}`,
-        attempts: 3,
-        backoff: { type: "exponential", delay: 5000 },
-        removeOnComplete: 1000,
-        removeOnFail: 1000,
-      },
-    );
-
-    await db
-      .update(publications)
-      .set({
-        status: "queued",
-        error: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(publications.id, publication.id));
-
-    await db
-      .update(schedules)
-      .set({
-        status: "processing",
-        updatedAt: new Date(),
-      })
-      .where(eq(schedules.id, schedule.id));
-
-    return reply.code(202).send(publication);
+    const [variant] = await db.select().from(contentVariants).where(eq(contentVariants.id, schedule.contentVariantId));
+    if (!variant) return reply.code(404).send({ error: "variant_not_found" });
+    const result = await mutateCalendarItem(db, request.auth, { kind: "variant", id: variant.id }, {
+      action: publication.status === "failed" ? "retry" : "schedule", version: variant.calendarVersion,
+      publicationId: publication.id, scheduledAt: new Date(Date.now() + 1000).toISOString(),
+      accountId: schedule.socialAccountId ?? publication.socialAccountId, timezone: schedule.timezone,
+    });
+    return reply.code(result.status === 200 ? 202 : result.status).send(result.body);
   });
 }

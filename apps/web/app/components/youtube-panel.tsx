@@ -7,12 +7,13 @@ export type YoutubeItem = { id: string; runId: string | null; stepKey: string; s
   progress: number; videoId: string | null; actualPrivacy: string | null; error: string | null; updatedAt: string;
   scheduledAt: string | null; settings: Record<string, unknown>; logs: Array<Record<string, unknown>> };
 export const youtubeStatus = (item?: YoutubeItem) => !item ? "منتظر ویدئو" : ({ waiting_video: "منتظر ویدئو", waiting_approval: "منتظر تأیید",
+  approved: "بدون زمان‌بندی",
   queued: "در صف انتشار", uploading: `در حال آپلود — ${item.progress}٪`, processing: "در حال پردازش یوتیوب",
   published: "منتشر شد", failed: "خطا", rejected: "رد شد", cancelled: "متوقف شد" }[item.status] ?? item.status);
 export function YoutubeIcon() {
   return <svg width="22" height="16" viewBox="0 0 24 18" role="img" aria-label="یوتیوب"><rect width="24" height="18" rx="5" fill="#ff0033" /><path d="M10 4.5v9l7-4.5z" fill="white" /></svg>;
 }
-function MediaPreview({ mediaId, url, video }: { mediaId?: unknown; url?: unknown; video?: boolean }) {
+export function MediaPreview({ mediaId, url, video, compact }: { mediaId?: unknown; url?: unknown; video?: boolean; compact?: boolean }) {
   const [src, setSrc] = useState("");
   useEffect(() => {
     let objectUrl = ""; let disposed = false;
@@ -23,7 +24,7 @@ function MediaPreview({ mediaId, url, video }: { mediaId?: unknown; url?: unknow
     return () => { disposed = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [mediaId, url]);
   if (!src) return null;
-  return video ? <video src={src} controls preload="metadata" style={{ width: "100%", maxHeight: 250 }} /> : <img src={src} alt="کاور ویدئو" style={{ width: "100%", maxHeight: 200, objectFit: "contain" }} />;
+  return video ? <video src={src} controls={!compact} muted={compact} preload="metadata" style={{ width: compact ? 48 : "100%", height: compact ? 40 : undefined, maxHeight: 250, objectFit: "cover" }} /> : <img src={src} alt="کاور ویدئو" style={{ width: compact ? 48 : "100%", height: compact ? 40 : undefined, maxHeight: 200, objectFit: compact ? "cover" : "contain" }} />;
 }
 export function YoutubeReview({ item, refresh }: { item: YoutubeItem; refresh: () => void }) {
   const [title, setTitle] = useState(item.title); const [description, setDescription] = useState(item.description);

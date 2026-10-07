@@ -138,6 +138,7 @@ export async function youtubeRoutes(app: FastifyInstance) {
       if (!current) return reply.code(404).send({ error: "item_not_found" });
       if (current.status !== "waiting_approval") return reply.code(409).send({ error: "item_not_waiting_approval" });
       if (input.action === "approve") {
+        if (current.scheduledAt && current.scheduledAt.getTime() <= Date.now()) return reply.code(409).send({ error: "زمان انتشار گذشته؛ نیازمند تعیین تکلیف. زمان جدید تعیین کنید." });
         await readYoutubeMedia(request.auth.workspaceId, String(current.settings.videoMediaId), "video");
         if (current.settings.coverMediaId) await readYoutubeMedia(request.auth.workspaceId, String(current.settings.coverMediaId), "image");
       }
@@ -187,6 +188,6 @@ export async function youtubeRoutes(app: FastifyInstance) {
 async function enqueue(item: typeof youtubeItems.$inferSelect) {
   const jobId = `youtube-${item.id}`; const old = await publicationQueue.getJob(jobId);
   if (old) { const state = await old.getState(); if (state === "active") throw new Error("Job is active"); await old.remove(); }
-  await publicationQueue.add("youtube-publish", { youtubeItemId: item.id }, { jobId,
+  await publicationQueue.add("youtube-publish", { youtubeItemId: item.id, queueVersion: item.queueVersion }, { jobId,
     delay: Math.max(0, (item.scheduledAt?.getTime() ?? Date.now()) - Date.now()), attempts: 1, removeOnComplete: 1000, removeOnFail: 1000 });
 }

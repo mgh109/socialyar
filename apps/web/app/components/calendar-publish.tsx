@@ -1,315 +1,130 @@
 "use client";
-import { apiFetch, getWorkspaceId } from "../lib/session";
-import { ConnectionHistory } from "./connection-history";
-
-import { BrandLogo } from "./brand-logo";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { canMoveCalendarItem, type CalendarItem } from "@socialyar/shared";
+import { apiFetch } from "../lib/session";
+import { BrandLogo } from "./brand-logo";
+import { TopMenu } from "./top-menu";
+import { CalendarDetail, calendarLabels, networkLabels, type CalendarAccount } from "./calendar-detail";
+import { PersianDatePicker } from "./persian-date-picker";
+import { MediaPreview } from "./youtube-panel";
+import { addDays, dayInZone, dayKey, faDigits, localParts, monthGrid, monthStart, nextMonth, persianLabel, persianParts, wallTimeToUTC, weekNames, weekStart } from "../lib/persian-calendar";
 
-type ApprovalRow = {
-  approval: { id: string; status: string };
-  variant: {
-    id: string;
-    channel: string;
-    title: string | null;
-    body: string;
-    status: string;
-  };
-  content: {
-    id: string;
-    runId: string | null;
-    title: string | null;
-  };
-};
-
-type CalendarRow = {
-  schedule: {
-    id: string;
-    status: string;
-    scheduledAt: string;
-    timezone: string;
-    smartSchedule: boolean;
-  };
-  variant: {
-    id: string;
-    channel: string;
-    title: string | null;
-    status: string;
-  };
-  content: {
-    id: string;
-    title: string | null;
-  };
-  publication: { id: string; status: string; externalUrl: string | null; error: { message?: string; deliveryUnknown?: boolean } | null; attempt: number } | null;
-};
-type Account = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
-
-const channelLabels: Record<string, string> = {
-  instagram: "Instagram",
-  telegram: "Telegram",
-  eitaa: "ایتا",
-  website: "Website",
-  x: "X",
-  linkedin: "LinkedIn",
-};
-
-function defaultScheduleTime() {
-  const date = new Date(Date.now() + 60 * 60 * 1000);
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+type View = "month" | "week" | "list";
+const zones = [{ id: "Asia/Tehran", name: "تهران" }, { id: "UTC", name: "زمان جهانی" }, { id: "Asia/Dubai", name: "دبی" }, { id: "Europe/Istanbul", name: "استانبول" }, { id: "Europe/London", name: "لندن" }, { id: "America/New_York", name: "نیویورک" }];
+const normalize = (value: string) => value.normalize("NFKC").replace(/ي/g, "ی").replace(/ك/g, "ک").toLocaleLowerCase("fa-IR");
+function PublicationTile({ item, timezone, open, busy }: { item: CalendarItem; timezone: string; open: () => void; busy: boolean }) {
+  const image = item.coverMediaId || item.imageUrl; const video = !image && (item.videoMediaId || item.videoUrl);
+  return <button type="button" className={`publication-tile status-border-${item.status}`} onClick={open} draggable={!busy && canMoveCalendarItem(item)}
+    onDragStart={(event) => { event.dataTransfer.setData("text/plain", item.id); event.dataTransfer.effectAllowed = "move"; }} title={`${item.title} · ${item.workflowName}`}>
+    <span className="publication-thumbnail">{image || video ? <MediaPreview compact mediaId={image ? item.coverMediaId : item.videoMediaId} url={image ? item.imageUrl : item.videoUrl} video={Boolean(video)} /> : <span aria-hidden="true">{item.channel === "youtube" ? "▶" : "▤"}</span>}</span>
+    <span className="publication-tile-content"><strong>{item.title}</strong><span>{networkLabels[item.channel]} · {item.workflowName}</span>
+      <span>{item.scheduledAt ? new Intl.DateTimeFormat("fa-IR", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(item.scheduledAt)) : "بدون زمان"} · {item.accountName ?? "مقصد انتخاب نشده"}</span>
+      <span className={`publication-status status-${item.status}`}>{calendarLabels[item.status]}</span>{item.overdue ? <small className="calendar-overdue">زمان انتشار گذشته؛ نیازمند تعیین تکلیف</small> : null}</span>
+  </button>;
 }
-
 export function CalendarPublish() {
-  const workspaceId = getWorkspaceId();
-  const [approved, setApproved] = useState<ApprovalRow[]>([]);
-  const [calendar, setCalendar] = useState<CalendarRow[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState("");
-  const [selectedVariantId, setSelectedVariantId] = useState("");
-  const [scheduledAt, setScheduledAt] = useState(defaultScheduleTime());
-  const [timezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
-  const [message, setMessage] = useState("در حال بارگذاری...");
-  const [busy, setBusy] = useState(false);
-
-  const load = async () => {
-    if (!workspaceId) {
-      setMessage("ابتدا وارد حساب کاربری شوید");
-      return;
-    }
-
-    const [approvedResponse, calendarResponse, accountsResponse] = await Promise.all([
-      apiFetch(
-        `/approvals?workspaceId=${workspaceId}&status=approved`,
-      ),
-      apiFetch(`/calendar?workspaceId=${workspaceId}`),
-      apiFetch("/social-accounts"),
-    ]);
-
-    if (!approvedResponse.ok || !calendarResponse.ok || !accountsResponse.ok) {
-      throw new Error("Calendar data could not be loaded");
-    }
-
-    const approvedRows = (await approvedResponse.json()) as ApprovalRow[];
-    const calendarRows = (await calendarResponse.json()) as CalendarRow[];
-    setAccounts((await accountsResponse.json()) as Account[]);
-
-    const unscheduled = approvedRows.filter(
-      (row) => row.variant.status === "approved",
-    );
-
-    setApproved(unscheduled);
-    setCalendar(calendarRows);
-    setSelectedVariantId((current) => current || unscheduled[0]?.variant.id || "");
-    setMessage("Calendar / Publish آماده است");
+  const [items, setItems] = useState<CalendarItem[]>([]); const [accounts, setAccounts] = useState<CalendarAccount[]>([]);
+  const [view, setView] = useState<View>("month"); const [timezone, setTimezone] = useState("Asia/Tehran");
+  const [focus, setFocus] = useState(() => dayInZone(new Date())); const [now, setNow] = useState(() => Date.now());
+  const [network, setNetwork] = useState(""); const [workflow, setWorkflow] = useState(""); const [status, setStatus] = useState(""); const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<{ kind: string; sourceId: string; publicationId: string | null } | null>(null);
+  const [schedule, setSchedule] = useState<{ item: CalendarItem; day: Date; hour: number; minute: number; destinationChecked: boolean } | null>(null);
+  const [datePicker, setDatePicker] = useState(false); const [onlyDay, setOnlyDay] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false); const [loading, setLoading] = useState(true); const [message, setMessage] = useState(""); const [error, setError] = useState("");
+  const refresh = async () => {
+    const results = await Promise.all([apiFetch("/calendar/items"), apiFetch("/social-accounts")]);
+    if (results.some((response) => !response.ok)) throw new Error("دریافت تقویم انتشار ناموفق بود؛ اتصال سرور و مهاجرت دیتابیس را بررسی کنید.");
+    const [data, accountData] = await Promise.all(results.map((response) => response.json())); setItems(data); setAccounts(accountData); setNow(Date.now());
   };
-
   useEffect(() => {
-    void load().catch((error) =>
-      setMessage(error instanceof Error ? error.message : "خطا در Calendar"),
-    );
-    const poll = window.setInterval(() => void load().catch(() => {}), 10000);
-    return () => window.clearInterval(poll);
-  }, [workspaceId]);
-
-  const selected = useMemo(
-    () => approved.find((row) => row.variant.id === selectedVariantId) ?? null,
-    [approved, selectedVariantId],
-  );
-  const availableAccounts = accounts.filter((account) => account.isActive && account.channel === selected?.variant.channel);
-  const accountId = availableAccounts.some((account) => account.id === selectedAccountId)
-    ? selectedAccountId : availableAccounts[0]?.id ?? "";
-
-  const scheduleVariant = async () => {
-    if (!selected || !accountId) return;
-    setBusy(true);
-    setMessage("در حال زمان‌بندی...");
-
-    try {
-      const response = await apiFetch(
-        `/content-variants/${selected.variant.id}/schedules`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            scheduledAt: new Date(scheduledAt).toISOString(),
-            timezone,
-            smartSchedule: false,
-            socialAccountId: accountId,
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error(`Schedule failed (${response.status})`);
-      }
-
-      await load();
-      setMessage("✓ نسخه زمان‌بندی شد");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "زمان‌بندی ناموفق بود");
-    } finally {
-      setBusy(false);
-    }
+    if (window.matchMedia("(max-width: 760px)").matches) setView("list");
+    void refresh().catch((e) => setError(e.message)).finally(() => setLoading(false));
+    const timer = setInterval(() => void refresh().catch((e) => setError(e.message)), 3000); return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) { setSelected(null); setSchedule(null); setDatePicker(false); } };
+    document.addEventListener("keydown", listener); return () => document.removeEventListener("keydown", listener);
+  }, [busy]);
+  const active = selected ? items.find((item) => item.kind === selected.kind && item.sourceId === selected.sourceId && (!selected.publicationId || item.publicationId === selected.publicationId)) : undefined;
+  const filtered = useMemo(() => items.filter((item) => (!network || item.channel === network) && (!workflow || item.workflowId === workflow) && (!status || item.status === status) &&
+    (!search.trim() || normalize(`${item.title} ${item.body}`).includes(normalize(search.trim())))), [items, network, workflow, status, search]);
+  const workflows = [...new Map(items.filter((item) => item.workflowId).map((item) => [item.workflowId!, item.workflowName])).entries()];
+  const today = dayInZone(new Date(now), timezone); const month = persianParts(focus).month;
+  const days = view === "week" ? Array.from({ length: 7 }, (_, index) => addDays(weekStart(focus), index)) : monthGrid(focus);
+  const grouped = new Map<string, CalendarItem[]>();
+  for (const item of filtered) {
+    if (!item.scheduledAt) continue; const key = dayKey(dayInZone(new Date(item.scheduledAt), timezone));
+    grouped.set(key, [...(grouped.get(key) ?? []), item].sort((a,b) => Date.parse(a.scheduledAt!) - Date.parse(b.scheduledAt!)));
+  }
+  const unscheduled = filtered.filter((item) => !item.scheduledAt);
+  const listItems = filtered.filter((item) => item.scheduledAt && (onlyDay ? dayKey(dayInZone(new Date(item.scheduledAt), timezone)) === onlyDay :
+    dayInZone(new Date(item.scheduledAt), timezone).getTime() >= monthStart(focus).getTime() && dayInZone(new Date(item.scheduledAt), timezone).getTime() < nextMonth(focus, 1).getTime()))
+    .sort((a,b) => Date.parse(a.scheduledAt!) - Date.parse(b.scheduledAt!));
+  const open = (item: CalendarItem) => { setSelected({ kind: item.kind, sourceId: item.sourceId, publicationId: item.publicationId }); setMessage(""); setError(""); };
+  const chooseTime = (item: CalendarItem, day?: Date) => {
+    if (busy || !canMoveCalendarItem(item)) return;
+    const parts = item.scheduledAt ? localParts(new Date(item.scheduledAt), timezone) : { hour: 9, minute: 0 };
+    setSchedule({ item, day: day ?? (item.scheduledAt ? dayInZone(new Date(item.scheduledAt), timezone) : addDays(today, 1)), hour: parts.hour, minute: parts.minute, destinationChecked: false }); setError("");
   };
-
-  const publishNow = async (scheduleId: string) => {
-    setBusy(true);
-    setMessage("در حال ارسال برای انتشار...");
-
+  const mutate = async (item: CalendarItem, action: string, data: Record<string, unknown> = {}) => {
+    setBusy(true); setError(""); setMessage("");
     try {
-      const response = await apiFetch(
-        `/schedules/${scheduleId}/publish-now`,
-        { method: "POST" },
-      );
-
-      if (!response.ok) {
-        throw new Error(`Publish failed (${response.status})`);
-      }
-
-      await load();
-      setMessage("✓ در صف انتشار قرار گرفت");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "انتشار ناموفق بود");
-    } finally {
-      setBusy(false);
-    }
+      const response = await apiFetch(`/calendar/items/${item.kind}/${item.sourceId}`, { method: "POST", body: JSON.stringify({ action, version: item.version, updatedAt: item.updatedAt, publicationId: item.publicationId, timezone, ...data }) });
+      const result = await response.json(); if (!response.ok) { if (response.status === 409) await refresh(); throw new Error(result.error ?? "ثبت تغییر ناموفق بود."); }
+      await refresh(); setMessage("تغییر در تقویم، کارت و صف انتشار ثبت شد."); return true;
+    } catch (e) { setError(e instanceof Error ? e.message : "خطای ثبت تغییر"); return false; } finally { setBusy(false); }
   };
-
-  return (
-    <main className="workflow-page">
-      <header className="app-header">
-        <div className="brand-lockup">
-          <BrandLogo />
-          <span>Calendar & Publish</span>
-        </div>
-        <div className="header-actions">
-          <span className="save-status">{message}</span>
-          <Link className="ghost-link" href="/approvals">
-            ← Approval Center
-          </Link>
-        </div>
-      </header>
-
-      <section className="calendar-shell">
-        <div className="calendar-main">
-          <div className="approval-heading">
-            <span className="micro-label">مرحله ۱۰ · Calendar & Publish</span>
-            <h1>زمان‌بندی و انتشار نسخه‌های تأییدشده</h1>
-            <p>فقط محتوای تأییدشده وارد این مرحله می‌شود.</p>
-          </div>
-
-          <div className="calendar-list">
-            {calendar.length === 0 ? (
-              <div className="empty-state">هنوز چیزی زمان‌بندی نشده.</div>
-            ) : (
-              calendar.map((row) => (
-                <article className="calendar-item" key={row.schedule.id}>
-                  <div className="calendar-date">
-                    <strong>
-                      {new Date(row.schedule.scheduledAt).toLocaleDateString("fa-IR")}
-                    </strong>
-                    <span>
-                      {new Date(row.schedule.scheduledAt).toLocaleTimeString("fa-IR", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-
-                  <div className="calendar-content">
-                    <strong>
-                      {row.variant.title ?? row.content.title ?? "بدون عنوان"}
-                    </strong>
-                    <span>
-                      {channelLabels[row.variant.channel] ?? row.variant.channel}
-                    </span>
-                  </div>
-
-                  <div className="calendar-status">
-                    <span>{row.publication?.status ?? row.schedule.status}</span>
-                    {row.publication?.externalUrl ? <a href={row.publication.externalUrl} target="_blank" rel="noreferrer">مشاهده خروجی</a> : null}
-                    {row.publication?.error?.message ? <small role="alert">{row.publication.error.message}</small> : null}
-                    {row.publication ? <ConnectionHistory publicationId={row.publication.id} /> : null}
-                    <button
-                      className="ghost-button"
-                      onClick={() => publishNow(row.schedule.id)}
-                      disabled={busy || row.publication?.error?.deliveryUnknown === true || !["scheduled", "failed"].includes(row.schedule.status)}
-                    >
-                      انتشار همین حالا
-                    </button>
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </div>
-
-        <aside className="publish-sidebar">
-          <div className="studio-side-block">
-            <h3>نسخه آماده زمان‌بندی</h3>
-
-            {approved.length === 0 ? (
-              <div className="empty-state">نسخه تأییدشده جدیدی وجود ندارد.</div>
-            ) : (
-              <>
-                <select
-                  className="publish-select"
-                  value={selectedVariantId}
-                  onChange={(event) => setSelectedVariantId(event.target.value)}
-                >
-                  {approved.map((row) => (
-                    <option key={row.variant.id} value={row.variant.id}>
-                      {channelLabels[row.variant.channel] ?? row.variant.channel} ·{" "}
-                      {row.variant.title ?? row.content.title ?? "بدون عنوان"}
-                    </option>
-                  ))}
-                </select>
-
-                {selected ? (
-                  <div className="publish-preview">
-                    <strong>
-                      {selected.variant.title ?? selected.content.title ?? "بدون عنوان"}
-                    </strong>
-                    <p>{selected.variant.body}</p>
-                  </div>
-                ) : null}
-
-                <label className="publish-field">
-                  <span>زمان انتشار</span>
-                  <input
-                    type="datetime-local"
-                    value={scheduledAt}
-                    onChange={(event) => setScheduledAt(event.target.value)}
-                  />
-                </label>
-
-                <label className="publish-field">
-                  <span>حساب مقصد · {timezone}</span>
-                  <select value={accountId} onChange={(event) => setSelectedAccountId(event.target.value)}>
-                    {availableAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}
-                  </select>
-                  {!availableAccounts.length ? <small>ابتدا یک حساب فعال برای این کانال در بخش اتصال‌ها اضافه کن.</small> : null}
-                </label>
-
-                <button
-                  className="success-button wide"
-                  onClick={scheduleVariant}
-                  disabled={busy || !selected || !accountId || !scheduledAt}
-                >
-                  ✓ زمان‌بندی
-                </button>
-              </>
-            )}
-          </div>
-
-          <div className="publish-guard">
-            <span className="micro-label">بررسی پیش از انتشار</span>
-            <strong>محتوای تأییدنشده منتشر نمی‌شود.</strong>
-            <p>
-              وضعیت انتشار و خطای کانال در همین صفحه نمایش داده می‌شود.
-            </p>
-          </div>
-        </aside>
-      </section>
-    </main>
-  );
+  const confirmTime = async () => {
+    if (!schedule) return;
+    try { const instant = wallTimeToUTC(schedule.day, schedule.hour, schedule.minute, timezone);
+      if (instant.getTime() <= Date.now()) throw new Error("تاریخ و ساعت آینده را انتخاب کنید.");
+      if (await mutate(schedule.item, "schedule", { scheduledAt: instant.toISOString(), accountId: schedule.item.accountId, destinationChecked: schedule.destinationChecked })) setSchedule(null);
+    } catch (e) { setError(e instanceof Error ? e.message : "تاریخ معتبر نیست."); }
+  };
+  const navigate = (direction: number) => { setOnlyDay(null); setFocus(view === "week" ? addDays(focus, direction * 7) : nextMonth(focus, direction)); };
+  const renderTile = (item: CalendarItem) => <PublicationTile key={item.id} item={item} timezone={timezone} open={() => open(item)} busy={busy} />;
+  return <main className="workflow-page publication-calendar" dir="rtl"><header className="app-header"><div className="brand-lockup"><BrandLogo /><TopMenu /><span>تقویم انتشار</span></div>
+    <div className="header-actions"><button type="button" disabled={loading} onClick={() => void refresh().catch((e) => setError(e.message))}>به‌روزرسانی</button></div></header>
+    <section className="publication-calendar-shell"><div className="publication-calendar-title"><div><h1>تقویم انتشار</h1><p>خروجی‌های تولیدشده، تأییدها و برنامهٔ واقعی انتشار در یک نگاه</p></div>
+      <label>منطقه زمانی<select value={timezone} onChange={(e) => { setTimezone(e.target.value); setOnlyDay(null); }}>{zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label></div>
+      <div className="calendar-counters"><span>برنامه‌ریزی‌شده <strong>{faDigits(filtered.filter((item) => item.status === "scheduled").length)}</strong></span><span>منتظر تأیید <strong>{faDigits(filtered.filter((item) => item.status === "waiting_approval").length)}</strong></span><span>ناموفق <strong>{faDigits(filtered.filter((item) => item.status === "failed").length)}</strong></span></div>
+      <div className="calendar-filters"><label>جست‌وجو<input type="search" placeholder="عنوان یا متن خروجی" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+        <label>شبکه<select value={network} onChange={(e) => setNetwork(e.target.value)}><option value="">همهٔ شبکه‌ها</option>{Object.entries(networkLabels).map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+        <label>جریان<select value={workflow} onChange={(e) => setWorkflow(e.target.value)}><option value="">همهٔ جریان‌ها</option>{workflows.map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></label>
+        <label>وضعیت<select value={status} onChange={(e) => setStatus(e.target.value)}><option value="">همهٔ وضعیت‌ها</option>{Object.entries(calendarLabels).map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></label></div>
+      <div className="calendar-navigation"><div><button type="button" onClick={() => { setFocus(today); setOnlyDay(null); }}>امروز</button><button type="button" aria-label={view === "week" ? "هفته قبل" : "ماه قبل"} onClick={() => navigate(-1)}>{view === "week" ? "هفته قبل" : "ماه قبل"}</button>
+        <strong>{onlyDay ? persianLabel(focus, { day: "numeric" }) : view === "week" ? `${persianLabel(days[0], { day: "numeric" })} تا ${persianLabel(days[6], { day: "numeric" })}` : persianLabel(focus)}</strong>
+        <button type="button" aria-label={view === "week" ? "هفته بعد" : "ماه بعد"} onClick={() => navigate(1)}>{view === "week" ? "هفته بعد" : "ماه بعد"}</button><button type="button" onClick={() => setDatePicker(!datePicker)}>انتخاب تاریخ</button></div>
+        <div className="calendar-view-switch" role="group" aria-label="نمای تقویم">{([{ id: "month", label: "ماهانه" }, { id: "week", label: "هفتگی" }, { id: "list", label: "فهرستی" }] as const).map((option) => <button type="button" key={option.id} aria-pressed={view === option.id} onClick={() => { setView(option.id); setOnlyDay(null); }}>{option.label}</button>)}</div></div>
+      {datePicker ? <div className="calendar-date-popover"><PersianDatePicker value={focus} onChange={(day) => { setFocus(day); setOnlyDay(null); setDatePicker(false); }} /></div> : null}
+      <div aria-live="polite">{loading ? <p>در حال دریافت خروجی‌های انتشار…</p> : null}{message ? <p className="calendar-success">{message}</p> : null}{error ? <p className="calendar-warning" role="alert">{error}</p> : null}</div>
+      {view === "list" ? <section className="publication-list-view"><h2>{onlyDay ? "خروجی‌های روز انتخاب‌شده" : "خروجی‌های این ماه"}</h2>{onlyDay ? <button type="button" onClick={() => setOnlyDay(null)}>نمایش همهٔ ماه</button> : null}
+        {listItems.map((item) => <div className="publication-list-row" key={item.id}><time>{persianLabel(dayInZone(new Date(item.scheduledAt!), timezone), { day: "numeric", weekday: "long" })}</time>{renderTile(item)}</div>)}
+        {!listItems.length && !loading ? <p className="calendar-empty">در این بازه خروجی برنامه‌ریزی نشده است. از «بدون زمان‌بندی» یک خروجی انتخاب کنید.</p> : null}</section> :
+        <div className={`publication-calendar-grid ${view === "week" ? "weekly" : "monthly"}`}>{weekNames.map((name) => <div key={name} className="calendar-weekday">{name}</div>)}
+          {days.map((day) => {
+            const key = dayKey(day); const dayItems = grouped.get(key) ?? []; const max = view === "week" ? 6 : 3;
+            return <section key={key} className={`publication-day ${persianParts(day).month !== month ? "outside" : ""} ${key === dayKey(today) ? "today" : ""}`}
+              aria-label={persianLabel(day, { day: "numeric" })} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }} onDrop={(e) => { e.preventDefault(); const item = items.find((i) => i.id === e.dataTransfer.getData("text/plain")); if (item) chooseTime(item, day); }}>
+              <header><button type="button" onClick={() => { setFocus(day); setOnlyDay(key); setView("list"); }}>{faDigits(persianParts(day).day)}</button>{key === dayKey(today) ? <span>امروز</span> : null}</header>
+              {dayItems.slice(0,max).map(renderTile)}{dayItems.length > max ? <button className="calendar-show-all" type="button" onClick={() => { setFocus(day); setOnlyDay(key); setView("list"); }}>نمایش همه ({faDigits(dayItems.length)})</button> : null}
+              {!dayItems.length ? <p className="calendar-day-empty">خالی · خروجی را به این روز بیاورید</p> : null}
+            </section>;
+          })}</div>}
+      <section className="calendar-unscheduled"><header><div><h2>بدون زمان‌بندی <span>{faDigits(unscheduled.length)}</span></h2><p>خروجی را انتخاب و «تغییر زمان» را بزنید، یا آن را روی روز دلخواه بکشید.</p></div></header>
+        <div>{unscheduled.map(renderTile)}</div>{!unscheduled.length && !loading ? <p className="calendar-empty">خروجی بدون زمان‌بندی وجود ندارد.</p> : null}</section>
+      <p className="calendar-note">رسیدن زمان انتشار جایگزین تأیید نیست. برنامه‌ها با بسته‌بودن مرورگر در صف سرور اجرا می‌شوند.</p>
+    </section>
+    {active ? <CalendarDetail key={active.id} item={active} accounts={accounts} busy={busy} close={() => setSelected(null)} mutate={mutate} schedule={chooseTime} timezone={timezone} error={error} message={message} /> : null}
+    {schedule ? <div className="calendar-time-backdrop"><section className="calendar-time-dialog" role="dialog" aria-modal="true" aria-labelledby="schedule-dialog-title"><header><h2 id="schedule-dialog-title">تعیین تاریخ و ساعت انتشار</h2><button type="button" aria-label="بستن انتخاب ساعت" disabled={busy} onClick={() => setSchedule(null)}>×</button></header>
+      <p>{schedule.item.title} · {networkLabels[schedule.item.channel]}</p><PersianDatePicker value={schedule.day} onChange={(day) => setSchedule((s) => s ? { ...s, day } : null)} />
+      <div className="calendar-time-fields"><label>ساعت<select value={schedule.hour} onChange={(e) => setSchedule((s) => s ? { ...s, hour: Number(e.target.value) } : null)}>{Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{faDigits(String(i).padStart(2,"0"))}</option>)}</select></label>
+        <label>دقیقه<select value={schedule.minute} onChange={(e) => setSchedule((s) => s ? { ...s, minute: Number(e.target.value) } : null)}>{Array.from({ length: 60 }, (_, i) => <option key={i} value={i}>{faDigits(String(i).padStart(2,"0"))}</option>)}</select></label>
+        <span>به وقت {zones.find((zone) => zone.id === timezone)?.name}</span></div>
+      {schedule.item.kind === "variant" ? <label>حساب مقصد<select value={schedule.item.accountId ?? ""} onChange={(e) => setSchedule((s) => s ? { ...s, item: { ...s.item, accountId: e.target.value || null } } : null)}><option value="">انتخاب حساب</option>{accounts.filter((a) => a.isActive && a.channel === schedule.item.channel).map((a) => <option key={a.id} value={a.id}>{a.displayName ?? a.externalAccountId}</option>)}</select></label> : null}
+      {!schedule.item.approved ? <p className="calendar-warning">این خروجی تا تأیید انسانی ارسال نمی‌شود، حتی اگر زمان انتشار برسد.</p> : null}
+      {schedule.item.deliveryUnknown ? <label><input type="checkbox" checked={schedule.destinationChecked} onChange={(e) => setSchedule((s) => s ? { ...s, destinationChecked: e.target.checked } : null)} /> نتیجه ارسال قبلی نامشخص بود؛ مقصد را بررسی و نبود انتشار قبلی را تأیید کردم.</label> : null}
+      {error ? <p className="calendar-warning" role="alert">{error}</p> : null}<div><button type="button" className="primary-button" disabled={busy} onClick={() => void confirmTime()}>تأیید تغییر زمان</button><button type="button" disabled={busy} onClick={() => setSchedule(null)}>انصراف</button></div>
+    </section></div> : null}
+  </main>;
 }

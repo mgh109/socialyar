@@ -2,11 +2,12 @@ import { and, eq } from "drizzle-orm";
 import { setTimeout as pause } from "node:timers/promises";
 import { getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents } from "@socialyar/db";
 
-export async function executeYoutube(id: string, db = getDb()) {
+export async function executeYoutube(id: string, db = getDb(), queueVersion = 0) {
   let [item] = await db.select().from(youtubeItems).where(eq(youtubeItems.id, id));
   if (!item || !item.approvedAt || !["queued", "uploading", "processing"].includes(item.status)) return;
+  if (item.queueVersion !== queueVersion) return;
   const [claimed] = await db.update(youtubeItems).set({ status: item.videoId ? "processing" : "uploading", error: null, updatedAt: new Date() })
-    .where(and(eq(youtubeItems.id, id), eq(youtubeItems.status, item.status))).returning();
+    .where(and(eq(youtubeItems.id, id), eq(youtubeItems.status, item.status), eq(youtubeItems.queueVersion, queueVersion))).returning();
   if (!claimed) return;
   item = claimed;
   const log = async (result: string, extra: Record<string, unknown> = {}) => {

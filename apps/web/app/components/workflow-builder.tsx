@@ -201,8 +201,15 @@ export function WorkflowBuilder() {
       return { label: youtubeStatus(item), state: item?.status === "uploading" || item?.status === "processing" ? "running" :
         item?.status === "published" ? "completed" : item?.status === "failed" ? "failed" : "waiting" };
     }
-    const sending = live?.publications.find((item) => item.stepKey === step.key && item.status === "publishing");
+    const sending = live?.publications.find((item) => item.stepKey === step.key && ["publishing", "sending"].includes(item.status));
     if (sending) return { label: "در حال ارسال به کانال...", state: "running" };
+    const calendarItem = step.type === "publish" ? live?.publications.find((item) => item.stepKey === step.key) : null;
+    if (calendarItem) {
+      const statuses: Record<string, { label: string; state: string }> = { waiting_approval: { label: "منتظر تأیید", state: "waiting" }, scheduled: { label: "زمان‌بندی‌شده", state: "waiting" },
+        queued: { label: "در صف انتشار", state: "waiting" }, stopped: { label: "متوقف‌شده", state: "idle" }, draft: { label: "بدون زمان‌بندی", state: "idle" },
+        failed: { label: "ارسال ناموفق", state: "failed" }, published: { label: "منتشرشده", state: "completed" } };
+      if (statuses[calendarItem.status]) return statuses[calendarItem.status];
+    }
     const recentPublication = live?.publications.find((item) => item.stepKey === step.key &&
       ["published", "failed"].includes(item.status) && Date.now() - new Date(item.updatedAt).getTime() < 10000);
     if (recentPublication?.status === "published") return { label: "پیام ارسال شد", state: "completed" };
@@ -374,7 +381,7 @@ export function WorkflowBuilder() {
       const loaded = data.steps.sort((a, b) => a.order - b.order).map((step, index) => ({ ...step,
         position: step.position?.x || step.position?.y ? step.position : { x: 110 + index * 240, y: 230 } }));
       const migrated = migrate(loaded, links);
-      setSteps(migrated.steps); setEdges(migrated.connections); setSelectedKey(migrated.steps[0]?.key ?? "");
+      setSteps(migrated.steps); setEdges(migrated.connections); setSelectedKey(migrated.steps.some((step) => step.key === params.get("step")) ? params.get("step")! : migrated.steps[0]?.key ?? "");
       setMessage("جریان بارگذاری شد");
     }).catch((error) => setMessage(error instanceof Error ? error.message : "بارگذاری ناموفق بود"));
     return () => window.clearInterval(timer);
