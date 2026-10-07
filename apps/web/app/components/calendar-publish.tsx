@@ -1,4 +1,5 @@
 "use client";
+import { persianError } from "../lib/persian";
 import { useEffect, useMemo, useState } from "react";
 import { canMoveCalendarItem, type CalendarItem } from "@socialyar/shared";
 import { apiFetch } from "../lib/session";
@@ -38,8 +39,8 @@ export function CalendarPublish() {
   };
   useEffect(() => {
     if (window.matchMedia("(max-width: 760px)").matches) setView("list");
-    void refresh().catch((e) => setError(e.message)).finally(() => setLoading(false));
-    const timer = setInterval(() => void refresh().catch((e) => setError(e.message)), 3000); return () => clearInterval(timer);
+    void refresh().catch((e) => setError(persianError(e))).finally(() => setLoading(false));
+    const timer = setInterval(() => void refresh().catch((e) => setError(persianError(e))), 3000); return () => clearInterval(timer);
   }, []);
   useEffect(() => {
     const listener = (event: KeyboardEvent) => { if (event.key === "Escape" && !busy) { setSelected(null); setSchedule(null); setDatePicker(false); } };
@@ -72,19 +73,19 @@ export function CalendarPublish() {
       const response = await apiFetch(`/calendar/items/${item.kind}/${item.sourceId}`, { method: "POST", body: JSON.stringify({ action, version: item.version, updatedAt: item.updatedAt, publicationId: item.publicationId, timezone, ...data }) });
       const result = await response.json(); if (!response.ok) { if (response.status === 409) await refresh(); throw new Error(result.error ?? "ثبت تغییر ناموفق بود."); }
       await refresh(); setMessage("تغییر در تقویم، کارت و صف انتشار ثبت شد."); return true;
-    } catch (e) { setError(e instanceof Error ? e.message : "خطای ثبت تغییر"); return false; } finally { setBusy(false); }
+    } catch (e) { setError(persianError(e, "خطای ثبت تغییر")); return false; } finally { setBusy(false); }
   };
   const confirmTime = async () => {
     if (!schedule) return;
     try { const instant = wallTimeToUTC(schedule.day, schedule.hour, schedule.minute, timezone);
       if (instant.getTime() <= Date.now()) throw new Error("تاریخ و ساعت آینده را انتخاب کنید.");
       if (await mutate(schedule.item, "schedule", { scheduledAt: instant.toISOString(), accountId: schedule.item.accountId, destinationChecked: schedule.destinationChecked })) setSchedule(null);
-    } catch (e) { setError(e instanceof Error ? e.message : "تاریخ معتبر نیست."); }
+    } catch (e) { setError(persianError(e, "تاریخ معتبر نیست.")); }
   };
   const navigate = (direction: number) => { setOnlyDay(null); setFocus(view === "week" ? addDays(focus, direction * 7) : nextMonth(focus, direction)); };
   const renderTile = (item: CalendarItem) => <PublicationTile key={item.id} item={item} timezone={timezone} open={() => open(item)} busy={busy} />;
   return <main className="workflow-page publication-calendar" dir="rtl"><header className="app-header"><div className="brand-lockup"><BrandLogo /><TopMenu /><span>تقویم انتشار</span></div>
-    <div className="header-actions"><button type="button" disabled={loading} onClick={() => void refresh().catch((e) => setError(e.message))}>به‌روزرسانی</button></div></header>
+    <div className="header-actions"><button type="button" disabled={loading} onClick={() => void refresh().catch((e) => setError(persianError(e)))}>به‌روزرسانی</button></div></header>
     <section className="publication-calendar-shell"><div className="publication-calendar-title"><div><h1>تقویم انتشار</h1><p>خروجی‌های تولیدشده، تأییدها و برنامهٔ واقعی انتشار در یک نگاه</p></div>
       <label>منطقه زمانی<select value={timezone} onChange={(e) => { setTimezone(e.target.value); setOnlyDay(null); }}>{zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label></div>
       <div className="calendar-counters"><span>برنامه‌ریزی‌شده <strong>{faDigits(filtered.filter((item) => item.status === "scheduled").length)}</strong></span><span>منتظر تأیید <strong>{faDigits(filtered.filter((item) => item.status === "waiting_approval").length)}</strong></span><span>ناموفق <strong>{faDigits(filtered.filter((item) => item.status === "failed").length)}</strong></span></div>

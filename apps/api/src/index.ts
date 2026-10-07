@@ -1,7 +1,7 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { ZodError } from "zod";
-import { closeDb } from "@socialyar/db";
+import { closeDb, ensurePublishingStorage } from "@socialyar/db";
 import { workflowRoutes } from "./routes/workflows";
 import { runRoutes } from "./routes/runs";
 import { contentRoutes } from "./routes/content";
@@ -18,6 +18,7 @@ import { proxyRoutes } from "./routes/proxies";
 import { calendarRoutes } from "./routes/calendar";
  
 const app = Fastify({ logger: true });
+await ensurePublishingStorage();
 
 await app.register(cors, {
   origin: process.env.WEB_ORIGIN

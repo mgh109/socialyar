@@ -1,15 +1,20 @@
 "use client";
-import { useEffect, useState } from "react";
+import { persianError } from "../lib/persian";
+import { useEffect, useState, useRef } from "react";
 import { apiFetch } from "../lib/session";
 import { ConnectionHistory } from "./connection-history";
+import { faDigits } from "../lib/persian-calendar";
+import { PersianDateTimeField } from "./persian-date-time-field";
 
 export type YoutubeItem = { id: string; runId: string | null; stepKey: string; status: string; title: string; description: string; channelName: string;
   progress: number; videoId: string | null; actualPrivacy: string | null; error: string | null; updatedAt: string;
   scheduledAt: string | null; settings: Record<string, unknown>; logs: Array<Record<string, unknown>> };
 export const youtubeStatus = (item?: YoutubeItem) => !item ? "منتظر ویدئو" : ({ waiting_video: "منتظر ویدئو", waiting_approval: "منتظر تأیید",
   approved: "بدون زمان‌بندی",
-  queued: "در صف انتشار", uploading: `در حال آپلود — ${item.progress}٪`, processing: "در حال پردازش یوتیوب",
-  published: "منتشر شد", failed: "خطا", rejected: "رد شد", cancelled: "متوقف شد" }[item.status] ?? item.status);
+  queued: "در صف انتشار", uploading: `در حال بارگذاری — ${faDigits(item.progress)}٪`, processing: "در حال پردازش یوتیوب",
+  published: "منتشر شد", failed: "خطا", rejected: "رد شد", cancelled: "متوقف شد" }[item.status] ?? "نامشخص");
+const privacyLabels: Record<string,string> = { public: "عمومی", private: "خصوصی", unlisted: "فهرست‌نشده" };
+const logLabels: Record<string,string> = { approved_and_queued: "تأیید و ورود به صف", rejected: "رد شد", cancelled: "متوقف شد", retry_queued: "تلاش مجدد در صف", upload_started: "شروع بارگذاری", published: "منتشر شد", failed: "خطا", preparation_failed: "خطا در دریافت فایل", connection: "بررسی مسیر اتصال", calendar_schedule: "تغییر زمان از تقویم", calendar_edit: "ویرایش از تقویم", calendar_unschedule: "حذف از برنامه", calendar_approve: "تأیید از تقویم", calendar_reject: "رد از تقویم", calendar_stop: "توقف از تقویم", calendar_retry: "تلاش مجدد از تقویم" };
 export function YoutubeIcon() {
   return <svg width="22" height="16" viewBox="0 0 24 18" role="img" aria-label="یوتیوب"><rect width="24" height="18" rx="5" fill="#ff0033" /><path d="M10 4.5v9l7-4.5z" fill="white" /></svg>;
 }
@@ -36,7 +41,7 @@ export function YoutubeReview({ item, refresh }: { item: YoutubeItem; refresh: (
         method: "POST", body: ["approve", "reject"].includes(name) ? JSON.stringify({ action: name, title, description }) : undefined });
       if (!response.ok) { const data = await response.json(); throw new Error(data.error ?? "ثبت تصمیم ناموفق بود"); }
       refresh();
-    } catch (err) { setError(err instanceof Error ? err.message : "خطا"); } finally { setBusy(false); }
+    } catch (err) { setError(persianError(err, "خطا")); } finally { setBusy(false); }
   };
   return <article className="youtube-review">
     <strong>{item.channelName} · {youtubeStatus(item)}</strong>
@@ -48,15 +53,15 @@ export function YoutubeReview({ item, refresh }: { item: YoutubeItem; refresh: (
       <button type="button" disabled={busy || !title.trim()} onClick={() => void action("approve")}>تأیید و انتشار</button>
       <button type="button" disabled={busy} onClick={() => void action("reject")}>رد</button>
     </> : <p>{item.title}</p>}
-    {item.scheduledAt ? <p>زمان انتشار: {new Date(item.scheduledAt).toLocaleString("fa-IR")}</p> : null}
+    {item.scheduledAt ? <p>زمان انتشار: {new Date(item.scheduledAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })}</p> : null}
     {item.status === "queued" ? <button type="button" disabled={busy} onClick={() => void action("cancel")}>توقف پیش از آپلود</button> : null}
     {item.status === "failed" ? <button type="button" disabled={busy} onClick={() => void action("retry")}>تلاش مجدد</button> : null}
     {item.status === "published" && item.videoId ? <a href={`https://www.youtube.com/watch?v=${item.videoId}`} target="_blank" rel="noreferrer">مشاهده در یوتیوب</a> : null}
     {item.actualPrivacy ? <p>وضعیت واقعی در یوتیوب: {({ public: "عمومی", private: "خصوصی", unlisted: "فهرست‌نشده" })[item.actualPrivacy] ?? item.actualPrivacy}
       {item.actualPrivacy !== item.settings.privacy ? " — محدودیت انتشار: وضعیت درخواستی اعمال نشده است." : ""}</p> : null}
-    {item.error || error ? <p role="alert">{error || item.error}</p> : null}
+    {item.error || error ? <p role="alert">{persianError(error || item.error)}</p> : null}
     <ConnectionHistory youtubeItemId={item.id} />
-    <details><summary>گزارش اجرا</summary>{item.runId ? <a href={`/runs/${item.runId}`}>اجرای جریان {item.runId.slice(0,8)}</a> : <p>آپلود دستی</p>}{item.logs.map((entry, i) => <p key={i}>{String(entry.channel)} · {new Date(String(entry.time)).toLocaleString("fa-IR")} · {({ approved_and_queued: "تأیید و ورود به صف", rejected: "رد شد", cancelled: "متوقف شد", retry_queued: "تلاش مجدد در صف", upload_started: "شروع آپلود", published: "منتشر شد", failed: "خطا", preparation_failed: "خطا در دریافت فایل" } as Record<string, string>)[String(entry.result)] ?? String(entry.result)}{entry.actualPrivacy ? ` · ${entry.actualPrivacy}` : ""}{entry.error ? ` · ${entry.error}` : ""}{entry.videoUrl ? <a href={String(entry.videoUrl)} target="_blank" rel="noreferrer"> لینک ویدئو</a> : null}</p>)}</details>
+    <details><summary>گزارش اجرا</summary>{item.runId ? <a href={`/runs/${item.runId}`}>اجرای جریان {item.runId.slice(0,8)}</a> : <p>بارگذاری دستی</p>}{item.logs.map((entry, i) => <p key={i}>{String(entry.channel ?? "یوتیوب")} · {new Date(String(entry.time)).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} · {logLabels[String(entry.result)] ?? "تغییر وضعیت انتشار"}{entry.route ? ` · ${entry.route === "proxy" ? `پروکسی: ${entry.proxyName}` : "مستقیم"}` : ""}{entry.actualPrivacy ? ` · ${privacyLabels[String(entry.actualPrivacy)] ?? "نامشخص"}` : ""}{entry.error ? ` · ${persianError(entry.error)}` : ""}{entry.videoUrl ? <a href={String(entry.videoUrl)} target="_blank" rel="noreferrer"> لینک ویدئو</a> : null}</p>)}</details>
   </article>;
 }
 export function YoutubePanel({ workflowId, stepKey, accountId, config, update, items, refresh }: {
@@ -65,6 +70,7 @@ export function YoutubePanel({ workflowId, stepKey, accountId, config, update, i
 }) {
   const [privateOnly, setPrivateOnly] = useState(true); const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
   const [videoMediaId, setVideoMediaId] = useState(""); const [coverMediaId, setCoverMediaId] = useState("");
+  const videoInput = useRef<HTMLInputElement>(null); const coverInput = useRef<HTMLInputElement>(null);
   useEffect(() => { void apiFetch("/youtube/config").then((r) => r.json()).then((c) => setPrivateOnly(c.privateOnly)); }, []);
   const upload = async (file: File | undefined, cover: boolean) => {
     if (!file) return; setBusy(true);
@@ -73,7 +79,7 @@ export function YoutubePanel({ workflowId, stepKey, accountId, config, update, i
       const response = await apiFetch("/youtube/media", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
       const data = await response.json(); if (!response.ok || data.kind !== (cover ? "image" : "video")) throw new Error(data.error ?? "نوع فایل معتبر نیست");
       if (cover) setCoverMediaId(data.mediaId); else setVideoMediaId(data.mediaId); setMessage("فایل دریافت شد؛ برای ارسال به صف تأیید دکمه را بزنید.");
-    } catch (err) { setMessage(err instanceof Error ? err.message : "خطای آپلود"); } finally { setBusy(false); }
+    } catch (err) { setMessage(persianError(err, "خطای آپلود")); } finally { setBusy(false); }
   };
   const submit = async () => {
     if (!workflowId) { setMessage("ابتدا جریان را ذخیره کنید."); return; } setBusy(true);
@@ -83,7 +89,7 @@ export function YoutubePanel({ workflowId, stepKey, accountId, config, update, i
         coverMediaId: coverMediaId || undefined, title: config.youtubeTitle || "ویدئوی جدید", description: config.youtubeDescription ?? "",
         privacy: config.privacy ?? "private", tags: config.tags ?? [], madeForKids: config.madeForKids === true, scheduledAt: config.scheduledAt || null, connection: config.connection }) });
       const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "ثبت آیتم ناموفق بود"); refresh(); setVideoMediaId(""); setMessage("ویدئو منتظر تأیید انسانی است.");
-    } catch (err) { setMessage(err instanceof Error ? err.message : "خطا"); } finally { setBusy(false); }
+    } catch (err) { setMessage(persianError(err, "خطا")); } finally { setBusy(false); }
   };
   return <section className="youtube-panel">
     <p><YoutubeIcon /> یوتیوب · تأیید انسانی اجباری</p>
@@ -94,12 +100,13 @@ export function YoutubePanel({ workflowId, stepKey, accountId, config, update, i
     <label><input type="checkbox" checked={config.madeForKids === true} onChange={(e) => update("madeForKids", e.target.checked)} /> محتوای مخصوص کودکان</label>
     <label>نوع انتشار<select value={String(config.privacy ?? "private")} onChange={(e) => update("privacy", e.target.value)}>
       <option value="private">خصوصی</option><option value="public" disabled={privateOnly}>عمومی</option><option value="unlisted" disabled={privateOnly}>فهرست‌نشده</option></select></label>
-    <label>زمان انتشار (خالی: فوری پس از تأیید)<input type="datetime-local" value={config.scheduledAt ? new Date(String(config.scheduledAt)).toLocaleString("sv-SE").replace(" ", "T").slice(0,16) : ""}
-      onChange={(e) => update("scheduledAt", e.target.value ? new Date(e.target.value).toISOString() : "")} /></label>
-    <label>آدرس ویدئو از کارت قبلی یا HTTPS<input dir="ltr" value={String(config.videoUrl ?? "")} onChange={(e) => update("videoUrl", e.target.value)} /></label>
+    <div>زمان انتشار<PersianDateTimeField value={config.scheduledAt} onChange={(value) => update("scheduledAt", value)} /></div>
+    <label>آدرس امن ویدئو از کارت قبلی<input dir="ltr" value={String(config.videoUrl ?? "")} onChange={(e) => update("videoUrl", e.target.value)} /></label>
     <label>آدرس کاور<input dir="ltr" value={String(config.coverUrl ?? "")} onChange={(e) => update("coverUrl", e.target.value)} /></label>
-    <label>آپلود دستی ویدئو<input type="file" accept="video/mp4,video/webm" disabled={busy} onChange={(e) => void upload(e.target.files?.[0], false)} /></label>
-    <label>آپلود کاور<input type="file" accept="image/jpeg,image/png" disabled={busy} onChange={(e) => void upload(e.target.files?.[0], true)} /></label>
+    <input ref={videoInput} className="sr-only" aria-label="انتخاب فایل ویدئو" type="file" accept="video/mp4,video/webm" disabled={busy} onChange={(e) => void upload(e.target.files?.[0], false)} />
+    <button type="button" disabled={busy} onClick={() => videoInput.current?.click()}>انتخاب فایل ویدئو</button>
+    <input ref={coverInput} className="sr-only" aria-label="انتخاب فایل کاور" type="file" accept="image/jpeg,image/png" disabled={busy} onChange={(e) => void upload(e.target.files?.[0], true)} />
+    <button type="button" disabled={busy} onClick={() => coverInput.current?.click()}>انتخاب تصویر کاور</button>
     <MediaPreview video mediaId={videoMediaId || undefined} /><MediaPreview mediaId={coverMediaId || undefined} />
     <button type="button" disabled={busy || !videoMediaId} onClick={() => void submit()}>ارسال ویدئو به صف تأیید</button><p role="status">{message}</p>
     {items.filter((item) => item.stepKey === stepKey).map((item) => <YoutubeReview key={item.id} item={item} refresh={refresh} />)}

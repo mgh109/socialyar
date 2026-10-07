@@ -1,6 +1,8 @@
 "use client";
 import { YoutubeApprovalQueue } from "./youtube-panel";
 import { apiFetch, getWorkspaceId } from "../lib/session";
+import { statusLabel, persianError } from "../lib/persian";
+import { faDigits } from "../lib/persian-calendar";
 
 import { BrandLogo } from "./brand-logo";
 import { TopMenu } from "./top-menu";
@@ -33,12 +35,12 @@ type WorkflowApproval = { runId: string; workflowName: string; stepKey: string; 
     commentId?: string; reply?: string; decision?: string; reason?: string } | null; createdAt: string | null };
 
 const channelLabels: Record<string, string> = {
-  instagram: "Instagram",
-  telegram: "Telegram",
+  instagram: "اینستاگرام",
+  telegram: "تلگرام",
   eitaa: "ایتا",
-  website: "Website",
-  x: "X",
-  linkedin: "LinkedIn",
+  website: "وب‌سایت",
+  x: "ایکس",
+  linkedin: "لینکدین",
 };
 
 function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowApproval; busy: boolean;
@@ -110,17 +112,17 @@ export function ApprovalCenter() {
         body: JSON.stringify({ action, stepKey: item.stepKey, edit }) });
       if (!response.ok) throw new Error(`ثبت تصمیم ناموفق بود (${response.status})`);
       await loadWorkflowApprovals(); setMessage(action === "approve" ? "شاخه تأیید شد و ادامه می‌یابد." : "شاخه رد شد.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "ثبت تصمیم ناموفق بود"); }
+    } catch (error) { setMessage(persianError(error, "ثبت تصمیم ناموفق بود")); }
     finally { setBusy(false); }
   };
 
   useEffect(() => {
     void load().catch((error) =>
-      setMessage(error instanceof Error ? error.message : "خطا در دریافت Approval"),
+      setMessage(persianError(error, "خطا در دریافت Approval")),
     );
   }, [workspaceId]);
   useEffect(() => {
-    void loadWorkflowApprovals().catch((error) => setMessage(error.message));
+    void loadWorkflowApprovals().catch((error) => setMessage(persianError(error)));
     const timer = window.setInterval(() => void loadWorkflowApprovals().catch(() => {}), 15_000);
     return () => window.clearInterval(timer);
   }, []);
@@ -168,7 +170,7 @@ export function ApprovalCenter() {
             : "برای اصلاح برگشت خورد",
       );
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "ثبت تصمیم ناموفق بود");
+      setMessage(persianError(error, "ثبت تصمیم ناموفق بود"));
     } finally {
       setBusy(false);
     }
@@ -184,12 +186,12 @@ export function ApprovalCenter() {
         <div className="brand-lockup">
           <BrandLogo />
           <TopMenu />
-          <span>Approval Center</span>
+          <span>مرکز تأیید</span>
         </div>
         <div className="header-actions">
           <span className="save-status">{message}</span>
           <Link className="ghost-link" href="/calendar">
-            Calendar / Publish
+            تقویم انتشار
           </Link>
         </div>
       </header>
@@ -204,9 +206,9 @@ export function ApprovalCenter() {
       <section className="approval-shell">
         <aside className="approval-queue">
           <div className="approval-heading">
-            <span className="micro-label">مرحله ۹ · Approval Center</span>
+            <span className="micro-label">مرحله ۹ · مرکز تأیید</span>
             <h1>تأیید خروجی‌هایی که واقعاً به تصمیم تو نیاز دارند</h1>
-            <p>{pendingCount} مورد در انتظار تصمیم</p>
+            <p>{faDigits(pendingCount)} مورد در انتظار تصمیم</p>
           </div>
 
           <div className="approval-list">
@@ -229,7 +231,7 @@ export function ApprovalCenter() {
                     </strong>
                     <span>{channelLabels[row.variant.channel] ?? row.variant.channel}</span>
                   </div>
-                  <small>{row.approval.status}</small>
+                  <small>{statusLabel(row.approval.status)}</small>
                 </button>
               ))
             )}
@@ -251,11 +253,11 @@ export function ApprovalCenter() {
                   <strong>نیازمند بررسی انسانی</strong>
                 </div>
                 <div>
-                  <span className="micro-label">Provenance</span>
+                  <span className="micro-label">منشأ محتوا</span>
                   <strong>
                     {active.content.runId
-                      ? `Run #${active.content.runId.slice(0, 8)}`
-                      : "بدون Run"}
+                      ? `شناسه اجرا: ${active.content.runId.slice(0, 8)}`
+                      : "بدون اجرای مرتبط"}
                   </strong>
                 </div>
               </div>
@@ -266,7 +268,7 @@ export function ApprovalCenter() {
               </article>
 
               <div className="approval-agent-card">
-                <span className="micro-label">پیشنهاد Agent</span>
+                <span className="micro-label">پیشنهاد دستیار</span>
                 <p>
                   {active.approval.agentRecommendation ??
                     "این نسخه را قبل از انتشار یک‌بار بررسی کن."}

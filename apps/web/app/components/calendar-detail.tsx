@@ -7,6 +7,7 @@ import { ConnectionSelector } from "./connection-selector";
 import { ConnectionHistory } from "./connection-history";
 import { apiFetch } from "../lib/session";
 import { faDigits } from "../lib/persian-calendar";
+import { persianError } from "../lib/persian";
 
 export const calendarLabels = { draft: "پیش‌نویس", waiting_approval: "منتظر تأیید", scheduled: "زمان‌بندی‌شده", queued: "در صف", sending: "در حال ارسال", published: "منتشرشده", failed: "ناموفق", stopped: "متوقف‌شده" };
 export const networkLabels: Record<string,string> = { youtube: "یوتیوب", telegram: "تلگرام", instagram: "اینستاگرام", eitaa: "ایتا", website: "وب‌سایت", x: "ایکس", linkedin: "لینکدین" };
@@ -60,7 +61,7 @@ export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, 
       {item.status === "failed" && item.approved && (item.kind === "youtube" || !item.remoteConfirmed) ? <>
         <button type="button" disabled={busy || !checked || dirty} onClick={() => void mutate(item, "retry", { destinationChecked: checked })}>تلاش مجدد</button></> : null}
     </div>
-    {item.error ? <p className="calendar-warning" role="alert">علت خطا: {item.error}</p> : null}
+    {item.error ? <p className="calendar-warning" role="alert">علت خطا: {persianError(item.error)}</p> : null}
     {item.deliveryUnknown ? <p className="calendar-warning">نتیجه ارسال قبلی نامشخص است؛ پیش از تلاش مجدد مقصد را بررسی کنید.</p> : null}
     {item.externalUrl ? <a href={item.externalUrl} target="_blank" rel="noreferrer">مشاهده خروجی در {networkLabels[item.channel]}</a> : null}
     {item.workflowId ? <Link href={`/workflows/new?id=${item.workflowId}${item.stepKey ? `&step=${encodeURIComponent(item.stepKey)}` : ""}`}>رفتن به جریان و کارت مربوطه</Link> : null}

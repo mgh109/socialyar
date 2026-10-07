@@ -11,7 +11,7 @@ export function TopMenu() {
       <Link href="/calendar">تقویم انتشار</Link>
       <Link href="/connections">اتصال کانال‌ها</Link>
       <Link href="/settings/ai">مدل‌های هوش مصنوعی</Link>
-      <Link href="/settings/api">اتصال‌های API و توکن‌ها</Link>
+      <Link href="/settings/api">اتصال سرویس‌ها و توکن‌ها</Link>
       <Link href="/settings/proxies">پروکسی‌ها</Link>
     </nav>
   </details>;

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../lib/session";
 import { ConnectionHistory } from "./connection-history";
+import { statusLabel, persianError } from "../lib/persian";
+import { faDigits } from "../lib/persian-calendar";
 
 type RunData = {
   id: string;
@@ -28,7 +30,7 @@ const labels: Record<string, string> = {
   step_completed: "مرحله انجام شد",
   step_failed: "خطای مرحله",
   retry: "تلاش مجدد",
-  fallback: "Fallback",
+  fallback: "تغییر مسیر جایگزین",
   approval_requested: "نیاز به تأیید انسانی",
   approval_resolved: "تأیید انجام شد",
   run_completed: "اجرای کامل شد",
@@ -56,7 +58,7 @@ export function RunLive({ runId }: { runId: string }) {
       if (!response.ok) throw new Error(`تصمیم ثبت نشد (${response.status})`);
       setRun((current) => current ? { ...current, status: "queued" } : current);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "خطا در ثبت تصمیم");
+      setActionError(persianError(error, "خطا در ثبت تصمیم"));
     } finally { setActionBusy(false); }
   };
 
@@ -106,7 +108,7 @@ export function RunLive({ runId }: { runId: string }) {
         <div className="header-actions">
           <span className={connected ? "live-dot online" : "live-dot"} />
           <span className="save-status">
-            {connected ? "Live" : "در حال اتصال..."}
+            {connected ? "نمایش زنده" : "در حال اتصال..."}
           </span>
           <Link className="ghost-link" href="/workflows/new">
             ← بازگشت به جریان
@@ -121,10 +123,10 @@ export function RunLive({ runId }: { runId: string }) {
             <div>
               <h1>اجرای جاری</h1>
               <p>
-                Run #{runId.slice(0, 8)} · وضعیت: {run?.status ?? "..."}
+                شناسه اجرا: {runId.slice(0, 8)} · وضعیت: {statusLabel(run?.status)}
               </p>
             </div>
-            <span className="status-pill">{progress} / {steps.length} مرحله</span>
+            <span className="status-pill">{faDigits(progress)} از {faDigits(steps.length)} مرحله</span>
           </div>
 
           <div className="execution-strip">
@@ -171,7 +173,7 @@ export function RunLive({ runId }: { runId: string }) {
             <div className="run-output-ready">
               <div>
                 <strong>✓ خروجی «تولید محتوا» آماده و قابل ویرایش است</strong>
-                <span>Run #{runId.slice(0, 8)} · Content Studio</span>
+                <span>شناسه اجرا: {runId.slice(0, 8)} · استودیوی محتوا</span>
               </div>
               <Link
                 className="primary-link"
@@ -184,8 +186,8 @@ export function RunLive({ runId }: { runId: string }) {
 
           <div className="current-detail">
             <div>
-              <span className="micro-label">وضعیت Run</span>
-              <strong>{run?.status ?? "queued"}</strong>
+              <span className="micro-label">وضعیت اجرا</span>
+              <strong>{statusLabel(run?.status ?? "queued")}</strong>
             </div>
             <div>
               <span className="micro-label">رویداد ثبت‌شده</span>

@@ -1,5 +1,6 @@
 "use client";
 import { apiFetch, getWorkspaceId } from "../lib/session";
+import { persianError } from "../lib/persian";
 
 import { BrandLogo } from "./brand-logo";
 
@@ -22,31 +23,31 @@ const channelMeta: Record<
   Channel,
   { label: string; description: string; native: boolean }
 > = {
-  youtube: { label: "یوتیوب", description: "اتصال کانال با ورود گوگل و OAuth", native: true },
+  youtube: { label: "یوتیوب", description: "اتصال کانال با ورود گوگل و دسترسی رسمی", native: true },
   eitaa: { label: "ایتا", description: "ارسال خبر به کانال با توکن ایتایار", native: true },
   telegram: {
-    label: "Telegram",
-    description: "انتشار مستقیم با Telegram Bot API",
+    label: "تلگرام",
+    description: "انتشار مستقیم با ربات رسمی تلگرام",
     native: true,
   },
   website: {
-    label: "Website",
-    description: "انتشار از طریق Webhook سایت یا CMS",
+    label: "وب‌سایت",
+    description: "انتشار از طریق اتصال وب‌سایت یا سامانه مدیریت محتوا",
     native: true,
   },
   instagram: {
-    label: "Instagram",
-    description: "ساختار اتصال آماده؛ Native adapter در مرحله بعد",
+    label: "اینستاگرام",
+    description: "ساختار اتصال آماده است؛ انتشار مستقیم هنوز فعال نیست",
     native: false,
   },
   x: {
-    label: "X",
-    description: "ساختار اتصال آماده؛ Native adapter در مرحله بعد",
+    label: "ایکس",
+    description: "ساختار اتصال آماده است؛ انتشار مستقیم هنوز فعال نیست",
     native: false,
   },
   linkedin: {
-    label: "LinkedIn",
-    description: "ساختار اتصال آماده؛ Native adapter در مرحله بعد",
+    label: "لینکدین",
+    description: "ساختار اتصال آماده است؛ انتشار مستقیم هنوز فعال نیست",
     native: false,
   },
 };
@@ -80,7 +81,7 @@ export function ConnectionsManager() {
 
   useEffect(() => {
     void load().catch((error) =>
-      setMessage(error instanceof Error ? error.message : "خطا در اتصال‌ها"),
+      setMessage(persianError(error, "خطا در اتصال‌ها")),
     );
   }, [workspaceId]);
 
@@ -109,7 +110,7 @@ export function ConnectionsManager() {
       setBusy(true);
       try { const response = await apiFetch("/youtube/connect", { method: "POST" }); const data = await response.json();
         if (!response.ok) throw new Error(data.message ?? data.error ?? "اتصال گوگل در سرور تنظیم نشده است"); window.location.assign(data.url);
-      } catch (error) { setMessage(error instanceof Error ? error.message : "خطای اتصال گوگل"); } finally { setBusy(false); }
+      } catch (error) { setMessage(persianError(error, "خطای اتصال گوگل")); } finally { setBusy(false); }
       return;
     }
     if (channel === "telegram" || channel === "eitaa") {
@@ -151,7 +152,7 @@ export function ConnectionsManager() {
       reset();
       setMessage("✓ اتصال ذخیره شد");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "ذخیره اتصال ناموفق بود");
+      setMessage(persianError(error, "ذخیره اتصال ناموفق بود"));
     } finally {
       setBusy(false);
     }
@@ -172,7 +173,7 @@ export function ConnectionsManager() {
       await load();
       setMessage(account.isActive ? "اتصال غیرفعال شد" : "✓ اتصال فعال شد");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "تغییر وضعیت ناموفق بود");
+      setMessage(persianError(error, "تغییر وضعیت ناموفق بود"));
     } finally {
       setBusy(false);
     }
@@ -192,7 +193,7 @@ export function ConnectionsManager() {
       }
       setMessage(`✓ اتصال ${channelMeta[account.channel].label} سالم است`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "تست اتصال ناموفق بود");
+      setMessage(persianError(error, "تست اتصال ناموفق بود"));
     } finally {
       setBusy(false);
     }
@@ -211,7 +212,7 @@ export function ConnectionsManager() {
       await load();
       setMessage("اتصال حذف شد");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "حذف اتصال ناموفق بود");
+      setMessage(persianError(error, "حذف اتصال ناموفق بود"));
     } finally {
       setBusy(false);
     }
@@ -222,12 +223,12 @@ export function ConnectionsManager() {
       <header className="app-header">
         <div className="brand-lockup">
           <BrandLogo />
-          <span>Connections</span>
+          <span>اتصال کانال‌ها</span>
         </div>
         <div className="header-actions">
           <span className="save-status">{message}</span>
           <Link className="ghost-link" href="/calendar">
-            Calendar / Publish
+            تقویم انتشار
           </Link>
         </div>
       </header>
@@ -238,7 +239,7 @@ export function ConnectionsManager() {
             <span className="micro-label">اتصال کانال‌ها</span>
             <h1>اکانت‌ها و مقصدهای انتشار</h1>
             <p>
-              Publisher فقط از اتصال‌های فعال استفاده می‌کند. اطلاعات محرمانه در لیست برگردانده نمی‌شوند.
+              انتشار فقط با اتصال‌های فعال انجام می‌شود. اطلاعات محرمانه در این فهرست نمایش داده نمی‌شوند.
             </p>
           </div>
 
@@ -254,7 +255,7 @@ export function ConnectionsManager() {
                     ? "● متصل"
                     : channelMeta[item].native
                       ? "○ آماده اتصال"
-                      : "○ Adapter آماده"}
+                      : "○ انتشار مستقیم فعال نیست"}
                 </span>
               </article>
             ))}
@@ -278,7 +279,7 @@ export function ConnectionsManager() {
                         {channelMeta[account.channel].label} · {account.externalAccountId}
                       </small>
                       <small>
-                        Credentials: {account.credentialKeys.join(", ") || "none"}
+                        اطلاعات ورود: {account.hasCredentials ? "ذخیره شده" : "ثبت نشده"}
                       </small>
                     </div>
                   </div>
@@ -294,7 +295,7 @@ export function ConnectionsManager() {
                     <button
                       className="ghost-button"
                       onClick={() => toggle(account)}
-                      disabled={busy}
+                      disabled={busy || account.channel === "youtube"}
                     >
                       {account.isActive ? "غیرفعال" : "فعال"}
                     </button>
@@ -303,7 +304,7 @@ export function ConnectionsManager() {
                       onClick={() => remove(account)}
                       disabled={busy}
                     >
-                      حذف
+                      {account.channel === "youtube" ? "قطع اتصال" : "حذف"}
                     </button>
                   </div>
                 </article>
@@ -315,13 +316,13 @@ export function ConnectionsManager() {
         <aside className="connection-form-panel">
           <button type="button" disabled={busy} onClick={async () => {
             setBusy(true); try { const r = await apiFetch("/youtube/health", { method: "POST" }); const data = await r.json();
-              setMessage(data.checks ? data.checks.map((c: { service: string; reachable: boolean; error?: string }) => `${c.service}: ${c.reachable ? "در دسترس" : c.error ?? "قطع"}`).join(" · ") : "بررسی شبکه ناموفق بود");
-            } catch (e) { setMessage(e instanceof Error ? e.message : "خطای بررسی شبکه"); } finally { setBusy(false); }
+              setMessage(data.checks ? data.checks.map((c: { service: string; reachable: boolean; error?: string }) => `${({ google: "گوگل", youtube: "یوتیوب", upload: "بارگذاری" } as Record<string,string>)[c.service] ?? "سرویس مقصد"}: ${c.reachable ? "در دسترس" : persianError(c.error, "قطع ارتباط")}`).join(" · ") : "بررسی شبکه ناموفق بود");
+            } catch (e) { setMessage(persianError(e, "خطای بررسی شبکه")); } finally { setBusy(false); }
           }}>بررسی دسترسی سرور به گوگل و یوتیوب</button>
           <button type="button" disabled={busy} onClick={async () => {
             setBusy(true); try { const r = await apiFetch("/youtube/connect", { method: "POST" }); const data = await r.json();
               if (!r.ok) throw new Error(data.message ?? data.error); window.location.assign(data.url);
-            } catch (e) { setMessage(e instanceof Error ? e.message : "اتصال گوگل ناموفق بود"); } finally { setBusy(false); }
+            } catch (e) { setMessage(persianError(e, "اتصال گوگل ناموفق بود")); } finally { setBusy(false); }
           }}>▶ اتصال یوتیوب با گوگل</button>
           <form className="connection-form" onSubmit={submit}>
             <h2>اتصال جدید</h2>
@@ -350,13 +351,13 @@ export function ConnectionsManager() {
             </label>
 
             <label>
-              <span>External Account ID</span>
+              <span>شناسه حساب یا کانال مقصد</span>
               <input
                 value={externalAccountId}
                 onChange={(event) => setExternalAccountId(event.target.value)}
                 placeholder={
                   channel === "telegram" || channel === "eitaa"
-                    ? "@channel یا chat id"
+                    ? "نام کانال با @ یا شناسه گفت‌وگو"
                     : "شناسه مقصد"
                 }
               />
@@ -365,7 +366,7 @@ export function ConnectionsManager() {
             {channel === "telegram" || channel === "eitaa" ? (
               <>
                 <label>
-                  <span>{channel === "eitaa" ? "توکن ایتایار" : "Bot Token"}</span>
+                  <span>{channel === "eitaa" ? "توکن ایتایار" : "توکن ربات تلگرام"}</span>
                   <input
                     type="password"
                     value={botToken}
@@ -375,7 +376,7 @@ export function ConnectionsManager() {
                   />
                 </label>
                 <label>
-                  <span>Chat ID</span>
+                  <span>شناسه گفت‌وگو یا کانال</span>
                   <input
                     value={chatId}
                     onChange={(event) => setChatId(event.target.value)}
@@ -389,7 +390,7 @@ export function ConnectionsManager() {
             {channel === "website" ? (
               <>
                 <label>
-                  <span>Webhook URL</span>
+                  <span>آدرس اتصال وب‌سایت</span>
                   <input
                     type="url"
                     value={webhookUrl}
@@ -399,7 +400,7 @@ export function ConnectionsManager() {
                   />
                 </label>
                 <label>
-                  <span>Bearer Token (اختیاری)</span>
+                  <span>توکن دسترسی (اختیاری)</span>
                   <input
                     type="password"
                     value={token}
@@ -412,12 +413,12 @@ export function ConnectionsManager() {
 
             {!channelMeta[channel].native ? (
               <div className="connection-note">
-                Native API این کانال هنوز فعال نشده؛ می‌توانی فعلاً Fallback Webhook ثبت کنی.
+                انتشار مستقیم این کانال هنوز فعال نشده است؛ در صورت داشتن سرویس انتشار مستقل، آدرس جایگزین آن را ثبت کنید.
               </div>
             ) : null}
 
             <label>
-              <span>Fallback Webhook (اختیاری)</span>
+              <span>آدرس سرویس انتشار جایگزین (اختیاری)</span>
               <input
                 type="url"
                 value={fallbackWebhookUrl}

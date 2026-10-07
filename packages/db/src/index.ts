@@ -7,3 +7,4 @@ export * from "./youtube";
 export * from "./youtube-upload";
 export * from "./publishing-connection";
 export * from "./connection-check";
+export { ensurePublishingStorage } from "./publishing-storage";

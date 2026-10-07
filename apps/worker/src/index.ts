@@ -1,5 +1,5 @@
 import { Worker } from "bullmq";
-import { closeDb } from "@socialyar/db";
+import { closeDb, ensurePublishingStorage } from "@socialyar/db";
 import { executeRun } from "@socialyar/workflow";
 import { executePublication } from "./publisher";
 import { executeYoutube } from "./youtube";
@@ -7,6 +7,7 @@ import { executeConnectionCheck } from "./connection-check";
 import { closeAutoPublisher, enqueueAutoPublication } from "./auto-publish";
 import { startNewsPoller } from "./news-poller";
 import { connection } from "./queue";
+await ensurePublishingStorage();
 
 const workflowWorker = new Worker(
   "workflow-runs",
