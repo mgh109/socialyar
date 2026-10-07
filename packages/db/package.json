@@ -17,7 +17,8 @@
     "drizzle-orm": "^0.38.0",
     "pg": "^8.13.0",
     "socks": "2",
-    "undici": "7"
+    "undici": "7",
+    "@socialyar/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/pg": "^8.11.10",

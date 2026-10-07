@@ -9,12 +9,12 @@ import { PersianDateTimeField } from "./persian-date-time-field";
 export type YoutubeItem = { id: string; runId: string | null; stepKey: string; status: string; title: string; description: string; channelName: string;
   progress: number; videoId: string | null; actualPrivacy: string | null; error: string | null; updatedAt: string;
   scheduledAt: string | null; settings: Record<string, unknown>; logs: Array<Record<string, unknown>> };
-export const youtubeStatus = (item?: YoutubeItem) => !item ? "منتظر ویدئو" : ({ waiting_video: "منتظر ویدئو", waiting_approval: "منتظر تأیید",
+export const youtubeStatus = (item?: YoutubeItem) => !item ? "منتظر ویدئو" : ({ waiting_video: "منتظر ویدئو", preparing: "در حال دریافت فایل", waiting_approval: "منتظر تأیید",
   approved: "بدون زمان‌بندی",
   queued: "در صف انتشار", uploading: `در حال بارگذاری — ${faDigits(item.progress)}٪`, processing: "در حال پردازش یوتیوب",
-  published: "منتشر شد", failed: "خطا", rejected: "رد شد", cancelled: "متوقف شد" }[item.status] ?? "نامشخص");
+  prepared: "فایل آماده تأیید است", published: "منتشر شد", failed: "خطا", rejected: "رد شد", cancelled: "متوقف شد" }[item.status] ?? "نامشخص");
 const privacyLabels: Record<string,string> = { public: "عمومی", private: "خصوصی", unlisted: "فهرست‌نشده" };
-const logLabels: Record<string,string> = { approved_and_queued: "تأیید و ورود به صف", rejected: "رد شد", cancelled: "متوقف شد", retry_queued: "تلاش مجدد در صف", upload_started: "شروع بارگذاری", published: "منتشر شد", failed: "خطا", preparation_failed: "خطا در دریافت فایل", connection: "بررسی مسیر اتصال", calendar_schedule: "تغییر زمان از تقویم", calendar_edit: "ویرایش از تقویم", calendar_unschedule: "حذف از برنامه", calendar_approve: "تأیید از تقویم", calendar_reject: "رد از تقویم", calendar_stop: "توقف از تقویم", calendar_retry: "تلاش مجدد از تقویم" };
+const logLabels: Record<string,string> = { approved_and_queued: "تأیید و ورود به صف", rejected: "رد شد", cancelled: "متوقف شد", retry_queued: "تلاش مجدد در صف", upload_started: "شروع بارگذاری", prepared: "فایل آماده تأیید است", published: "منتشر شد", failed: "خطا", preparation_failed: "خطا در دریافت فایل", connection: "بررسی مسیر اتصال", calendar_schedule: "تغییر زمان از تقویم", calendar_edit: "ویرایش از تقویم", calendar_unschedule: "حذف از برنامه", calendar_approve: "تأیید از تقویم", calendar_reject: "رد از تقویم", calendar_stop: "توقف از تقویم", calendar_retry: "تلاش مجدد از تقویم" };
 export function YoutubeIcon() {
   return <svg width="22" height="16" viewBox="0 0 24 18" role="img" aria-label="یوتیوب"><rect width="24" height="18" rx="5" fill="#ff0033" /><path d="M10 4.5v9l7-4.5z" fill="white" /></svg>;
 }
@@ -48,7 +48,8 @@ export function YoutubeReview({ item, refresh }: { item: YoutubeItem; refresh: (
     <MediaPreview video mediaId={item.settings.videoMediaId} url={item.settings.videoUrl} />
     <MediaPreview mediaId={item.settings.coverMediaId} url={item.settings.coverUrl} />
     {item.status === "waiting_approval" ? <>
-      <label>عنوان<input maxLength={100} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
+      <p>نوع محتوا: {item.settings.videoType === "shorts" ? "ویدئوی کوتاه / Shorts" : "ویدئوی معمولی"}{item.settings.playlist ? ` · پلی‌لیست: ${String(item.settings.playlist)}` : ""}</p>
+    <label>عنوان<input maxLength={100} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
       <label>توضیحات<textarea maxLength={5000} value={description} onChange={(e) => setDescription(e.target.value)} /></label>
       <button type="button" disabled={busy || !title.trim()} onClick={() => void action("approve")}>تأیید و انتشار</button>
       <button type="button" disabled={busy} onClick={() => void action("reject")}>رد</button>
@@ -87,13 +88,16 @@ export function YoutubePanel({ workflowId, stepKey, accountId, config, update, i
       const waiting = items.find((item) => item.stepKey === stepKey && item.status === "waiting_video");
       const response = await apiFetch(waiting ? `/youtube/items/${waiting.id}/media` : "/youtube/items", { method: waiting ? "PATCH" : "POST", body: JSON.stringify({ workflowId, stepKey, accountId, videoMediaId,
         coverMediaId: coverMediaId || undefined, title: config.youtubeTitle || "ویدئوی جدید", description: config.youtubeDescription ?? "",
-        privacy: config.privacy ?? "private", tags: config.tags ?? [], madeForKids: config.madeForKids === true, scheduledAt: config.scheduledAt || null, connection: config.connection }) });
+        videoType: config.videoType ?? "video", playlist: config.playlist ?? "", privacy: config.privacy ?? "private", tags: config.tags ?? [], madeForKids: config.madeForKids === true, scheduledAt: config.scheduledAt || null, connection: config.connection }) });
       const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "ثبت آیتم ناموفق بود"); refresh(); setVideoMediaId(""); setMessage("ویدئو منتظر تأیید انسانی است.");
     } catch (err) { setMessage(persianError(err, "خطا")); } finally { setBusy(false); }
   };
   return <section className="youtube-panel">
     <p><YoutubeIcon /> یوتیوب · تأیید انسانی اجباری</p>
     {privateOnly ? <p role="status">این پروژه برای انتشار عمومی تأیید نشده است؛ آپلودها به‌صورت خصوصی انجام می‌شوند.</p> : null}
+    <label>نوع محتوا<select value={String(config.videoType ?? "video")} onChange={(e) => update("videoType",e.target.value)}><option value="video">ویدئوی معمولی</option><option value="shorts">ویدئوی کوتاه / Shorts</option></select></label>
+    <small>تشخیص Shorts با یوتیوب است؛ فایل باید مربع یا عمودی و حداکثر ۳ دقیقه باشد. فایل خودکار برش نمی‌خورد.</small>
+    <label>پلی‌لیست (نام یا شناسه)<input value={String(config.playlist ?? "")} onChange={(e) => update("playlist",e.target.value)} /></label>
     <label>عنوان<input maxLength={100} value={String(config.youtubeTitle ?? "")} onChange={(e) => update("youtubeTitle", e.target.value)} placeholder="عنوان از کارت قبلی" /></label>
     <label>توضیحات<textarea maxLength={5000} value={String(config.youtubeDescription ?? "")} onChange={(e) => update("youtubeDescription", e.target.value)} /></label>
     <label>برچسب‌ها (جداشده با ویرگول)<input value={Array.isArray(config.tags) ? config.tags.join(",") : ""} onChange={(e) => update("tags", e.target.value.split(",").map((v) => v.trim()).filter(Boolean))} /></label>

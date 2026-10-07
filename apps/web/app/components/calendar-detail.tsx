@@ -9,7 +9,7 @@ import { apiFetch } from "../lib/session";
 import { faDigits } from "../lib/persian-calendar";
 import { persianError } from "../lib/persian";
 
-export const calendarLabels = { draft: "پیش‌نویس", waiting_approval: "منتظر تأیید", scheduled: "زمان‌بندی‌شده", queued: "در صف", sending: "در حال ارسال", published: "منتشرشده", failed: "ناموفق", stopped: "متوقف‌شده" };
+export const calendarLabels = { draft: "پیش‌نویس", preparing: "منتظر دریافت فایل", waiting_approval: "منتظر تأیید", scheduled: "زمان‌بندی‌شده", queued: "در صف", sending: "در حال ارسال", published: "منتشرشده", failed: "ناموفق", stopped: "متوقف‌شده" };
 export const networkLabels: Record<string,string> = { youtube: "یوتیوب", telegram: "تلگرام", instagram: "اینستاگرام", eitaa: "ایتا", website: "وب‌سایت", x: "ایکس", linkedin: "لینکدین" };
 export type CalendarAccount = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, timezone, error, message }: { item: CalendarItem; accounts: CalendarAccount[]; busy: boolean; timezone: string; error: string; message: string;
@@ -21,13 +21,14 @@ export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, 
   const reset = () => { setTitle(item.title); setBody(item.body); setSettings(item.settings); setAccountId(item.accountId ?? ""); setVersion(item.version); setEditUpdatedAt(item.updatedAt); setDirty(false); };
   useEffect(() => { if (!dirty) reset(); }, [item.version, item.updatedAt]);
   useEffect(() => { void apiFetch(`/calendar/items/${item.kind}/${item.sourceId}/events`).then((r) => r.ok ? r.json() : []).then(setEvents); }, [item.updatedAt]);
-  const editable = canMoveCalendarItem(item); const locked = ["sending", "published"].includes(item.status);
+  const editable = canMoveCalendarItem(item); const locked = ["preparing", "sending", "published"].includes(item.status);
   const setSetting = (key: string, value: unknown) => { setSettings((s) => ({ ...s, [key]: value })); setDirty(true); };
   const save = async () => { if (await mutate({ ...item, version, updatedAt: editUpdatedAt }, "edit", { title, body, settings, accountId: accountId || null })) setDirty(false); };
   const stale = version !== item.version || editUpdatedAt !== item.updatedAt;
   const eligibleAccounts = accounts.filter((account) => account.channel === item.channel && account.isActive);
   return <div className="calendar-drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}><aside className="calendar-drawer" role="dialog" aria-modal="true" aria-labelledby="calendar-detail-title">
     <header><div><h2 id="calendar-detail-title">جزئیات انتشار</h2><span className={`publication-status status-${item.status}`}>{calendarLabels[item.status]}</span></div><button type="button" aria-label="بستن جزئیات" onClick={close}>×</button></header>
+    <p>{item.kind === "youtube" ? `${item.settings.videoType === "shorts" ? "Shorts" : "ویدئوی معمولی"}${item.settings.collectionRowId ? ` · شناسه: ${String(item.settings.collectionRowId)}` : ""}` : ""}</p>
     <p>{networkLabels[item.channel]} · {item.accountName ?? "مقصد انتخاب نشده"} · {item.workflowName}</p>
     <p>زمان انتشار: {item.scheduledAt ? new Date(item.scheduledAt).toLocaleString("fa-IR-u-ca-persian", { timeZone: timezone }) : "بدون زمان‌بندی"}</p>
     {error ? <p className="calendar-warning" role="alert">{error}</p> : null}{message ? <p className="calendar-success" role="status">{message}</p> : null}
@@ -40,6 +41,8 @@ export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, 
       {eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}</select></label>
       <label>آدرس تصویر یا کاور<input dir="ltr" value={String(settings[item.kind === "youtube" ? "coverUrl" : "imageUrl"] ?? "")} onChange={(e) => setSetting(item.kind === "youtube" ? "coverUrl" : "imageUrl", e.target.value || null)} /></label>
       {item.kind !== "youtube" ? <label>آدرس ویدئو<input dir="ltr" value={String(settings.videoUrl ?? "")} onChange={(e) => setSetting("videoUrl", e.target.value || null)} /></label> : <>
+        <label>نوع محتوا<select value={String(settings.videoType ?? "video")} onChange={(e) => setSetting("videoType",e.target.value)}><option value="video">ویدئوی معمولی</option><option value="shorts">ویدئوی کوتاه / Shorts</option></select></label>
+        <label>پلی‌لیست<input value={String(settings.playlist ?? "")} onChange={(e) => setSetting("playlist",e.target.value)} /></label>
         <label>نوع انتشار<select value={String(settings.privacy ?? "private")} onChange={(e) => setSetting("privacy", e.target.value)}><option value="private">خصوصی</option><option value="public">عمومی</option><option value="unlisted">فهرست‌نشده</option></select></label>
         <label>برچسب‌ها<input value={Array.isArray(settings.tags) ? settings.tags.join("،") : ""} onChange={(e) => setSetting("tags", e.target.value.split(/[,،]/).map((t) => t.trim()).filter(Boolean))} /></label>
         <label><input type="checkbox" checked={settings.madeForKids === true} onChange={(e) => setSetting("madeForKids", e.target.checked)} /> محتوای مخصوص کودکان</label>

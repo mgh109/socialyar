@@ -12,10 +12,10 @@ export type SavedProxy = { id: string; name: string; protocol: string; host: str
 export function useConnectionTest() {
   const [check, setCheck] = useState<ConnectionCheck | null>(null); const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const start = async (target: string, connection: ConnectionPolicy) => {
+  const start = async (target: string, connection: ConnectionPolicy, custom?: { path:string; body:Record<string,unknown> }) => {
     setSubmitting(true); setError(""); setCheck(null);
     try {
-      const response = await apiFetch("/connection-checks", { method: "POST", body: JSON.stringify({ target, connection }) });
+      const response = await apiFetch(custom?.path ?? "/connection-checks", { method: "POST", body: JSON.stringify(custom?.body ?? { target, connection }) });
       const data = await response.json(); if (!response.ok) throw new Error(data.message ?? data.error ?? "ثبت بررسی اتصال ناموفق بود"); setCheck(data);
     } catch (err) { setError(persianError(err, "خطای بررسی اتصال")); } finally { setSubmitting(false); }
   };
@@ -45,18 +45,18 @@ export function ConnectionResult({ check, error }: { check?: ConnectionCheck | n
     </> : null}
   </div>;
 }
-export function ConnectionSelector({ target, value, onChange }: { target: "youtube" | "telegram" | "instagram"; value: unknown; onChange: (value: ConnectionPolicy) => void }) {
+export function ConnectionSelector({ target, value, onChange, testRequest }: { testRequest?: { path:string; body:Record<string,unknown> }; target: "youtube" | "telegram" | "instagram" | "dropbox" | "media"; value: unknown; onChange: (value: ConnectionPolicy) => void }) {
   const [proxies, setProxies] = useState<SavedProxy[]>([]); const [loadError, setLoadError] = useState("");
   const test = useConnectionTest(); const policy = (value ?? { mode: "direct" }) as ConnectionPolicy;
   const load = async () => { try { const r = await apiFetch("/proxies"); if (!r.ok) throw new Error("دریافت پروکسی‌ها ناموفق بود"); setProxies(await r.json()); setLoadError(""); }
     catch (e) { setLoadError(persianError(e, "خطا")); } };
   useEffect(() => { void load(); }, []);
-  return <section className="connection-selector"><strong>مسیر اتصال {({ youtube: "یوتیوب", telegram: "تلگرام", instagram: "اینستاگرام" })[target]}</strong>
+  return <section className="connection-selector"><strong>مسیر اتصال {({ media: "هاست فایل‌ها", dropbox: "دراپ‌باکس", youtube: "یوتیوب", telegram: "تلگرام", instagram: "اینستاگرام" })[target]}</strong>
     <label>نوع اتصال<select value={policy.mode} onChange={(e) => onChange({ mode: e.target.value as ConnectionPolicy["mode"], ...(e.target.value !== "direct" ? { proxyId: policy.proxyId ?? "" } : {}) })}>
       <option value="direct">اتصال مستقیم</option><option value="proxy">استفاده از پروکسی</option><option value="auto">خودکار؛ مستقیم، سپس پروکسی در صورت خطای اتصال</option></select></label>
     {policy.mode !== "direct" ? <label>پروکسی<select value={policy.proxyId ?? ""} onChange={(e) => onChange({ ...policy, proxyId: e.target.value })}>
       <option value="">انتخاب پروکسی</option>{proxies.filter((p) => p.isActive).map((p) => <option key={p.id} value={p.id}>{p.name} · {protocolLabel(p.protocol)}</option>)}</select></label> : null}
-    <div><button type="button" disabled={test.busy || policy.mode !== "direct" && !policy.proxyId} onClick={() => void test.start(target, policy)}>بررسی اتصال</button>
+    <div><button type="button" disabled={target === "media" && !testRequest || test.busy || policy.mode !== "direct" && !policy.proxyId} onClick={() => void test.start(target, policy, testRequest)}>بررسی اتصال</button>
       <button type="button" onClick={() => void load()}>به‌روزرسانی فهرست</button> <Link href="/settings/proxies" target="_blank">مدیریت پروکسی‌ها</Link></div>
     {loadError ? <p role="alert">{loadError}</p> : null}<ConnectionResult check={test.check} error={test.error} />
     {test.check?.result?.reachable === false && policy.mode === "direct" ? <button type="button" onClick={() => onChange({ mode: "proxy", proxyId: "" })}>انتخاب و تست پروکسی برای همین مقصد</button> : null}

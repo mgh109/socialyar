@@ -1518,3 +1518,21 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 @keyframes node-scan { to { transform:translateX(-120px); } }
 @keyframes node-breathe { 50% { opacity:.28; transform:scale(.75); } }
 @media (prefers-reduced-motion:reduce) { .graph-node.node-running .graph-live-dot,.graph-live-spinner,.graph-node.node-running::after { animation:none; } .graph-lines .edge-sending-glow { display:none; } }
+
+.collection-panel { display: grid; gap: 14px; min-width: 0; }
+.collection-panel label { display: grid; gap: 6px; }
+.collection-panel label:has(input[type=checkbox]) { display: flex; align-items: center; gap: 8px; }
+.collection-panel input[type=checkbox] { width: auto; }
+.collection-panel details { border: 1px solid var(--border, #dce3e9); border-radius: 12px; padding: 12px; min-width: 0; }
+.collection-panel details[open] { display: grid; gap: 12px; }
+.collection-panel summary { cursor: pointer; line-height: 1.9; overflow-wrap: anywhere; }
+.collection-panel summary small { display: block; opacity: .75; }
+.collection-actions, .collection-mapping { display: grid; gap: 12px; }
+.collection-file input { width: 100%; }
+.collection-panel fieldset { display: flex; gap: 12px; flex-wrap: wrap; border: 1px solid var(--border, #dce3e9); border-radius: 10px; }
+.collection-rows, .collection-diff { display: grid; gap: 10px; }
+.collection-rows { max-height: 560px; overflow: auto; }
+.collection-diff p { overflow-wrap: anywhere; }
+@media (min-width: 700px) { .collection-mapping { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+
+.collection-panel .collection-fields { display: grid; gap: 14px; border: 0; padding: 0; margin: 0; min-width: 0; }

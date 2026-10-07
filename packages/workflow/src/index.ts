@@ -78,6 +78,8 @@ export async function executeRun(input: ExecuteRunInput) {
     let failed = false;
 
     for (const step of ordered) {
+      // Spreadsheet collections are imported explicitly; polling/manual news runs must never publish them.
+      if (step.type === "collection_source") { states.set(step.id, "skipped"); continue; }
       const prior = records.get(step.id);
       if (prior?.status === "completed") {
         outputs[step.key] = prior.output;

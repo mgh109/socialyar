@@ -455,3 +455,15 @@ export const calendarActions = pgTable("calendar_actions", {
   userId: uuid("user_id").references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+export const contentCollections = pgTable("content_collections", {
+  id: uuid("id").defaultRandom().primaryKey(), workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+  workflowId: uuid("workflow_id").notNull().references(() => workflows.id), sourceStepKey: text("source_step_key").notNull(), targetStepKey: text("target_step_key").notNull(),
+  revision: integer("revision").default(0).notNull(), records: jsonb("records").$type<import("@socialyar/shared").CollectionRecord[]>().default([]).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(), updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ once: uniqueIndex("content_collections_once").on(t.workflowId, t.sourceStepKey, t.targetStepKey) }));
+export const collectionImportEvents = pgTable("collection_import_events", {
+  id: uuid("id").defaultRandom().primaryKey(), collectionId: uuid("collection_id").notNull().references(() => contentCollections.id, { onDelete: "cascade" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id), userId: uuid("user_id").notNull().references(() => users.id),
+  revision: integer("revision").notNull(), detail: jsonb("detail").$type<Record<string, unknown>>().notNull(), createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});

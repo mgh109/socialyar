@@ -1,6 +1,10 @@
 import { connectionErrorReason, publishingTransport, type ConnectionPolicy, type PublishingTarget } from "./publishing-connection";
 
 export async function checkDestination(target: PublishingTarget, request: typeof fetch) {
+  if (target === "dropbox") {
+    const response = await request("https://www.dropbox.com/", { method: "HEAD", signal: AbortSignal.timeout(15000) });
+    return { reachable: response.ok, checks: [{ url: "https://www.dropbox.com/", status: response.status, reachable: response.ok }], authorizationVerified: false };
+  }
   const urls = target === "youtube" ? [
     { url: "https://oauth2.googleapis.com/token", method: "POST", body: new URLSearchParams({ grant_type: "refresh_token" }) },
     { url: "https://www.googleapis.com/youtube/v3/channels?part=id", method: "GET" },

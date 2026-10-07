@@ -8,11 +8,12 @@ import { getDb } from "./client";
 import { publishingProxies } from "./schema";
 import { decryptSecret } from "./secrets";
 
-export type PublishingTarget = "youtube" | "telegram" | "instagram";
+export type PublishingTarget = "youtube" | "telegram" | "instagram" | "dropbox";
 export type ConnectionPolicy = { mode: "direct" | "proxy" | "auto"; proxyId?: string };
 export type ConnectionEvent = { route: "direct" | "proxy"; proxyName?: string; result: string; error?: string };
 export type ProxyConfig = { id: string; name: string; protocol: string; host: string; port: number; authEnc: string | null; isActive: boolean };
 export const destinationHosts: Record<PublishingTarget, string[]> = {
+  dropbox: ["www.dropbox.com", "dropbox.com", "dl.dropboxusercontent.com", "content.dropboxapi.com"],
   youtube: ["www.googleapis.com", "oauth2.googleapis.com"],
   telegram: ["api.telegram.org"],
   instagram: ["graph.instagram.com", "graph.facebook.com", "www.instagram.com"],
@@ -74,19 +75,19 @@ export async function validateConnectionPolicy(workspaceId: string, raw: unknown
   if (policy.proxyId) await loadPublishingProxy(workspaceId, policy.proxyId);
   return policy;
 }
-export async function createProxyDispatcher(proxy: ProxyConfig, resolveHost = validateProxyHost): Promise<Dispatcher> {
+export async function createProxyDispatcher(proxy: ProxyConfig, resolveHost = validateProxyHost, tlsHostname?: string): Promise<Dispatcher> {
   const address = await resolveHost(proxy.host);
   const auth = proxy.authEnc ? JSON.parse(decryptSecret(proxy.authEnc)) as { username: string; password: string } : null;
   if (proxy.protocol === "http" || proxy.protocol === "https") {
     const pinnedLookup: any = (_hostname: string, options: any, callback: any) => options?.all ? callback(null, [{ address, family: 4 }]) : callback(null, address, 4);
     return new ProxyAgent({ uri: `${proxy.protocol}://${proxy.host}:${proxy.port}`, ...(auth ? { token: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString("base64")}` } : {}),
-      proxyTls: { lookup: pinnedLookup, rejectUnauthorized: true }, requestTls: { rejectUnauthorized: true } });
+      proxyTls: { lookup: pinnedLookup, rejectUnauthorized: true }, requestTls: { rejectUnauthorized: true, ...(tlsHostname ? { servername: tlsHostname } : {}) } });
   }
   if (proxy.protocol !== "socks5") throw new Error("Unsupported proxy protocol");
   return new Agent({ connect: (options, callback) => {
     void SocksClient.createConnection({ proxy: { host: address, port: proxy.port, type: 5, ...(auth ? { userId: auth.username, password: auth.password } : {}) },
       command: "connect", destination: { host: options.hostname, port: Number(options.port || 443) }, timeout: 15000 }).then(({ socket }) => {
-      const secure = tlsConnect({ socket, servername: options.hostname, rejectUnauthorized: true });
+      const secure = tlsConnect({ socket, servername: tlsHostname ?? options.hostname, rejectUnauthorized: true });
       const timeout = setTimeout(() => secure.destroy(Object.assign(new Error("TLS connection timeout"), { code: "ETIMEDOUT" })), 15000);
       const failed = (error: Error) => { clearTimeout(timeout); callback(error, null); };
       secure.once("error", failed);

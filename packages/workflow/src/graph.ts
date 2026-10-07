@@ -1,9 +1,9 @@
 export type GraphNode = { key: string; type: string };
 export type GraphEdge = { sourceKey: string; targetKey: string };
 
-const sources = new Set(["rss_source", "api_source", "manual_input"]);
+const sources = new Set(["rss_source", "api_source", "manual_input", "collection_source"]);
 const outputs = new Set(["publish", "draft", "api_action"]);
-export const supportedTypes = new Set(["rss_source", "api_source", "manual_input", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action"]);
+export const supportedTypes = new Set(["rss_source", "api_source", "manual_input", "collection_source", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action"]);
 
 /** A DAG with reachable inputs and explicit terminals; joins accept the first active input. */
 export function graphProblem(nodes: GraphNode[], edges: GraphEdge[], active: boolean): string | null {
@@ -15,6 +15,7 @@ export function graphProblem(nodes: GraphNode[], edges: GraphEdge[], active: boo
   for (const edge of edges) {
     const from = byKey.get(edge.sourceKey), to = byKey.get(edge.targetKey);
     const id = `${edge.sourceKey}\u0000${edge.targetKey}`;
+    if (from?.type === "collection_source" && to?.type !== "publish") return "graph_invalid_connection";
     if (!from || !to || from.key === to.key || sources.has(to.type) || outputs.has(from.type) || seen.has(id))
       return "graph_invalid_connection";
     seen.add(id); incoming.set(to.key, incoming.get(to.key)! + 1); outgoing.get(from.key)!.push(to.key);

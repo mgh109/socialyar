@@ -34,6 +34,7 @@ RUN --mount=type=cache,id=pnpm,target=/root/.local/share/pnpm/store \
 # Workspace packages ship raw .ts (exports -> ./src/index.ts),
 # so the workspace layout is preserved and run via tsx.
 FROM node:${NODE_VERSION} AS runner
+RUN apk add --no-cache ffmpeg
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app ./

@@ -1,4 +1,4 @@
-export type CalendarStatus = "draft" | "waiting_approval" | "scheduled" | "queued" | "sending" | "published" | "failed" | "stopped";
+export type CalendarStatus = "draft" | "preparing" | "waiting_approval" | "scheduled" | "queued" | "sending" | "published" | "failed" | "stopped";
 export type CalendarItem = {
   id: string; kind: "variant" | "youtube"; sourceId: string; publicationId: string | null; version: number; updatedAt: string;
   title: string; body: string; channel: string; accountId: string | null; accountName: string | null;
@@ -9,6 +9,7 @@ export type CalendarItem = {
 };
 export function calendarStatus(input: { rawStatus: string; contentStatus?: string; scheduledAt?: Date | null; approved?: boolean; now?: number }): CalendarStatus {
   const { rawStatus, contentStatus, scheduledAt, approved } = input;
+  if (["waiting_video", "preparing"].includes(rawStatus)) return "preparing";
   if (rawStatus === "published") return "published";
   if (["publishing", "uploading", "processing"].includes(rawStatus)) return "sending";
   if (rawStatus === "failed") return "failed";
@@ -19,10 +20,10 @@ export function calendarStatus(input: { rawStatus: string; contentStatus?: strin
   return "draft";
 }
 export function canMoveCalendarItem(item: Pick<CalendarItem, "status" | "remoteConfirmed" | "uploadStarted">) {
-  return !["sending", "published"].includes(item.status) && !item.remoteConfirmed && !item.uploadStarted;
+  return !["preparing", "sending", "published"].includes(item.status) && !item.remoteConfirmed && !item.uploadStarted;
 }
 export function assertCalendarAction(input: { action: string; status: CalendarStatus; remoteConfirmed: boolean; uploadStarted: boolean; deliveryUnknown: boolean; destinationChecked?: boolean; approved?: boolean; scheduledAt?: Date | null; now?: number }) {
-  if (["sending", "published"].includes(input.status)) throw new Error("این آیتم در حال ارسال یا منتشرشده است و قابل تغییر نیست.");
+  if (["preparing", "sending", "published"].includes(input.status)) throw new Error("این آیتم در حال ارسال یا منتشرشده است و قابل تغییر نیست.");
   if (["schedule", "edit", "unschedule"].includes(input.action) && !canMoveCalendarItem(input)) throw new Error("آپلود آغاز شده است؛ تغییر محتوا یا زمان مجاز نیست.");
   if (["schedule", "retry", "approve"].includes(input.action) && input.remoteConfirmed) throw new Error("ارسال قبلاً در مقصد تأیید شده است؛ انتشار دوباره مجاز نیست.");
   if (["retry", "schedule", "approve"].includes(input.action) && input.deliveryUnknown && !input.destinationChecked) throw new Error("پیش از تلاش مجدد، مقصد را بررسی و نبودِ انتشار قبلی را تأیید کنید.");

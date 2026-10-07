@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { setTimeout as pause } from "node:timers/promises";
-import { getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents } from "@socialyar/db";
+import { getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts } from "@socialyar/db";
+
+import { attachYoutubePlaylist } from "./youtube-playlist";
 
 export async function executeYoutube(id: string, db = getDb(), queueVersion = 0) {
   let [item] = await db.select().from(youtubeItems).where(eq(youtubeItems.id, id));
@@ -33,6 +35,7 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0)
     };
     if (!item.videoId) {
       const video = await media("video");
+      if (item.settings.videoType === "shorts") assertShorts(await inspectVideo(video.bytes));
       await log("upload_started", { privateOnly, requestedPrivacy: item.settings.privacy });
       item.videoId = await uploadYoutubeVideo({ bytes: video.bytes, type: video.type, token,
         session: item.sessionEnc ? decryptSecret(item.sessionEnc) : undefined,
@@ -57,6 +60,7 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0)
       if (["failed", "terminated"].includes(processing) || ["failed", "rejected", "deleted"].includes(status.uploadStatus))
         throw new Error(`YouTube processing failed: ${status.rejectionReason ?? status.failureReason ?? result.processingDetails?.processingFailureReason ?? processing}`);
       if (status.uploadStatus === "processed" && processing !== "processing") {
+        await attachYoutubePlaylist(item,token,request,privateOnly);
         await db.update(youtubeItems).set({ status: "published", actualPrivacy: status.privacyStatus, error: null, updatedAt: new Date() }).where(eq(youtubeItems.id, id));
         await log("published", { videoUrl: `https://www.youtube.com/watch?v=${item.videoId}`, actualPrivacy: status.privacyStatus,
           privateOnly, privacyRestricted: status.privacyStatus !== item.settings.privacy }); return;

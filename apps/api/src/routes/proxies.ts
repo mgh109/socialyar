@@ -9,7 +9,7 @@ const fields = z.object({ name: z.string().trim().min(1).max(100), protocol: z.e
   host: z.string().trim().min(1).max(253), port: z.number().int().min(1).max(65535),
   username: z.string().max(255).optional(), password: z.string().max(255).optional(), clearCredentials: z.boolean().optional(), isActive: z.boolean() });
 export const policySchema = z.object({ mode: z.enum(["direct", "proxy", "auto"]), proxyId: z.string().uuid().optional() });
-const targetSchema = z.enum(["youtube", "telegram", "instagram"]);
+const targetSchema = z.enum(["youtube", "telegram", "instagram", "dropbox"]);
 function safeProxy({ authEnc, ...proxy }: typeof publishingProxies.$inferSelect) { return { ...proxy, hasCredentials: Boolean(authEnc) }; }
 export async function proxyRoutes(app: FastifyInstance) {
   const db = getDb(); app.addHook("onRequest", app.authenticate);

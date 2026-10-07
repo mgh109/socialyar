@@ -47,7 +47,7 @@ export async function enqueueAutoPublication(runId: string) {
         channelName: youtubeAccount.displayName ?? youtubeAccount.externalAccountId,
         title: String(publishStep.config.youtubeTitle || generated?.title || "ویدئوی جدید"),
         description: String(publishStep.config.youtubeDescription ?? generated?.text ?? ""),
-        settings: { videoMediaId, coverMediaId, connection: publishStep.config.connection,
+        settings: { videoMediaId, coverMediaId, videoType: publishStep.config.videoType ?? "video", playlist: publishStep.config.playlist ?? "", connection: publishStep.config.connection,
           privacy: publishStep.config.privacy ?? "private", tags: publishStep.config.tags ?? [], madeForKids: publishStep.config.madeForKids === true },
         scheduledAt: typeof publishStep.config.scheduledAt === "string" && publishStep.config.scheduledAt ? new Date(publishStep.config.scheduledAt) : null,
         status: videoMediaId ? "waiting_approval" : "waiting_video",

@@ -15,6 +15,7 @@ import { authPlugin } from "./auth";
 import { closeQueue } from "./queue";
 import { youtubeRoutes } from "./routes/youtube";
 import { proxyRoutes } from "./routes/proxies";
+import { contentCollectionRoutes } from "./routes/content-collections";
 import { calendarRoutes } from "./routes/calendar";
  
 const app = Fastify({ logger: true });
@@ -251,6 +252,7 @@ await app.register(accountRoutes);
 await app.register(youtubeRoutes);
 await app.register(proxyRoutes);
 await app.register(calendarRoutes);
+await app.register(contentCollectionRoutes);
 await app.register(analyticsRoutes);
 
 const port = Number(process.env.PORT ?? 4000);

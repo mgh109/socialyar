@@ -9,7 +9,7 @@ import { policySchema } from "./proxies";
 
 const settingsSchema = z.object({ imageUrl: z.string().url().nullable().optional(), videoUrl: z.string().url().nullable().optional(),
   coverUrl: z.string().url().nullable().optional(), privacy: z.enum(["public", "private", "unlisted"]).optional(),
-  tags: z.array(z.string().max(100)).max(50).optional(), madeForKids: z.boolean().optional(), connection: policySchema.optional() });
+  tags: z.array(z.string().max(100)).max(50).optional(), videoType: z.enum(["video", "shorts"]).optional(), playlist: z.string().max(150).optional(), madeForKids: z.boolean().optional(), connection: policySchema.optional() });
 const mutationSchema = z.object({ action: z.enum(["edit", "schedule", "unschedule", "stop", "approve", "reject", "retry"]),
   version: z.number().int().min(0), publicationId: z.string().uuid().nullable().optional(), title: z.string().trim().min(1).max(300).optional(),
   updatedAt: z.string().datetime().optional(),
@@ -54,7 +54,7 @@ export async function calendarRoutes(app: FastifyInstance) {
     });
     for (const { item, workflow } of videos) {
       // A failed media fetch / waiting-video placeholder is not a generated video output.
-      if (!item.settings.videoMediaId && !item.videoId) continue;
+      if (!item.settings.videoMediaId && !item.videoId && !item.settings.collectionId) continue;
       const effectiveDate = item.scheduledAt ?? (["queued", "uploading", "processing", "published", "failed", "cancelled"].includes(item.status) ? item.approvedAt : null);
       const status = calendarStatus({ rawStatus: item.status, scheduledAt: effectiveDate, approved: Boolean(item.approvedAt) });
       items.push({ id: `youtube-${item.id}`, kind: "youtube", sourceId: item.id, publicationId: null, version: item.queueVersion, updatedAt: item.updatedAt.toISOString(),
@@ -91,6 +91,7 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
         if (params.kind === "youtube") {
           const [item] = await tx.select().from(youtubeItems).where(and(eq(youtubeItems.id, params.id), eq(youtubeItems.workspaceId, auth.workspaceId))).for("update");
           if (!item) throw new CalendarConflict("آیتم پیدا نشد.");
+          if (item.settings.collectionId && !item.settings.videoMediaId && !["stop","reject"].includes(input.action)) throw new CalendarConflict("ابتدا فایل را از کارت مجموعه دریافت مجدد کنید یا لینک آن را در اکسل اصلاح کنید.");
           if (item.queueVersion !== input.version || input.updatedAt && input.updatedAt !== item.updatedAt.toISOString()) throw new CalendarConflict("آیتم تغییر کرده است؛ اطلاعات تازه را دریافت کنید.");
           previousTask = { kind: "youtube", id: item.id, version: item.queueVersion };
           const status = calendarStatus({ rawStatus: item.status, scheduledAt: item.scheduledAt, approved: Boolean(item.approvedAt) });

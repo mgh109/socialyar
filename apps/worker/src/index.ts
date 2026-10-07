@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import { closeDb, ensurePublishingStorage } from "@socialyar/db";
 import { executeRun } from "@socialyar/workflow";
 import { executePublication } from "./publisher";
+import { prepareCollectionVideo } from "./collection-prepare";
 import { executeYoutube } from "./youtube";
 import { executeConnectionCheck } from "./connection-check";
 import { closeAutoPublisher, enqueueAutoPublication } from "./auto-publish";
@@ -31,6 +32,7 @@ const workflowWorker = new Worker(
 const publicationWorker = new Worker(
   "publication-jobs",
   async (job) => {
+    if (job.name === "youtube-prepare") return prepareCollectionVideo(job.data.youtubeItemId, job.data.queueVersion);
     if (job.name === "youtube-publish") return executeYoutube(job.data.youtubeItemId, undefined, job.data.queueVersion ?? 0);
     const data = job.data as { publicationId: string };
     const maxAttempts = Number(job.opts.attempts ?? 1);

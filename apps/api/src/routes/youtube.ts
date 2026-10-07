@@ -3,13 +3,13 @@ import { and, desc, eq, gt } from "drizzle-orm";
 import { randomBytes, createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getDb, socialAccounts, youtubeItems, youtubeOAuthStates, youtubeConfig, googleJson,
-  encryptSecret, decryptSecret, youtubeToken, workflows, storeYoutubeMedia, readYoutubeMedia, fetchYoutubeMedia, validateConnectionPolicy } from "@socialyar/db";
+  encryptSecret, decryptSecret, youtubeToken, workflows, storeYoutubeMedia, readYoutubeMedia, fetchYoutubeMedia, validateConnectionPolicy, secretConfigurationProblem } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 import { policySchema } from "./proxies";
 
 const metadata = z.object({ title: z.string().trim().min(1).max(100), description: z.string().max(5000),
   privacy: z.enum(["public", "unlisted", "private"]), tags: z.array(z.string().max(100)).max(50),
-  madeForKids: z.boolean(), scheduledAt: z.string().datetime().nullable().optional(), connection: policySchema.optional() });
+  madeForKids: z.boolean(), videoType: z.enum(["video", "shorts"]).default("video"), playlist: z.string().max(150).default(""), scheduledAt: z.string().datetime().nullable().optional(), connection: policySchema.optional() });
 export async function youtubeRoutes(app: FastifyInstance) {
   const db = getDb();
   app.get("/youtube/oauth/callback", async (request, reply) => {
@@ -59,12 +59,15 @@ export async function youtubeRoutes(app: FastifyInstance) {
       }));
       return { ok: checks.every((check) => check.reachable), checks };
     });
-    secured.post("/youtube/connect", async (request) => {
+    secured.post("/youtube/connect", async (request, reply) => {
+      if (!process.env.YOUTUBE_CLIENT_ID || !process.env.YOUTUBE_CLIENT_SECRET || !process.env.YOUTUBE_REDIRECT_URI)
+        return reply.code(503).send({ error: "تنظیمات OAuth یوتیوب در سرور کامل نیست؛ YOUTUBE_CLIENT_ID، YOUTUBE_CLIENT_SECRET و YOUTUBE_REDIRECT_URI را تنظیم کنید." });
+      if (secretConfigurationProblem()) return reply.code(503).send({ error: "کلید رمزگذاری HOOR_SECRET_KEY در سرور تنظیم نشده یا معتبر نیست." });
       const config = youtubeConfig(); const state = randomBytes(32).toString("base64url"); const verifier = randomBytes(48).toString("base64url");
       await db.insert(youtubeOAuthStates).values({ id: state, workspaceId: request.auth.workspaceId,
         verifierEnc: encryptSecret(verifier), expiresAt: new Date(Date.now() + 600000) });
       const params = new URLSearchParams({ client_id: config.clientId, redirect_uri: config.redirectUri, response_type: "code",
-        access_type: "offline", prompt: "consent", state, scope: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
+        access_type: "offline", prompt: "consent", state, scope: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl",
         code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256" });
       return { url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` };
     });
@@ -100,7 +103,7 @@ export async function youtubeRoutes(app: FastifyInstance) {
     secured.get("/youtube/items", async (request) => {
       const query = z.object({ workflowId: z.string().uuid().optional() }).parse(request.query);
       const rows = await db.select().from(youtubeItems).where(and(eq(youtubeItems.workspaceId, request.auth.workspaceId),
-        query.workflowId ? eq(youtubeItems.workflowId, query.workflowId) : undefined)).orderBy(desc(youtubeItems.createdAt)).limit(100);
+        query.workflowId ? eq(youtubeItems.workflowId, query.workflowId) : undefined)).orderBy(desc(youtubeItems.createdAt)).limit(1000);
       return rows.map(({ sessionEnc, ...row }) => row);
     });
     secured.post("/youtube/items", async (request, reply) => {
@@ -156,6 +159,11 @@ export async function youtubeRoutes(app: FastifyInstance) {
     secured.post("/youtube/items/:id/:action", async (request, reply) => {
       const { id, action } = z.object({ id: z.string().uuid(), action: z.enum(["cancel", "retry"]) }).parse(request.params);
       const [current] = await db.select().from(youtubeItems).where(and(eq(youtubeItems.id, id), eq(youtubeItems.workspaceId, request.auth.workspaceId)));
+      if (action === "retry" && current?.status === "failed" && current.settings.collectionId && !current.approvedAt) {
+        await publicationQueue.add("youtube-prepare", { youtubeItemId: id, queueVersion: current.queueVersion },
+          { jobId: `youtube-prepare-retry-${id}-${Date.now()}`, attempts: 1, removeOnComplete: 100, removeOnFail: 100 });
+        return { ok: true, approvalRequired: true };
+      }
       if (action === "retry" && current?.status === "failed" && !current.approvedAt && typeof current.settings.sourceVideoUrl === "string") {
         const video = await fetchYoutubeMedia(current.settings.sourceVideoUrl, 250_000_000, "video");
         const { mediaId: videoMediaId } = await storeYoutubeMedia(request.auth.workspaceId, video.bytes);

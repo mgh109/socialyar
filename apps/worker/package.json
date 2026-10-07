@@ -8,7 +8,8 @@
     "test:calendar": "tsx --test src/calendar.test.ts",
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:collections": "node --import tsx --test src/content-collection.test.ts"
   },
   "dependencies": {
     "@socialyar/channels": "workspace:*",
