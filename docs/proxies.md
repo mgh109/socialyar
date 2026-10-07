@@ -1,38 +1,56 @@
-# Publishing proxies
+# راهنمای پروکسی‌های انتشار
 
-Apply `packages/db/migrations/0007_publishing_proxies.sql` after migration `0006_youtube.sql` before starting the updated API and worker. These are plain SQL migrations; use the deployment's SQL runner, or `psql "$DATABASE_URL" -f packages/db/migrations/0007_publishing_proxies.sql`. No proxy is enabled globally and no service-account credentials are changed by this migration.
+## ذخیره و امنیت
 
-In **Settings → پروکسی‌ها**, create any number of named HTTP, HTTPS or SOCKS5 proxies with host, port, optional username/password and active status. The host field contains a hostname or IPv4 address without a URL scheme or port. To prevent using the server as an internal network scanner, proxy hosts must resolve to public IPv4 addresses; loopback, private networks and link-local addresses are rejected. The worker pins the validated proxy address to avoid DNS rebinding. HTTPS proxy and destination TLS certificates remain verified. HTTP and SOCKS5 proxy authentication is not encrypted on the hop to the proxy; use an HTTPS proxy when that hop needs TLS protection.
+در «تنظیمات ← پروکسی‌ها» چند پروکسی با نام دلخواه، نوع اتصال، آدرس، پورت، نام کاربری و رمز اختیاری ذخیره کنید. هر پروکسی می‌تواند فعال یا غیرفعال باشد. انواع اتصال شامل اچ‌تی‌تی‌پی، اچ‌تی‌تی‌پی امن و ساکس ۵ است.
 
-Credentials are encrypted together using the existing server-side `HOOR_SECRET_KEY`. API and worker must share that key. Responses only expose `hasCredentials`, never the username/password or ciphertext. Leave credential fields empty while editing to preserve them; select the explicit clear-credentials checkbox to remove them. Reported network errors contain fixed descriptions, without the original exception text or proxy URL. Proxy deletion or deactivation causes dependent proxy/auto policies to fail clearly instead of silently changing to a direct route.
+در فیلد آدرس فقط نام دامنه یا آی‌پی را وارد کنید؛ پورت و نوع اتصال فیلدهای جداگانه دارند. برای جلوگیری از دسترسی ناخواسته به شبکهٔ داخلی، آدرس باید به آی‌پی عمومی نسخهٔ ۴ برسد. آدرس‌های داخلی، محلی و ارتباط خودکار داخلی پذیرفته نمی‌شوند. پردازشگر هنگام اتصال همان نشانی بررسی‌شده را استفاده می‌کند تا تغییر پاسخ نام دامنه نتواند مقصد را به شبکهٔ داخلی ببرد.
 
-Each publication card has its own `config.connection`:
+گواهی اتصال امن پروکسی و مقصد بررسی می‌شود. اطلاعات ورود در مسیر تا پروکسی اچ‌تی‌تی‌پی یا ساکس ۵، با رمزگذاری اتصال امن محافظت نمی‌شود؛ برای این حفاظت از پروکسی اچ‌تی‌تی‌پی امن استفاده کنید.
 
-```json
-{ "mode": "auto", "proxyId": "saved-proxy-uuid" }
-```
+نام کاربری و رمز در سرور با `HOOR_SECRET_KEY` رمزگذاری می‌شوند. سرویس و پردازشگر باید کلید یکسان داشته باشند. مرورگر فقط از وجود اطلاعات ورود مطلع می‌شود و مقدار رمز، نام کاربری ذخیره‌شده یا متن رمزگذاری‌شده را دریافت نمی‌کند. هنگام ویرایش، خالی گذاشتن فیلدها اطلاعات قبلی را حفظ می‌کند؛ برای پاک‌کردن آن‌ها گزینهٔ صریح «حذف اطلاعات ورود ذخیره‌شده» را بزنید.
 
-- `direct`: official API calls go directly from the worker.
-- `proxy`: official API calls use the selected active proxy only.
-- `auto`: direct first; switch to the selected proxy only after a recognized network error. HTTP errors, invalid tokens, missing permissions, quota/content errors and certificate failures never trigger fallback.
+گزارش‌ها شامل متن خام خطا یا نشانی دارای رمز نیستند. حذف یا غیرفعال‌کردن پروکسی، برای کارت‌های وابسته خطای روشن ایجاد می‌کند و مسیر آن‌ها خودسرانه مستقیم نمی‌شود.
 
-The policy is copied into the queued publication/YouTube item's settings so later card edits do not silently reroute an already approved item. Eitaa and other unsupported destinations retain their direct connection. YouTube's Google token refresh, resumable upload, thumbnail upload and processing queries all use the selected transport. External source-media download remains a separate, validated ingestion step. Google sign-in/account management and official service authorization remain separate from card routing.
+## انتخاب مسیر هر کارت
 
-The shared `publishingTransport` API supports YouTube, Telegram and Instagram's official Graph endpoints and can be passed to future service adapters without setting a process-wide dispatcher. The existing native Telegram publisher already uses it. **The native Instagram publication adapter is still not implemented**; this change provides its reusable network settings, transport and destination test without claiming that Instagram publication is operational. The workflow builder displays the selector for a supported destination account/card. Each destination needs its own publication card.
+هر کارت انتشار، تنظیم مستقل دارد:
 
-Connection tests are persisted in `connection_checks` and queued in BullMQ's `connection-checks` queue. A dedicated consumer inside the **same worker process that publishes** executes them, including when publication jobs are busy. Run the worker with the same environment/container/network as production publication. The result records status, response time, last-check time, executor, actual route, proxy name and a sanitized failure reason. Worker queue failures and pending tests are never reported as success. Restarting the UI retrieves the last persisted check for each proxy/destination.
+- «اتصال مستقیم»: درخواست‌های سرویس از پردازشگر مستقیماً ارسال می‌شوند.
+- «استفاده از پروکسی»: فقط پروکسی فعال انتخاب‌شده استفاده می‌شود.
+- «خودکار»: ابتدا اتصال مستقیم؛ فقط در خطای شبکه، پروکسی انتخاب‌شده استفاده می‌شود.
 
-A test must receive a recognizable response from the official service endpoint. YouTube tests reach the Google token endpoint, YouTube API and resumable-upload endpoint. Telegram tests reach its Bot API; Instagram tests reach Meta's Graph API. Structured missing-auth responses are accepted as **network reachability only**, with `authorizationVerified=false`; valid OAuth/bot permissions are tested separately through account connection checks. Proxy authentication errors, captive-portal HTML, timeouts, invalid TLS and unavailable-service responses are failures. Tests do not publish content.
+خطای توکن، مجوز، سهمیه، محتوا یا گواهی امن باعث تغییر مسیر نمی‌شود. تنظیمات در خروجی و آیتم صف کپی می‌شوند تا تغییر الگوی کارت، برنامهٔ خروجی‌های قبلی را بدون تصمیم صریح تغییر ندهد. اتصال ایتا و سایر مقصدهای فاقد این تنظیم، مستقیم باقی می‌ماند.
 
-For unknown send results, the transport never blindly repeats a write after a reset or response-body failure. YouTube queries the existing resumable session through the newly selected route before sending another chunk. Expired sessions remain errors rather than creating another upload. Telegram's `sendMessage` API provides no idempotency key or API to recover the ID of a response that was lost; those publications are held with `deliveryUnknown=true`, and automatic and schedule-based resends are blocked. Inspect the destination before explicitly creating any replacement item. A confirmed external publication ID also prevents resending if local persistence subsequently fails.
+تمدید دسترسی گوگل، بارگذاری یوتیوب، تنظیم کاور و بررسی پردازش ویدئو از مسیر انتخاب‌شدهٔ همان خروجی استفاده می‌کنند. دریافت فایل از منبع مرحله‌ای جداگانه است. اتصال رسمی حساب و مجوزهای هر شبکه مستقل از پروکسی مدیریت می‌شوند.
 
-`publication_connection_events` records actual route, proxy name, result, error and timestamp per execution. Reports appear in the run page, calendar publications and YouTube review, and the canvas shows configured routing or the last actual route. Reports never include proxy usernames/passwords. The per-card **بررسی اتصال** button uses the current selected policy; after a failed direct test, the card offers proxy selection/testing in place.
+زیرساخت مشترک برای یوتیوب، تلگرام و سرویس رسمی اینستاگرام آماده است. انتشار مستقیم تلگرام از آن استفاده می‌کند. **انتشار بومی اینستاگرام هنوز پیاده نشده است**؛ آماده‌بودن مسیر اتصال و آزمون شبکه به معنی فعال‌بودن انتشار اینستاگرام نیست. هر مقصد، کارت انتشار جداگانهٔ خود را دارد.
 
-Validation commands:
+## تست اتصال
+
+کاربر مقصد تست را انتخاب می‌کند. تست در همان فرایند پردازشگر مسئول انتشار اجرا می‌شود و صف مستقلی دارد تا پشت بارگذاری‌های طولانی منتظر نماند. پردازشگر باید با همان تنظیمات، محیط و شبکهٔ انتشار عملیاتی اجرا شود.
+
+نتیجه شامل وضعیت، زمان پاسخ، آخرین بررسی، مسیر واقعی و علت خطای بدون اطلاعات محرمانه است. آیتم منتظر پردازش یا خطای صف، موفق تلقی نمی‌شود. نتیجهٔ آخر هر مقصد و پروکسی ذخیره می‌شود و پس از بازکردن دوبارهٔ صفحه قابل مشاهده است.
+
+صرف اتصال به پروکسی کافی نیست؛ سرویس رسمی مقصد باید پاسخ شناخته‌شده بدهد. یوتیوب با بررسی سرویس توکن گوگل، سرویس یوتیوب و مسیر بارگذاری آزموده می‌شود. تلگرام و اینستاگرام نیز با سرویس رسمی خود بررسی می‌شوند.
+
+پاسخ شناخته‌شدهٔ «ورود لازم است» فقط دسترسی شبکه را تأیید می‌کند، نه مجوز حساب. آزمون حساب و مجوزها جداگانه انجام می‌شود. صفحهٔ ورود واسط، رمز اشتباه پروکسی، قطع شبکه، پاسخ نامعتبر، گواهی نامعتبر و در دسترس نبودن مقصد، نتیجهٔ ناموفق دارند. تست چیزی منتشر نمی‌کند.
+
+## ارسال نامشخص و گزارش
+
+پس از قطع ارتباط در میانهٔ ارسال یا از دست رفتن پاسخ، درخواست انتشار خودکار تکرار نمی‌شود. یوتیوب ابتدا وضعیت همان نشست قابل‌ادامه را از مسیر تازه می‌پرسد. نشست پایان‌یافته باعث ساخت بارگذاری تازه نمی‌شود.
+
+تلگرام امکان بازیابی شناسهٔ پیامِ پاسخ ازدست‌رفته یا کلید رسمی جلوگیری از تکرار ندارد. چنین آیتمی با نتیجهٔ نامشخص متوقف می‌شود. در تقویم، کاربر باید پیش از تلاش مجدد، تغییر زمان یا تأیید دوباره، بررسی مقصد و نبودِ انتشار قبلی را صریحاً تأیید کند. این بررسی و تصمیم در گزارش ثبت می‌شود. ویرایش یا توقف آیتم، هشدار نتیجهٔ نامشخص را پاک نمی‌کند.
+
+گزارش هر اجرا در صفحهٔ اجرا، تقویم و بازبینی یوتیوب شامل مسیر واقعی، نام پروکسی، نتیجه، زمان و علت خطا است. کارت نیز مسیر تنظیم‌شده یا مسیر آخرین اجرا را نشان می‌دهد.
+
+## ارتقای دیتابیس و آزمون
+
+ارتقای افزایشی ساختار انتشار هنگام راه‌اندازی با قفل مشترک انجام می‌شود. اگر `HOOR_AUTO_MIGRATE=false` است، مهاجرت‌های `0006_youtube.sql`، `0007_publishing_proxies.sql` و `0008_publication_calendar.sql` را دستی و به‌ترتیب اجرا کنید. کلید رمزگذاری سرویس و پردازشگر را یکسان نگه دارید.
 
 ```sh
 pnpm typecheck
-pnpm --filter @socialyar/worker exec tsx --test src/publishing-connection.test.ts src/youtube.test.ts
+pnpm --filter @socialyar/worker exec tsx --test src/publishing-connection.test.ts src/youtube.test.ts src/calendar.test.ts
 ```
 
-The automated tests cover routing, non-network failures, lost responses, status probing, service-response validation, secret redaction, media isolation and deduplication. End-to-end tests of a real proxy require that proxy, the migrated PostgreSQL database, Redis and the running publication worker; no real proxy credentials or service-account authorization are supplied by this repository.
+آزمون‌های خودکار مسیر جایگزین، خطاهای غیرشبکه، پاسخ نامشخص، بازبینی نشست، پنهان‌ماندن اطلاعات محرمانه و آزمون مقصد را پوشش می‌دهند. آزمون نهایی پروکسی واقعی به پروکسی، دیتابیس ارتقایافته، صف و پردازشگر عملیاتی نیاز دارد.

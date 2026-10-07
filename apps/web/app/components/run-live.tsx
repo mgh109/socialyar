@@ -208,7 +208,7 @@ export function RunLive({ runId }: { runId: string }) {
 
           <div className="event-list">
             {events.length === 0 ? (
-              <div className="empty-state">منتظر اولین Event...</div>
+              <div className="empty-state">منتظر اولین رویداد…</div>
             ) : (
               [...events].reverse().map((event) => (
                 <article className="event-row" key={event.id}>

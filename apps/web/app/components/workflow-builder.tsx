@@ -41,7 +41,7 @@ const dollarCost = (usage: UsageTotals) => (Number(usage.costMicros) / 1_000_000
   .toLocaleString("fa-IR", { maximumFractionDigits: 4 });
 const isSource = (step: Step) => ["rss_source", "api_source", "manual_input"].includes(step.type);
 const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
-const sourceNames: Record<string, string> = { rss: "RSS", eitaa: "ایتا", bale: "بله" };
+const sourceNames: Record<string, string> = { rss: "خبرخوان", eitaa: "ایتا", bale: "بله" };
 const publishNames: Record<string, string> = { youtube: "یوتیوب", eitaa: "ایتا", telegram: "تلگرام", website: "وب‌سایت" };
 const pollPresets = [1, 5, 15, 60, 1440];
 const publishPresets = [30, 60, 300, 3600, 86400];
@@ -56,17 +56,17 @@ const types = [
   { type: "human_approval", label: "تأیید انسانی" },
   { type: "draft", label: "پیش‌نویس" },
   { type: "publish", label: "انتشار" },
-  { type: "api_action", label: "اقدام API" },
+  { type: "api_action", label: "اقدام سرویس" },
 ];
 const errors: Record<string, string> = {
   graph_invalid_step: "یک کارت نامعتبر است.", graph_invalid_connection: "اتصال نامعتبر یا تکراری است.",
   graph_cycle: "اتصال حلقه‌ای مجاز نیست.", graph_missing_input: "همهٔ کارت‌های پردازش باید از یک منبع ورودی بگیرند.",
   graph_unfinished_branch: "هر شاخه باید به انتشار یا پیش‌نویس برسد.", graph_invalid_filter: "برای شرط، واژه‌های کلیدی وارد کن.",
-  ai_output_invalid: "تنظیم عنوان یا نشانی تصویر کارت AI معتبر نیست.",
-  invalid_rss_url: "آدرس RSS باید HTTPS عمومی باشد.", invalid_eitaa_source: "شناسهٔ کانال ایتا معتبر نیست.",
+  ai_output_invalid: "تنظیم عنوان یا نشانی تصویر کارت هوش مصنوعی معتبر نیست.",
+  invalid_rss_url: "آدرس خوراک خبری باید امن و عمومی باشد.", invalid_eitaa_source: "شناسهٔ کانال ایتا معتبر نیست.",
   invalid_bale_source: "شناسهٔ کانال بله معتبر نیست.", eitaa_account_required: "مقصد انتشار را انتخاب کن.",
-  eitaa_account_not_found: "اتصال مقصد انتشار معتبر یا فعال نیست.", ai_token_not_configured: "توکن AI را تنظیم کن.",
-  ai_profile_not_found: "مدل AI انتخاب‌شده موجود نیست؛ یک مدل معتبر انتخاب کن.",
+  eitaa_account_not_found: "اتصال مقصد انتشار معتبر یا فعال نیست.", ai_token_not_configured: "توکن هوش مصنوعی را تنظیم کن.",
+  ai_profile_not_found: "مدل هوش مصنوعی انتخاب‌شده موجود نیست؛ یک مدل معتبر انتخاب کن.",
   invalid_publish_interval: "فاصلهٔ انتشار معتبر نیست.",
   invalid_publishing_connection: "مسیر اتصال معتبر نیست؛ یک پروکسی فعال از همین فضای کاری انتخاب کنید.",
   duplicate_publish_channel: "هر کانال خروجی را فقط به یک کارت انتشار وصل کن.",
@@ -719,10 +719,10 @@ export function WorkflowBuilder() {
             dragRef.current = { key: step.key, startX: event.clientX, startY: event.clientY,
               x: step.position.x, y: step.position.y }; setSelectedKey(step.key);
           }}><span className="graph-kind">{step.type === "rss_source" ? sourceNames[String(step.config.sourceKind ?? "rss")] :
-            step.type === "api_source" || step.type === "api_action" ? "API" : step.type === "comment_decision" ? "AI" :
+            step.type === "api_source" || step.type === "api_action" ? "سرویس" : step.type === "comment_decision" ? "هوش" :
             step.type === "filter" ? "شرط" : step.type === "publish" ?
               publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "خروجی" :
-              step.type === "ai" ? "AI" : "کارت"}</span>
+              step.type === "ai" ? "هوش" : "کارت"}</span>
             <button type="button" className="graph-delete" title="حذف کارت" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => { event.stopPropagation(); remove(step.key); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button></div>
           <span className="graph-role-label">{stepActivity(step) ? <><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</> :
@@ -733,7 +733,7 @@ export function WorkflowBuilder() {
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
             step.type === "publish" ? publishAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "مقصد را انتخاب کن" :
-            step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال API را انتخاب کن" :
+            step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال سرویس را انتخاب کن" :
             step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
             step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
             step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>

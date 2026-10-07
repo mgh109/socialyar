@@ -1,18 +1,48 @@
-# YouTube publishing
+# راهنمای اتصال و انتشار یوتیوب
 
-1. Apply `packages/db/migrations/0006_youtube.sql` to the existing PostgreSQL database before starting the updated API and worker. This repository's migrations are plain SQL files; apply this file using your deployment's SQL migration runner or `psql "$DATABASE_URL" -f packages/db/migrations/0006_youtube.sql`.
-2. Enable YouTube Data API v3 in Google Cloud. Create a Web application OAuth client and register the exact callback URL in `YOUTUBE_REDIRECT_URI` (for local development: `http://localhost:4000/youtube/oauth/callback`). Configure the consent screen and test users as appropriate for your Google project.
-3. Supply `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REDIRECT_URI` to both API and worker. Set `YOUTUBE_WEB_ORIGIN` to the web application's origin. Production OAuth callbacks and web origins should use HTTPS. Both services must share the same existing `HOOR_SECRET_KEY` (32 random bytes encoded as base64); do not rotate it without re-encrypting stored integration credentials.
-4. Keep `YOUTUBE_PROJECT_VERIFIED=false` until the **YouTube API compliance audit** is complete. Google OAuth consent verification alone does not remove YouTube's private-upload restriction. With this setting, the UI disables public/unlisted choices and the worker explicitly uploads privately. Actual privacy and any difference from the request appear in the execution report. See [Google's videos.insert documentation](https://developers.google.com/youtube/v3/docs/videos/insert).
-5. Set an absolute persistent `YOUTUBE_MEDIA_DIR` accessible by both API and worker. Docker Compose provides a shared `youtube-media` volume at `/data/youtube`. Kubernetes deployments need a shared volume and the same environment variables. Local source execution defaults to the repository's `uploads/youtube` directory. Configure the reverse proxy to accept video requests up to 250 MB; covers are limited to 2 MB. Take backups of both database and media volume and restrict their access.
-6. On Connections, run **بررسی دسترسی سرور به گوگل و یوتیوب**, then connect YouTube with Google. Use the account's connection test to verify authorization and the channel name. The network check separately tests HTTPS reachability of Google's token, YouTube API, and upload endpoints; it is not an OAuth permission check.
-7. Select the channel in the publish card. Configure title, description, tags, children designation, privacy, cover, and optional local publication time. A workflow video URL is downloaded and stored as an immutable file before human review. URLs must be direct public HTTPS downloads of MP4/WebM with no redirects. Manual files go to the application server first; they are never uploaded to Google before approval. Manual uploads can also fill a card's waiting-video item.
-8. Review the exact video and cover in the card or Approval Center, edit title/description, and approve or reject. Approval queues the item immediately or with a delayed job. YouTube uploading itself starts only after approval and the scheduled time; scheduling here delays the upload rather than setting YouTube's `publishAt`.
+## راه‌اندازی
 
-The worker uses [Google's resumable upload protocol](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol). It encrypts and persists the upload session before sending bytes and persists the video ID before setting a thumbnail or polling processing. Retry resumes the existing session or checks the same video. An expired/unknown session is a visible error; the worker will not silently create another upload. Verify the destination channel manually before creating a new item in that case.
+۱. جدول‌های یوتیوب، پروکسی و تقویم هنگام راه‌اندازی سرویس و پردازشگر، با قفل مشترک دیتابیس و بدون حذف داده ارتقا می‌یابند. حساب دیتابیس باید مجوز تغییر ساختار داشته باشد. اگر مهاجرت‌ها را جداگانه اجرا می‌کنید، `HOOR_AUTO_MIGRATE=false` بگذارید و فایل‌های `0006_youtube.sql`، `0007_publishing_proxies.sql` و `0008_publication_calendar.sql` را به‌ترتیب اجرا کنید.
 
-Deduplication uses the SHA-256 digest of the video snapshot per workflow publish step, including across reruns. Upload sessions, access tokens, and refresh tokens are encrypted server-side and omitted from item/account responses. Disconnect revokes Google's refresh token, removes local credentials, and cancels queued items. Completed uploads remain on YouTube. Covers require the channel to have YouTube's custom-thumbnail eligibility; a thumbnail error keeps the video ID and retry never reuploads the video.
+۲. در کنسول گوگل، سرویس `YouTube Data API v3` را فعال کنید. یک برنامهٔ ورود گوگل از نوع وب بسازید و نشانی بازگشت آن را دقیقاً برابر `YOUTUBE_REDIRECT_URI` قرار دهید. نشانی توسعهٔ محلی:
 
-“منتشر شد” is recorded only after YouTube reports `uploadStatus=processed`. Processing failures/rejections are reported as errors. The UI shows the actual privacy returned by YouTube; a successful private upload does not imply public availability. Processing is polled for up to ten minutes per execution. If it takes longer, retry checks the same video. The item report records channel, timestamp, result, video URL, actual privacy, restrictions, and errors.
+```text
+http://localhost:4000/youtube/oauth/callback
+```
 
-Validation: `pnpm typecheck` and `pnpm --filter @socialyar/worker exec tsx --test src/youtube.test.ts`. End-to-end OAuth, token renewal, thumbnail eligibility, Google quota, and upload verification require a configured test channel, PostgreSQL, Redis, and the actual deployment network. No production upload is performed by the unit tests.
+۳. در سرویس و پردازشگر، متغیرهای `YOUTUBE_CLIENT_ID`، `YOUTUBE_CLIENT_SECRET` و `YOUTUBE_REDIRECT_URI` را تنظیم کنید. `YOUTUBE_WEB_ORIGIN` نشانی رابط کاربری است. نشانی‌های محیط عملیاتی باید امن باشند. سرویس و پردازشگر باید همان `HOOR_SECRET_KEY` را داشته باشند؛ این کلید شامل ۳۲ بایت تصادفی با رمزگذاری پایهٔ ۶۴ است. تغییر کلید بدون رمزگذاری دوبارهٔ اطلاعات ذخیره‌شده، اتصال‌های قبلی را از دسترس خارج می‌کند.
+
+۴. تا پایان ممیزی رسمی پروژهٔ یوتیوب، مقدار `YOUTUBE_PROJECT_VERIFIED=false` را نگه دارید. تأیید صفحهٔ رضایت ورود گوگل، به‌تنهایی محدودیت انتشار خصوصی یوتیوب را رفع نمی‌کند. در حالت محدود، گزینه‌های عمومی و فهرست‌نشده غیرفعال می‌شوند و ویدئو خصوصی بارگذاری می‌شود. وضعیت واقعی و تفاوت آن با وضعیت درخواستی در گزارش ثبت می‌شود. توضیح رسمی در [مستندات گوگل دربارهٔ بارگذاری ویدئو](https://developers.google.com/youtube/v3/docs/videos/insert) آمده است.
+
+۵. `YOUTUBE_MEDIA_DIR` باید مسیر مطلق و ماندگاری باشد که سرویس و پردازشگر هر دو به آن دسترسی دارند. تنظیمات داکر پروژه فضای مشترک `/data/youtube` را فراهم می‌کند. در کوبیت نیز فضای ذخیره‌سازی مشترک و متغیرهای یکسان لازم است. در اجرای محلی، پوشهٔ `uploads/youtube` در ریشهٔ پروژه پیش‌فرض است. محدودیت دریافت ویدئو ۲۵۰ مگابایت و کاور ۲ مگابایت است؛ محدودیت درگاه ورودی را متناسب تنظیم کنید. از دیتابیس و فایل‌ها نسخهٔ پشتیبان بگیرید.
+
+## اتصال و تأیید
+
+در «اتصال کانال‌ها»، ابتدا «بررسی دسترسی سرور به گوگل و یوتیوب» و سپس «اتصال یوتیوب با گوگل» را بزنید. آزمون حساب، مجوز واقعی و نام کانال را بررسی می‌کند؛ بررسی شبکه جایگزین آزمون مجوز حساب نیست.
+
+در کارت انتشار، کانال یوتیوب و مسیر اتصال را انتخاب کنید. عنوان، توضیحات، برچسب‌ها، وضعیت محتوای کودک، کاور، نوع انتشار و زمان را تنظیم کنید. تاریخ انتخاب‌شده شمسی و زمان پیش‌فرض تهران است. تنظیمات کارت، الگوی خروجی‌های بعدی است؛ برنامهٔ هر خروجی تولیدشده در کارت و تقویم جداگانه مدیریت می‌شود.
+
+ویدئوی دریافتی از کارت قبلی پیش از بازبینی به یک فایل ثابت تبدیل می‌شود. نشانی باید دریافت مستقیم و امن ویدئوی ام‌پی۴ یا وب‌ام را فراهم کند و تغییر مسیر نداشته باشد. بارگذاری دستی ابتدا فقط به سرور هور+ انجام می‌شود. تا تأیید انسانی، هیچ فایل ویدئویی به گوگل ارسال نمی‌شود.
+
+ویدئو و کاور را در کارت، مرکز تأیید یا تقویم ببینید، عنوان و توضیحات را ویرایش و سپس تأیید یا رد کنید. اگر زمان تعیین‌شده گذشته باشد، ابتدا زمان جدید تعیین کنید یا برنامهٔ قبلی را بردارید. رسیدن موعد، مجوز ارسال خودکار محتوای تأییدنشده نیست. زمان‌بندی، شروع بارگذاری را به تأخیر می‌اندازد و از برنامهٔ اجرای کارت منبع مستقل است.
+
+## خطا، تلاش مجدد و وضعیت واقعی
+
+پردازشگر از [روش بارگذاری قابل‌ادامهٔ گوگل](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol) استفاده می‌کند. نشانی نشست پیش از ارسال فایل رمزگذاری و ذخیره می‌شود. شناسهٔ ویدئو نیز پیش از تنظیم کاور یا بررسی پردازش ثبت می‌شود. تلاش مجدد، همان نشست یا همان ویدئو را بررسی می‌کند. در تغییر مسیر پس از قطع شبکه، وضعیت نشست پیش از ارسال دوبارهٔ فایل پرسیده می‌شود.
+
+اگر نشست پایان یافته یا وضعیت آن نامعلوم باشد، خطا نمایش داده می‌شود و نشست تازه‌ای برای بارگذاری تکراری ساخته نمی‌شود. پیش از ساخت آیتم جایگزین، کانال مقصد را بررسی کنید. اثر انگشت فایل ویدئو در هر کارت جریان از ورود تکراری همان ویدئو جلوگیری می‌کند، حتی در اجرای دوبارهٔ جریان.
+
+توکن‌ها و نشانی نشست فقط به‌صورت رمزگذاری‌شده در سرور نگهداری می‌شوند و به مرورگر برنمی‌گردند. قطع اتصال، دسترسی گوگل را لغو، اطلاعات ورود محلی را پاک و موارد در صف را متوقف می‌کند؛ ویدئوهای موجود در یوتیوب حذف نمی‌شوند.
+
+تنظیم کاور به مجوز تصویر بندانگشتی اختصاصی کانال نیاز دارد. خطای کاور، شناسهٔ ویدئو را پاک نمی‌کند و تلاش مجدد باعث بارگذاری دوبارهٔ ویدئو نمی‌شود.
+
+«منتشر شد» فقط پس از اعلام موفقیت پردازش از یوتیوب ثبت می‌شود. خصوصی بودن ویدئو نیز جداگانه و مطابق پاسخ واقعی یوتیوب نمایش داده می‌شود. پردازش در هر تلاش تا ده دقیقه بررسی می‌شود؛ اگر طولانی‌تر باشد، تلاش مجدد فقط وضعیت همان ویدئو را می‌پرسد. گزارش شامل کانال، زمان، مسیر اتصال، نتیجه، نشانی ویدئو، محدودیت‌ها و علت خطا است.
+
+## بررسی پیاده‌سازی
+
+```sh
+pnpm typecheck
+pnpm --filter @socialyar/worker exec tsx --test src/youtube.test.ts src/publishing-connection.test.ts src/calendar.test.ts
+```
+
+آزمون کامل ورود گوگل، تمدید دسترسی، مجوز کاور و انتشار واقعی به کانال آزمایشی، دیتابیس، صف و شبکهٔ محیط مقصد نیاز دارد. آزمون‌های خودکار چیزی در کانال واقعی منتشر نمی‌کنند.
