@@ -6,6 +6,9 @@ export type ChannelCredentials = Record<string, unknown>;
 
 export type PublishRequest = {
   fetch?: typeof fetch;
+  media?: Blob;
+  providerState?: Record<string,unknown>;
+  saveProviderState?: (state:Record<string,unknown>)=>Promise<void>;
   publicationId?: string;
   channel: Channel;
   title?: string | null;
@@ -51,20 +54,16 @@ async function publishTelegram(
     throw new Error("Missing Telegram chatId");
   }
 
-  const response = await (request.fetch ?? fetch)(
-    `https://api.telegram.org/bot${botToken}/sendMessage`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: request.title
-          ? `${request.title}\n\n${request.content}`
-          : request.content,
-        disable_web_page_preview: false,
-      }),
-    },
-  );
+  const isBale=request.channel==="bale";
+  const origin=isBale ? "https://tapi.bale.ai" : "https://api.telegram.org";
+  const mediaUrl=request.videoUrl || request.imageUrl;
+  const text=request.title && request.content!==request.title ? `${request.title}\n\n${request.content}` : request.content;
+  const method=mediaUrl ? request.videoUrl ? "sendVideo" : "sendPhoto" : "sendMessage";
+  if(text.length>(mediaUrl ? 1024 : 4096))throw new Error("متن از محدودیت مقصد طولانی‌تر است؛ متن را کوتاه کنید.");
+  let body:BodyInit;let headers:Record<string,string>|undefined;
+  if(request.media && mediaUrl){ const form=new FormData();form.set("chat_id",chatId);form.set("caption",text);form.set(request.videoUrl?"video":"photo",request.media,request.videoUrl?"content.mp4":"content.jpg");body=form; }
+  else { headers={"Content-Type":"application/json"};body=JSON.stringify({chat_id:chatId,...(mediaUrl?{[request.videoUrl?"video":"photo"]:mediaUrl,caption:text}:{text,disable_web_page_preview:false})}); }
+  const response=await (request.fetch??fetch)(`${origin}/bot${botToken}/${method}`,{method:"POST",headers,body,signal:AbortSignal.timeout(60000)});
 
   let data: {
     ok?: boolean;
@@ -91,10 +90,10 @@ async function publishTelegram(
   return {
     externalId: String(data.result.message_id),
     externalUrl: username
-      ? `https://t.me/${username}/${data.result.message_id}`
+      ? `${isBale ? "https://ble.ir" : "https://t.me"}/${username}/${data.result.message_id}`
       : undefined,
     publishedAt: new Date().toISOString(),
-    provider: "telegram-bot-api",
+    provider: isBale ? "bale-bot-api" : "telegram-bot-api",
   };
 }
 
@@ -159,10 +158,10 @@ async function publishEitaa(request: PublishRequest): Promise<PublishResult> {
   const normalized = (value: string) => value.replace(/\s+/g, " ").trim();
   const message = title && normalized(body.split("\n")[0]) !== normalized(title) &&
     !normalized(body).startsWith(normalized(title)) ? `${title}\n\n${body}` : body;
-  let media: Blob | null = null;
+  let media: Blob | null = request.media ?? null;
   const mediaUrl = request.videoUrl || request.imageUrl;
   const isVideo = Boolean(request.videoUrl);
-  if (mediaUrl) {
+  if (mediaUrl && !media) {
     try {
       let url = new URL(mediaUrl);
       let response: Response | undefined;
@@ -249,6 +248,7 @@ async function publishFallbackWebhook(
       title: request.title ?? null,
       content: request.content,
       externalAccountId: request.externalAccountId ?? null,
+      imageUrl:request.imageUrl ?? null,videoUrl:request.videoUrl ?? null,
       source: "socialyar-fallback",
       publicationId: request.publicationId ?? null,
     }),
@@ -284,6 +284,7 @@ export async function publishToChannel(
   if (request.channel === "youtube") throw new Error("YouTube requires its human-approved upload queue");
   try {
     switch (request.channel) {
+      case "bale":
       case "telegram":
         return await publishTelegram(request);
       case "website":
@@ -291,6 +292,7 @@ export async function publishToChannel(
       case "eitaa":
         return await publishEitaa(request);
       case "instagram":
+        return await publishInstagram(request);
       case "x":
       case "linkedin":
         throw new Error(
@@ -298,10 +300,39 @@ export async function publishToChannel(
         );
     }
   } catch (primaryError) {
-    if (!request.fetch && typeof request.credentials.fallbackWebhookUrl === "string") {
+    if (!request.fetch && ["x","linkedin"].includes(request.channel) && typeof request.credentials.fallbackWebhookUrl === "string") {
       return publishFallbackWebhook(request);
     }
 
     throw primaryError;
   }
+}
+
+async function publishInstagram(request:PublishRequest):Promise<PublishResult> {
+  const token=requiredString(request.credentials,"accessToken");
+  const account=request.externalAccountId;if(!account || !/^\d+$/.test(account))throw new Error("شناسه رسمی حساب حرفه‌ای اینستاگرام را وارد کنید.");
+  const version=requiredString(request.credentials,"apiVersion");if(!/^v\d+\.\d+$/.test(version))throw new Error("نسخه API معتبر نیست.");
+  const origin=request.credentials.loginType==="facebook" ? "https://graph.facebook.com" : "https://graph.instagram.com";
+  const endpoint=`${origin}/${version}`;const send=request.fetch??fetch;
+  const headers={Authorization:`Bearer ${token}`};
+  const json=async(response:Response)=>{const data=await response.json().catch(()=>null);if(!response.ok || data?.error)throw new Error(data?.error?.message ?? `Instagram HTTP ${response.status}`);if(!data)throw Object.assign(new Error("نتیجه انتشار اینستاگرام نامشخص است؛ مقصد را بررسی کنید."),{code:"DELIVERY_UNKNOWN"});return data;};
+  if(!request.videoUrl && !request.imageUrl)throw new Error("اینستاگرام به تصویر یا ویدئو نیاز دارد.");
+  const caption=request.title && request.content!==request.title ? `${request.title}\n\n${request.content}` : request.content;
+  if(caption.length>2200)throw new Error("کپشن اینستاگرام بیش از ۲۲۰۰ نویسه است.");
+  let container=typeof request.providerState?.instagramContainerId==="string" ? request.providerState.instagramContainerId : undefined;
+  if(!container){
+    const parameters=new URLSearchParams({caption,...(request.videoUrl ? {media_type:"REELS",video_url:request.videoUrl,...(request.imageUrl?{cover_url:request.imageUrl}:{})} : {image_url:request.imageUrl!})});
+    const data=await json(await send(`${endpoint}/${account}/media`,{method:"POST",headers,body:parameters,signal:AbortSignal.timeout(30000)}));
+    if(typeof data.id!=="string")throw new Error("شناسه آماده‌سازی اینستاگرام دریافت نشد.");container=data.id;
+    if(!request.saveProviderState)throw new Error("ذخیره وضعیت آماده‌سازی اینستاگرام ضروری است.");
+    await request.saveProviderState({instagramContainerId:container});
+  }
+  const state=await json(await send(`${endpoint}/${container}?fields=status_code`,{headers,signal:AbortSignal.timeout(15000)}));
+  if(state.status_code==="PUBLISHED")throw Object.assign(new Error("این محتوا در اینستاگرام ثبت شده است؛ مقصد را بررسی کنید."),{code:"DELIVERY_UNKNOWN"});
+  if(state.status_code!=="FINISHED")throw new Error(state.status_code==="IN_PROGRESS" ? "اینستاگرام در حال آماده‌سازی ویدئو است؛ بعداً دوباره تلاش کنید." : "آماده‌سازی فایل در اینستاگرام ناموفق بود؛ گزارش مقصد را بررسی کنید.");
+  const data=await json(await send(`${endpoint}/${account}/media_publish`,{method:"POST",headers,body:new URLSearchParams({creation_id:container!}),signal:AbortSignal.timeout(30000)}));
+  if(typeof data.id!=="string")throw Object.assign(new Error("نتیجه انتشار اینستاگرام نامشخص است؛ مقصد را بررسی کنید."),{code:"DELIVERY_UNKNOWN"});
+  let externalUrl:string|undefined;
+  try{const remote=await json(await send(`${endpoint}/${data.id}?fields=permalink`,{headers,signal:AbortSignal.timeout(15000)}));externalUrl=remote.permalink;}catch{/* The confirmed media id already prevents duplicate publication. */}
+  return {externalId:data.id,externalUrl,publishedAt:new Date().toISOString(),provider:"instagram-graph-api"};
 }

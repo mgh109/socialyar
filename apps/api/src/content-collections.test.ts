@@ -87,3 +87,89 @@ test("workspace isolation and detached cards reject requests",async()=>{
   const list=await app.inject({ method:"GET",url:`/content-collections?workflowId=${workflowId}&sourceStepKey=sheet`,headers:{ "x-other":"1" } });assert.deepEqual(list.json(),[]);
   const invalid=await app.inject({ method:"POST",url:"/content-collections/preview",payload:{ ...scope,targetStepKey:"absent",rows:[row()] } });assert.equal(invalid.statusCode,409);
 });
+
+const genericAccounts=new Map<string,string>();
+async function genericScope(channel:"telegram"|"eitaa"|"bale"|"instagram") {
+  let id=genericAccounts.get(channel);if(!id){id=randomUUID();genericAccounts.set(channel,id);await db.insert(tables.socialAccounts).values({id,workspaceId,channel,externalAccountId:channel});const step=randomUUID();await db.insert(tables.workflowSteps).values({id:step,workflowVersionId:versionId,key:channel,type:"publish",name:channel,config:{accountId:id}});await db.insert(tables.workflowConnections).values({workflowVersionId:versionId,sourceStepId:sourceId,targetStepId:step});}
+  return {...scope,targetStepKey:channel};
+}
+async function genericPreview(target:object,rows:CollectionRow[]) {
+  const r=await app.inject({method:"POST",url:"/content-collections/preview",payload:{...target,rows}});assert.equal(r.statusCode,200,r.body);return r.json() as {revision:number;changes:CollectionChange[]};
+}
+async function genericApply(target:object,rows:CollectionRow[],p:Awaited<ReturnType<typeof genericPreview>>,ids:string[]) {
+  return app.inject({method:"POST",url:"/content-collections/apply",payload:{...target,rows,revision:p.revision,selected:p.changes.filter((c)=>ids.includes(c.id)).map(({id,version,updatedAt})=>({id,version,updatedAt}))}});
+}
+test("shared source creates separate unapproved outputs and real schedules for all four networks",async()=>{
+  await engine.exec(await readFile(new URL("../../../packages/db/migrations/0010_shared_collections.sql",import.meta.url),"utf8"));
+  await engine.exec(await readFile(new URL("../../../packages/db/migrations/0010_shared_collections.sql",import.meta.url),"utf8"));
+  const beforeJobs=jobs.length;const rows=[row("shared")];const variants:string[]=[];
+  for(const channel of ["telegram","eitaa","bale","instagram"] as const){const target=await genericScope(channel);const p=await genericPreview(target,rows);const result=await genericApply(target,rows,p,["shared"]);assert.equal(result.statusCode,200,result.body);
+    const [collection]=await db.select().from(tables.contentCollections).where(eq(tables.contentCollections.targetStepKey,channel));variants.push(collection.records[0].itemId);
+    const [variant]=await db.select().from(tables.contentVariants).where(eq(tables.contentVariants.id,collection.records[0].itemId));assert.equal(variant.status,"waiting_approval");assert.equal(variant.generatedBy,"collection");assert.equal(variant.channel,channel);assert.equal(variant.settings.calendarHold,true);
+    const [publication]=await db.select().from(tables.publications).where(eq(tables.publications.contentVariantId,variant.id));assert.equal(publication.status,"cancelled");assert.equal(publication.socialAccountId,genericAccounts.get(channel));
+    const [schedule]=await db.select().from(tables.schedules).where(eq(tables.schedules.id,publication.scheduleId!));assert.equal(schedule.scheduledAt.toISOString(),rows[0].scheduledAt);
+    assert.equal((await genericPreview(target,rows)).changes[0].kind,"unchanged");
+  }
+  assert.equal(new Set(variants).size,4);assert.equal(jobs.length,beforeJobs); // imports never enqueue unapproved generic outputs
+});
+test("published destination is locked while another destination remains editable",async()=>{
+  const telegram=await genericScope("telegram"),bale=await genericScope("bale");const rows=[{...row("shared"),title:"ویرایش مشترک"}];
+  const p=await genericPreview(telegram,[row("shared")]);const id=p.changes[0].itemId!;
+  await db.update(tables.publications).set({status:"published",externalId:"remote-1"}).where(eq(tables.publications.contentVariantId,id));
+  await db.update(tables.contentVariants).set({status:"published"}).where(eq(tables.contentVariants.id,id));
+  const locked=await genericPreview(telegram,rows);assert.ok(locked.changes[0].blocked);assert.equal(locked.changes[0].remoteEligible,false);assert.equal((await genericApply(telegram,rows,locked,["shared"])).statusCode,409);
+  const editable=await genericPreview(bale,rows);assert.equal(editable.changes[0].blocked,null);assert.equal((await genericApply(bale,rows,editable,["shared"])).statusCode,200);
+});
+test("generic updates revoke approval and invalidate jobs while preserving calendar edits",async()=>{
+  const target=await genericScope("eitaa");const p=await genericPreview(target,[row("shared")]);const id=p.changes[0].itemId!;
+  await db.update(tables.contentVariants).set({status:"scheduled",title:"ویرایش در تقویم"}).where(eq(tables.contentVariants.id,id));
+  await db.update(tables.publications).set({status:"queued",queueVersion:5}).where(eq(tables.publications.contentVariantId,id));
+  const rows=[{...row("shared"),description:"متن جدید"}],next=await genericPreview(target,rows);assert.equal((await genericApply(target,rows,next,["shared"])).statusCode,200);
+  const [variant]=await db.select().from(tables.contentVariants).where(eq(tables.contentVariants.id,id));assert.equal(variant.status,"waiting_approval");assert.equal(variant.title,"ویرایش در تقویم");assert.equal(variant.body,"متن جدید");
+  const [publication]=await db.select().from(tables.publications).where(eq(tables.publications.contentVariantId,id));assert.equal(publication.status,"cancelled");assert.equal(publication.queueVersion,6);
+  const stale=await genericApply(target,rows,next,["shared"]);assert.equal(stale.statusCode,409);
+});
+test("unknown delivery and active send cannot be silently overwritten or removed",async()=>{
+  const target=await genericScope("instagram");const p=await genericPreview(target,[row("shared")]);const id=p.changes[0].itemId!;
+  for(const patch of [{status:"publishing" as const},{status:"failed" as const,error:{deliveryUnknown:true}}]){
+    await db.update(tables.publications).set(patch).where(eq(tables.publications.contentVariantId,id));const next=await genericPreview(target,[]);assert.ok(next.changes[0].blocked);assert.equal((await genericApply(target,[],next,["shared"])).statusCode,409);
+  }
+});
+test("generic deletion and restore reuse identity; text-only imports work and media-required destinations reject them",async()=>{
+  const target=await genericScope("bale");const p=await genericPreview(target,[]);assert.equal((await genericApply(target,[],p,["shared"])).statusCode,200);
+  const restore=await genericPreview(target,[{...row("shared"),videoUrl:""}]);assert.equal(restore.changes[0].kind,"changed");assert.equal((await genericApply(target,[{...row("shared"),videoUrl:""}],restore,["shared"])).statusCode,200);assert.equal((await genericPreview(target,[{...row("shared"),videoUrl:""}])).changes[0].itemId,restore.changes[0].itemId);
+  for(const destination of [scope,await genericScope("instagram")]){const r=await app.inject({method:"POST",url:"/content-collections/preview",payload:{...destination,rows:[{...row("text"),videoUrl:"",coverUrl:""}]}});assert.equal(r.statusCode,409);}
+});
+test("server polling stages Google Sheets revisions without importing or approving, and honors refresh interval",async()=>{
+  const {pollCollectionSheets}=await import("../../worker/src/collection-sheet-poller");
+  await db.update(tables.workflows).set({status:"active"}).where(eq(tables.workflows.id,workflowId));
+  await db.update(tables.workflowSteps).set({config:{collectionSource:"google_sheet",sheetUrl:"https://docs.google.com/spreadsheets/d/abc/edit",sheetGid:"2",sheetAutoRefresh:true,sheetRefreshMinutes:5}}).where(eq(tables.workflowSteps.id,sourceId));
+  const beforeVariants=(await db.select().from(tables.contentVariants)).length,beforeVideos=(await db.select().from(tables.youtubeItems)).length;let reads=0;
+  await pollCollectionSheets(db as unknown as ReturnType<typeof getDb>,async()=>{reads++;return {headers:["id","title"],rows:[["new","عنوان تازه"]]};});
+  const [snapshot]=await db.select().from(tables.collectionSheetSnapshots);assert.equal(snapshot.sheetGid,"2");assert.equal(snapshot.data?.rows[0][0],"new");assert.equal(snapshot.error,null);
+  await pollCollectionSheets(db as unknown as ReturnType<typeof getDb>,async()=>{reads++;throw new Error("offline");});assert.equal(reads,1);
+  assert.equal((await db.select().from(tables.contentVariants)).length,beforeVariants);assert.equal((await db.select().from(tables.youtubeItems)).length,beforeVideos);
+  await db.update(tables.collectionSheetSnapshots).set({checkedAt:new Date(0)}).where(eq(tables.collectionSheetSnapshots.id,snapshot.id));
+  await pollCollectionSheets(db as unknown as ReturnType<typeof getDb>,async()=>{reads++;throw new Error("خطای خواندن");});
+  const [failed]=await db.select().from(tables.collectionSheetSnapshots);assert.equal(failed.data,null);assert.equal(failed.error,"خطای خواندن");
+  const denied=await app.inject({method:"GET",url:`/content-collections/google-sheet/snapshot?workflowId=${workflowId}&sourceStepKey=sheet`,headers:{"x-other":"1"}});assert.equal(denied.json(),null);
+});
+test("a collection output flows through calendar approval and the real publisher exactly once",async()=>{
+  const {mutateCalendarItem}=await import("./routes/calendar");const {executePublication}=await import("../../worker/src/publisher");const {publicationQueue}=await import("./queue");
+  const {connection:workerConnection}=await import("../../worker/src/queue");workerConnection.disconnect();
+  const add=publicationQueue.add,getJob=publicationQueue.getJob,originalFetch=globalThis.fetch;const queued:any[]=[];let sends=0;
+  publicationQueue.add=(async(...args:any[])=>{queued.push(args);return {} as any;}) as typeof add;publicationQueue.getJob=async()=>undefined;
+  globalThis.fetch=async(resource)=>{assert.ok(String(resource).startsWith("https://tapi.bale.ai/botfake/sendMessage"));sends++;return Response.json({ok:true,result:{message_id:55,chat:{username:"test"}}});};
+  try{
+    const [collection]=await db.select().from(tables.contentCollections).where(eq(tables.contentCollections.targetStepKey,"bale"));const id=collection.records.find((r)=>r.row.id==="shared")!.itemId;
+    const [variant]=await db.select().from(tables.contentVariants).where(eq(tables.contentVariants.id,id));let [publication]=await db.select().from(tables.publications).where(eq(tables.publications.contentVariantId,id));
+    await db.update(tables.socialAccounts).set({credentials:{botToken:"fake",chatId:"@test"}}).where(eq(tables.socialAccounts.id,publication.socialAccountId!));
+    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any);assert.equal(sends,0);
+    const result=await mutateCalendarItem(db as any,{workspaceId,userId,email:"test@example.com"},{kind:"variant",id},{action:"approve",version:variant.calendarVersion,updatedAt:variant.updatedAt.toISOString()});assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(queued.length,1);assert.equal(queued[0][0],"publish-content");
+    const oldVersion=publication.queueVersion;[publication]=await db.select().from(tables.publications).where(eq(tables.publications.id,publication.id));assert.equal(publication.status,"queued");
+    await executePublication({publicationId:publication.id,queueVersion:oldVersion,attempt:1,maxAttempts:1},db as any);assert.equal(sends,0);
+    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any);assert.equal(sends,1);
+    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any);assert.equal(sends,1);
+    const [sent]=await db.select().from(tables.publications).where(eq(tables.publications.id,publication.id));assert.equal(sent.externalId,"55");assert.equal(sent.status,"published");
+  }finally{publicationQueue.add=add;publicationQueue.getJob=getJob;globalThis.fetch=originalFetch;}
+});

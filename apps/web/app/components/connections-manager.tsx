@@ -7,7 +7,7 @@ import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type Channel = "telegram" | "website" | "instagram" | "x" | "linkedin" | "eitaa" | "youtube";
+type Channel = "telegram" | "website" | "instagram" | "x" | "linkedin" | "eitaa" | "youtube" | "bale";
 
 type Account = {
   id: string;
@@ -24,6 +24,7 @@ const channelMeta: Record<
   { label: string; description: string; native: boolean }
 > = {
   youtube: { label: "یوتیوب", description: "اتصال کانال با ورود گوگل و دسترسی رسمی", native: true },
+  bale: {label:"بله",description:"ارسال متن، تصویر و ویدئو با بازوی بله",native:true},
   eitaa: { label: "ایتا", description: "ارسال خبر به کانال با توکن ایتایار", native: true },
   telegram: {
     label: "تلگرام",
@@ -37,8 +38,8 @@ const channelMeta: Record<
   },
   instagram: {
     label: "اینستاگرام",
-    description: "ساختار اتصال آماده است؛ انتشار مستقیم هنوز فعال نیست",
-    native: false,
+    description: "انتشار تصویر و Reels با دسترسی رسمی حساب حرفه‌ای",
+    native: true,
   },
   x: {
     label: "ایکس",
@@ -61,6 +62,8 @@ export function ConnectionsManager() {
   const [botToken, setBotToken] = useState("");
   const [chatId, setChatId] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
+  const [instagramVersion,setInstagramVersion]=useState("");
+  const [instagramLogin,setInstagramLogin]=useState("instagram");
   const [token, setToken] = useState("");
   const [fallbackWebhookUrl, setFallbackWebhookUrl] = useState("");
   const [message, setMessage] = useState("آماده اتصال");
@@ -113,11 +116,12 @@ export function ConnectionsManager() {
       } catch (error) { setMessage(persianError(error, "خطای اتصال گوگل")); } finally { setBusy(false); }
       return;
     }
-    if (channel === "telegram" || channel === "eitaa") {
+    if (channel === "telegram" || channel === "eitaa" || channel === "bale") {
       credentials.botToken = botToken;
       if (chatId) credentials.chatId = chatId;
     }
 
+    if (channel === "instagram") {credentials.accessToken=token;credentials.apiVersion=instagramVersion;credentials.loginType=instagramLogin;}
     if (channel === "website") {
       credentials.webhookUrl = webhookUrl;
       if (token) credentials.token = token;
@@ -140,7 +144,7 @@ export function ConnectionsManager() {
           displayName: displayName || null,
           externalAccountId:
             externalAccountId ||
-            (channel === "telegram" || channel === "eitaa" ? chatId : channel),
+            (channel === "telegram" || channel === "eitaa" || channel === "bale" ? chatId : channel),
           credentials,
           isActive: true,
         }),
@@ -356,17 +360,17 @@ export function ConnectionsManager() {
                 value={externalAccountId}
                 onChange={(event) => setExternalAccountId(event.target.value)}
                 placeholder={
-                  channel === "telegram" || channel === "eitaa"
+                  channel === "telegram" || channel === "eitaa" || channel === "bale"
                     ? "نام کانال با @ یا شناسه گفت‌وگو"
                     : "شناسه مقصد"
                 }
               />
             </label>
 
-            {channel === "telegram" || channel === "eitaa" ? (
+            {channel === "telegram" || channel === "eitaa" || channel === "bale" ? (
               <>
                 <label>
-                  <span>{channel === "eitaa" ? "توکن ایتایار" : "توکن ربات تلگرام"}</span>
+                  <span>{channel === "eitaa" ? "توکن ایتایار" : channel === "bale" ? "توکن بازوی بله" : "توکن ربات تلگرام"}</span>
                   <input
                     type="password"
                     value={botToken}
@@ -387,6 +391,12 @@ export function ConnectionsManager() {
               </>
             ) : null}
 
+            {channel === "instagram" ? <>
+              <p>حساب حرفه‌ای و توکن رسمی دارای مجوز انتشار لازم است؛ شناسه عددی حساب را در قسمت «شناسه مقصد» وارد کنید.</p>
+              <label>توکن دسترسی رسمی<input type="password" required autoComplete="new-password" value={token} onChange={(e)=>setToken(e.target.value)} /></label>
+              <label>نسخه API<input required dir="ltr" placeholder="v…" value={instagramVersion} onChange={(e)=>setInstagramVersion(e.target.value)} /></label>
+              <label>نوع اتصال رسمی<select value={instagramLogin} onChange={(e)=>setInstagramLogin(e.target.value)}><option value="instagram">Instagram Login</option><option value="facebook">Facebook Login</option></select></label>
+            </> : null}
             {channel === "website" ? (
               <>
                 <label>

@@ -8,6 +8,7 @@ import { executeConnectionCheck } from "./connection-check";
 import { closeAutoPublisher, enqueueAutoPublication } from "./auto-publish";
 import { startNewsPoller } from "./news-poller";
 import { connection } from "./queue";
+import { startCollectionSheetPoller } from "./collection-sheet-poller";
 await ensurePublishingStorage();
 
 const workflowWorker = new Worker(
@@ -50,6 +51,7 @@ const publicationWorker = new Worker(
   },
 );
 
+const stopCollectionSheetPoller = startCollectionSheetPoller();
 const stopNewsPoller = startNewsPoller();
 const connectionCheckWorker = new Worker("connection-checks", (job) => executeConnectionCheck(job.data.checkId), { connection, concurrency: 2 });
 
@@ -73,6 +75,7 @@ publicationWorker.on("failed", (job, error) => {
 });
 
 const shutdown = async () => {
+  stopCollectionSheetPoller();
   await Promise.all([
     workflowWorker.close(),
     publicationWorker.close(),

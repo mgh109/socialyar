@@ -28,14 +28,18 @@ export async function calendarRoutes(app: FastifyInstance) {
       db.select({ variant: contentVariants, content: contentItems, publication: publications, schedule: schedules, workflow: workflows, run: runs, account: socialAccounts })
         .from(contentVariants).innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id))
         .leftJoin(publications, eq(publications.contentVariantId, contentVariants.id)).leftJoin(schedules, eq(publications.scheduleId, schedules.id))
-        .leftJoin(runs, eq(contentItems.runId, runs.id)).leftJoin(workflows, eq(runs.workflowId, workflows.id))
+        .leftJoin(runs, eq(contentItems.runId, runs.id)).leftJoin(workflows, eq(workflows.id, runs.workflowId))
         .leftJoin(socialAccounts, eq(publications.socialAccountId, socialAccounts.id)).where(eq(contentItems.workspaceId, request.auth.workspaceId)),
       db.select({ item: youtubeItems, workflow: workflows }).from(youtubeItems).innerJoin(workflows, eq(youtubeItems.workflowId, workflows.id))
         .where(eq(youtubeItems.workspaceId, request.auth.workspaceId)),
       db.select({ id: approvals.contentVariantId }).from(approvals).where(and(eq(approvals.workspaceId, request.auth.workspaceId), eq(approvals.status, "approved"))),
     ]);
+    const collectionWorkflowIds = rows.map((r) => r.content.metadata.workflowId).filter((id): id is string => typeof id === "string");
+    const collectionWorkflows = collectionWorkflowIds.length ? await db.select().from(workflows).where(and(eq(workflows.workspaceId,request.auth.workspaceId),inArray(workflows.id,collectionWorkflowIds))) : [];
+    const collectionWorkflowMap = new Map(collectionWorkflows.map((w) => [w.id,w]));
     const approvedIds = new Set(confirmedApprovals.map((row) => row.id));
     const items: CalendarItem[] = rows.filter((r) => r.variant.channel !== "youtube").map(({ variant, content, publication, schedule, workflow, run, account }) => {
+      workflow ??= collectionWorkflowMap.get(String(content.metadata.workflowId)) ?? null;
       const scheduledAt = variant.settings.calendarUnscheduled === true ? null : schedule?.scheduledAt ?? (publication && variant.settings.calendarHold !== true ? publication.publishedAt ?? publication.createdAt : null);
       const approved = ["approved", "scheduled", "published"].includes(variant.status) || variant.status === "failed" &&
         (approvedIds.has(variant.id) || variant.generatedBy === "ai" && variant.settings.calendarHold !== true);
@@ -66,7 +70,8 @@ export async function calendarRoutes(app: FastifyInstance) {
         externalUrl: item.videoId ? `https://www.youtube.com/watch?v=${item.videoId}` : null, error: item.error, deliveryUnknown: false,
         remoteConfirmed: Boolean(item.videoId), uploadStarted: Boolean(item.sessionEnc || item.videoId) });
     }
-    return items;
+    const query=z.object({workflowId:z.string().uuid().optional()}).parse(request.query);
+    return query.workflowId ? items.filter((item)=>item.workflowId===query.workflowId) : items;
   });
   app.get("/calendar/items/:kind/:id/events", async (request) => {
     const params = z.object({ kind: z.enum(["variant", "youtube"]), id: z.string().uuid() }).parse(request.params);
@@ -86,7 +91,7 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
     if (input.action === "schedule" && (!input.scheduledAt || new Date(input.scheduledAt).getTime() <= Date.now())) return { status: 400, body: { error: "تاریخ و ساعت آینده را انتخاب کنید." } };
     try {
       const result = await db.transaction(async (tx) => {
-        let task: { kind: "variant" | "youtube"; id: string; version: number; scheduledAt: Date } | null = null;
+        let task: { kind: "variant" | "youtube"; id: string; version: number; scheduledAt: Date; channel?:string } | null = null;
         let previousTask: { kind: "variant" | "youtube"; id: string; version: number } | null = null;
         if (params.kind === "youtube") {
           const [item] = await tx.select().from(youtubeItems).where(and(eq(youtubeItems.id, params.id), eq(youtubeItems.workspaceId, auth.workspaceId))).for("update");
@@ -152,6 +157,7 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
           if (input.action === "retry" && !approved) throw new CalendarConflict("محتوا پیش از ارسال نیازمند تأیید است.");
           const settings: Record<string, unknown> = { ...variant.settings, ...(input.action === "edit" ? input.settings : {}), calendarPaused: input.action === "stop" || input.action === "reject",
             calendarUnscheduled: input.action === "unschedule", calendarHold: !approved || input.action === "unschedule" };
+          if (input.action === "edit") delete settings.instagramContainerId;
           if (input.action === "edit" && input.settings?.connection) await validateConnectionPolicy(auth.workspaceId, input.settings.connection);
           const accountId = input.accountId ?? publication?.socialAccountId ?? string(variant.settings.accountId);
           if (accountId && !["stop", "reject", "unschedule"].includes(input.action)) {
@@ -177,7 +183,7 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
             const version = publication.queueVersion + 1;
             await tx.update(publications).set({ queueVersion: version, scheduleId: schedule?.id ?? null, socialAccountId: accountId, status: queued ? "queued" : "cancelled",
               error: publication.error?.deliveryUnknown === true && !input.destinationChecked ? publication.error : null, updatedAt: new Date() }).where(eq(publications.id, publication.id));
-            if (queued && date) task = { kind: "variant", id: publication.id, version, scheduledAt: date };
+            if (queued && date) task = { kind: "variant", id: publication.id, version, scheduledAt: date, channel:variant.channel };
           }
           await tx.update(contentVariants).set({ title: input.title ?? variant.title, body: input.body ?? variant.body, settings, status: nextContent,
             calendarVersion: variant.calendarVersion + 1, updatedAt: new Date() }).where(eq(contentVariants.id, variant.id));
@@ -205,8 +211,8 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
       if (result.task) {
         const task = result.task; const youtube = task.kind === "youtube";
         try { await publicationQueue.add(youtube ? "youtube-publish" : "publish-content", youtube ? { youtubeItemId: task.id, queueVersion: task.version } : { publicationId: task.id, queueVersion: task.version },
-          { jobId: `${youtube ? "youtube" : "publication"}-${task.id}-v${task.version}`, delay: Math.max(0, task.scheduledAt.getTime() - Date.now()), attempts: youtube ? 1 : 3,
-            backoff: { type: "exponential", delay: 5000 }, removeOnComplete: 1000, removeOnFail: 1000 }); }
+          { jobId: `${youtube ? "youtube" : "publication"}-${task.id}-v${task.version}`, delay: Math.max(0, task.scheduledAt.getTime() - Date.now()), attempts: youtube ? 1 : task.channel==="instagram" ? 10 : 3,
+            backoff: { type: task.channel==="instagram" ? "fixed" : "exponential", delay: task.channel==="instagram" ? 60000 : 5000 }, removeOnComplete: 1000, removeOnFail: 1000 }); }
         catch {
           if (youtube) await db.update(youtubeItems).set({ status: "failed", error: "صف انتشار در دسترس نیست.", updatedAt: new Date() }).where(and(eq(youtubeItems.id, task.id), eq(youtubeItems.queueVersion, task.version), eq(youtubeItems.status, "queued")));
           else await db.update(publications).set({ status: "failed", error: { message: "صف انتشار در دسترس نیست." }, updatedAt: new Date() }).where(and(eq(publications.id, task.id), eq(publications.queueVersion, task.version), eq(publications.status, "queued")));
