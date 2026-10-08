@@ -75,12 +75,30 @@ export function scheduleCollectionRows(rows: CollectionRow[], start: string, int
 export async function downloadCollectionTemplate() {
   const ExcelJS = await import("exceljs"); const workbook = new ExcelJS.default.Workbook(); const sheet = workbook.addWorksheet("مجموعه محتوا", { views: [{ rightToLeft: true }] });
   sheet.columns = collectionColumns.map(([key,header]) => ({ key, header, width: ["description","videoUrl","coverUrl"].includes(key) ? 40 : 22 }));
+  sheet.addRow({ id: "sample-video-01", order: 1, title: "نمونه ویدئوی آموزشی", description: "توضیحات مشترک برای مقصدهایی که متن اختصاصی ندارند.",
+    videoUrl: "https://example.com/video.mp4", coverUrl: "", date: "", time: "", videoType: "video", playlist: "آموزش", tags: "آموزش,قرآن,تلاوت", privacy: "private", madeForKids: "خیر" });
+  sheet.addRow({ id: "sample-shorts-02", order: 2, title: "نمونه ویدئوی کوتاه", description: "توضیحات مشترک ویدئوی کوتاه.", youtubeDescription: "توضیحات اختصاصی این ویدئو در یوتیوب.",
+    videoUrl: "https://example.com/short.mp4", coverUrl: "", date: "", time: "", videoType: "shorts", playlist: "", tags: "ویدئوی کوتاه,آموزش", privacy: "unlisted", madeForKids: "false" });
   sheet.getRow(1).font = { bold: true }; sheet.getColumn("id").numFmt = "@"; sheet.getColumn("date").numFmt = "@"; sheet.getColumn("time").numFmt = "@";
   const help = workbook.addWorksheet("راهنما", { views: [{ rightToLeft: true }] }); help.getColumn(1).width = 100;
-  ["هر ردیف یک محتوا است. شناسه محتوا ثابت، یکتا و متنی باشد؛ بعداً عوض نشود.", "شناسه و عنوان الزامی‌اند؛ لینک ویدئو برای یوتیوب الزامی است. برای دراپ‌باکس لینک اشتراک عمومی فایل را وارد کنید.",
+  ["دو ردیف اول نمونه‌اند؛ پیش از ورود، آن‌ها را حذف کنید یا با اطلاعات و لینک واقعی خود جایگزین کنید. لینک‌های example.com فایل واقعی نیستند.", "توضیحات متن مشترک است؛ در هر مقصد، اگر متن اختصاصی آن مقصد خالی باشد، همین متن استفاده می‌شود.", "توضیحات یوتیوب، کپشن اینستاگرام و متن تلگرام/ایتا/بله اختیاری‌اند؛ مقدار پرشده فقط در همان مقصد جای توضیحات مشترک را می‌گیرد.", "هر ردیف یک محتوا است. شناسه محتوا ثابت، یکتا و متنی باشد؛ بعداً عوض نشود.", "شناسه و عنوان الزامی‌اند؛ لینک ویدئو برای یوتیوب الزامی است. برای دراپ‌باکس لینک اشتراک عمومی فایل را وارد کنید.",
     "تاریخ را متنی و شمسی مانند ۱۴۰۵/۰۷/۲۰ و ساعت را مانند ۱۸:۰۰ وارد کنید. تاریخ خالی را می‌توان در کارت زمان‌بندی کرد.",
     "نوع محتوا: video یا shorts. وضعیت نمایش: private، public یا unlisted. مخصوص کودکان: بله یا خیر.",
     "برچسب‌ها با ویرگول جدا شوند. نام پلی‌لیست یا شناسه PL… قابل استفاده است.", "برای به‌روزرسانی، نسخه کامل مجموعه را با همان شناسه‌ها بارگذاری کنید. حذف‌ها فقط با تأیید اعمال می‌شوند."].forEach((v) => help.addRow([v]));
+  help.addRow([]);
+  help.addRow(["عنوان ستون", "اجباری / اختیاری", "راهنما"]);
+  help.getColumn(1).width = 50; help.getColumn(2).width = 30; help.getColumn(3).width = 85;
+  for (const [key, label] of collectionColumns) {
+    const requirement = ["id", "title"].includes(key) ? "اجباری" : key === "videoUrl" ? "برای یوتیوب اجباری" : "اختیاری";
+    const note = key === "order" ? "اگر خالی باشد، ترتیب ردیف استفاده می‌شود." : key === "date" ? "شمسی؛ اگر خالی باشد زمان را در کارت تعیین کنید." : key === "time" ? "با تاریخ استفاده شود؛ در صورت خالی‌بودن، ۱۸:۰۰ به وقت تهران." :
+      key === "videoType" ? "video یا shorts؛ اگر خالی باشد از تنظیم کارت استفاده می‌شود." : key === "privacy" ? "private / public / unlisted؛ اگر خالی باشد از تنظیم کارت استفاده می‌شود." :
+      key === "madeForKids" ? "بله / خیر یا true / false؛ اگر خالی باشد از تنظیم کارت استفاده می‌شود." : key === "tags" ? "برچسب‌ها با ویرگول جدا شوند." :
+      key === "playlist" ? "نام پلی‌لیست یا شناسه PL…؛ خالی یعنی استفاده از تنظیم کارت در صورت وجود." : key === "description" ? "متن مشترک؛ متن اختصاصی هر شبکه بر آن اولویت دارد." :
+      ["youtubeDescription", "instagramCaption", "telegramText", "eitaaText", "baleText"].includes(key) ? "فقط برای همین شبکه؛ خالی یعنی استفاده از توضیحات مشترک." :
+      key === "coverUrl" ? "لینک تصویر/کاور؛ برای اینستاگرام حداقل تصویر یا ویدئو لازم است." : key === "videoUrl" ? "لینک عمومی فایل واقعی ویدئو." : key === "id" ? "شناسه متنی ثابت و یکتا." : "عنوان محتوا.";
+    help.addRow([label, requirement, note]);
+    sheet.getRow(1).getCell(collectionColumns.findIndex(([field]) => field === key) + 1).note = `${requirement} — ${note}`;
+  }
   const bytes = await workbook.xlsx.writeBuffer(); const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
   const anchor = document.createElement("a"); anchor.href = url; anchor.download = "hoor-content-template.xlsx"; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
