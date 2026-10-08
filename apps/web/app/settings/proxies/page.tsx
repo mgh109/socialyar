@@ -3,7 +3,6 @@ import { persianError } from "../../lib/persian";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../lib/session";
 import { BrandLogo } from "../../components/brand-logo";
-import { TopMenu } from "../../components/top-menu";
 import { ConnectionResult, useConnectionTest, type SavedProxy } from "../../components/connection-selector";
 import { protocolLabel } from "../../lib/persian";
 import { faDigits } from "../../lib/persian-calendar";
@@ -36,7 +35,7 @@ export default function ProxiesPage() {
   };
   const remove = async (proxy: SavedProxy) => { setBusy(true); try { const r = await apiFetch(`/proxies/${proxy.id}`, { method: "DELETE" }); if (!r.ok) throw new Error("حذف ناموفق بود");
     if (id === proxy.id) reset(); await load(); setMessage("پروکسی حذف شد؛ کارت‌های وابسته باید پروکسی دیگری انتخاب کنند."); } catch (e) { setMessage(persianError(e, "خطا")); } finally { setBusy(false); } };
-  return <main className="workflow-page"><header className="app-header"><div className="brand-lockup"><BrandLogo /><TopMenu /><span>تنظیمات پروکسی‌ها</span></div></header>
+  return <main className="workflow-page"><header className="app-header"><div className="brand-lockup"><BrandLogo /><span>تنظیمات پروکسی‌ها</span></div></header>
     <section className="settings-shell"><div className="settings-card"><h1>پروکسی‌ها</h1><p>مسیر اتصال هر کارت انتشار مستقل است. اطلاعات ورود در سرور رمزگذاری می‌شوند.</p>
       <label>نام دلخواه<input maxLength={100} value={name} onChange={(e) => setName(e.target.value)} /></label>
       <label>نوع اتصال<select value={protocol} onChange={(e) => setProtocol(e.target.value)}><option value="http">اچ‌تی‌تی‌پی</option><option value="https">اچ‌تی‌تی‌پی امن</option><option value="socks5">ساکس ۵</option></select></label>

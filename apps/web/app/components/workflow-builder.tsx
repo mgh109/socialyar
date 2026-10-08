@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { BrandLogo } from "./brand-logo";
-import { TopMenu } from "./top-menu";
 import type { CalendarItem } from "@socialyar/shared";
 import { calendarLabels } from "./calendar-detail";
 import { CollectionPanel } from "./collection-panel";
@@ -628,7 +627,7 @@ export function WorkflowBuilder() {
   };
   const stroke = (from: Position, to: Position) => `M ${from.x} ${from.y} C ${from.x - 92} ${from.y}, ${to.x + 92} ${to.y}, ${to.x} ${to.y}`;
   return <main className="workflow-page builder-page">
-    <header className="app-header"><div className="brand-lockup"><BrandLogo /><TopMenu /><span>میز کار / {name}</span></div>
+    <header className="app-header"><div className="brand-lockup"><BrandLogo /><span>میز کار / {name}</span></div>
       <div className="header-actions"><span className="save-status" role="status">{message}</span>
         <details className="workflow-settings-menu"><summary>تنظیمات جریان</summary><div className="workflow-settings-popover">
           <strong>تنظیمات عمومی</strong>

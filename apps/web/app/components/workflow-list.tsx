@@ -84,12 +84,7 @@ export function WorkflowList() {
         <div className="workflow-create-actions"><Link href="/workflows/new?ai=1">✦ ساخت با هوش مصنوعی</Link>
           <Link className="primary-link" href="/workflows/new">+ جریان جدید</Link></div>
       </div>
-      <nav className="workflow-shortcuts" aria-label="بخش‌های هور+">
-        <Link href="/approvals">تأیید محتوا</Link>
-        <Link href="/calendar">تقویم انتشار</Link>
-        <Link href="/connections">اتصال کانال‌ها</Link>
-        <Link href="/analytics">داشبورد انتشار و سلامت</Link>
-      </nav>
+
       {message ? <p role="status" className="workflow-library-message">{message}</p> : null}
       <div className="workflow-library-grid">
         {items.map((workflow) => (

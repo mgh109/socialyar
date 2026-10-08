@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../lib/session";
 import { BrandLogo } from "../../components/brand-logo";
-import { TopMenu } from "../../components/top-menu";
 
 type Connection = { id: string; name: string; baseUrl: string; authType: string; headerName: string | null };
 
@@ -44,7 +43,7 @@ export default function ApiSettingsPage() {
     setMessage(response.ok ? "اتصال حذف شد." : "اتصال در یک جریان استفاده شده یا حذف ناموفق بود.");
     if (response.ok) { if (id === item.id) reset(); await load(); }
   };
-  return <main className="workflow-page" dir="rtl"><header className="app-header"><div className="brand-lockup"><BrandLogo /><TopMenu />
+  return <main className="workflow-page" dir="rtl"><header className="app-header"><div className="brand-lockup"><BrandLogo />
     <Link href="/">میز کار</Link><span> / اتصال‌های API</span></div></header>
     <section className="settings-page"><h1>اتصال‌های API</h1><p>توکن روی سرور رمزگذاری می‌شود و فقط هنگام درخواست به همان میزبان ارسال می‌شود.</p>
       <div className="settings-card"><h2>{id ? "ویرایش اتصال" : "اتصال جدید"}</h2>

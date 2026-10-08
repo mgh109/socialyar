@@ -5,7 +5,6 @@ import { statusLabel, persianError } from "../lib/persian";
 import { faDigits } from "../lib/persian-calendar";
 
 import { BrandLogo } from "./brand-logo";
-import { TopMenu } from "./top-menu";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -185,7 +184,7 @@ export function ApprovalCenter() {
       <header className="app-header">
         <div className="brand-lockup">
           <BrandLogo />
-          <TopMenu />
+
           <span>مرکز تأیید</span>
         </div>
         <div className="header-actions">

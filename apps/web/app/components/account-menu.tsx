@@ -29,8 +29,6 @@ export function AccountMenu() {
       <div className="account-identity"><div className="account-avatar">{email.charAt(0).toUpperCase() || "ه"}</div>
         <strong dir="ltr">{email || "حساب من"}</strong><small>فضای کاری {getWorkspaceId().slice(0, 8)}</small></div>
       <Link href="/account">حساب کاربری</Link>
-      <Link href="/settings/ai">تنظیمات هوش مصنوعی</Link>
-      <Link href="/connections">اتصال کانال‌ها</Link>
       <div className="account-menu-footer"><ThemeToggle />
         <button className="account-logout" onClick={() => { clearSession(); setOpen(false); router.replace("/login"); }}>خروج ↗</button></div>
     </div> : null}

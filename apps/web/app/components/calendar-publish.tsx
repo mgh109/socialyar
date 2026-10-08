@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { canMoveCalendarItem, type CalendarItem } from "@socialyar/shared";
 import { apiFetch } from "../lib/session";
 import { BrandLogo } from "./brand-logo";
-import { TopMenu } from "./top-menu";
 import { CalendarDetail, calendarLabels, networkLabels, type CalendarAccount } from "./calendar-detail";
 import { PersianDatePicker } from "./persian-date-picker";
 import { MediaPreview } from "./youtube-panel";
@@ -84,7 +83,7 @@ export function CalendarPublish() {
   };
   const navigate = (direction: number) => { setOnlyDay(null); setFocus(view === "week" ? addDays(focus, direction * 7) : nextMonth(focus, direction)); };
   const renderTile = (item: CalendarItem) => <PublicationTile key={item.id} item={item} timezone={timezone} open={() => open(item)} busy={busy} />;
-  return <main className="workflow-page publication-calendar" dir="rtl"><header className="app-header"><div className="brand-lockup"><BrandLogo /><TopMenu /><span>تقویم انتشار</span></div>
+  return <main className="workflow-page publication-calendar" dir="rtl"><header className="app-header"><div className="brand-lockup"><BrandLogo /><span>تقویم انتشار</span></div>
     <div className="header-actions"><button type="button" disabled={loading} onClick={() => void refresh().catch((e) => setError(persianError(e)))}>به‌روزرسانی</button></div></header>
     <section className="publication-calendar-shell"><div className="publication-calendar-title"><div><h1>تقویم انتشار</h1><p>خروجی‌های تولیدشده، تأییدها و برنامهٔ واقعی انتشار در یک نگاه</p></div>
       <label>منطقه زمانی<select value={timezone} onChange={(e) => { setTimezone(e.target.value); setOnlyDay(null); }}>{zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label></div>

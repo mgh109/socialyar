@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import localFont from "next/font/local";
 import { AuthGate } from "./components/auth-gate";
 import "./styles.css";
+import { TopMenu } from "./components/top-menu";
 import { AccountMenu } from "./components/account-menu";
 
 const estedad = localFont({
@@ -23,7 +24,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="fa" dir="rtl" className={estedad.variable}>
       <body>
-        <AuthGate>{children}</AuthGate>
+        <AuthGate><TopMenu />{children}</AuthGate>
         <AccountMenu />
       </body>
     </html>

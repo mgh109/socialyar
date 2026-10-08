@@ -98,7 +98,7 @@ export default function AISettingsPage() {
     } catch (error) { setMessage(error instanceof Error ? error.message : "آزمایش ناموفق بود"); }
     finally { setBusy(false); }
   };
-  return <main className="settings-page"><Link href="/workflows/new">← بازگشت به میز کار</Link><h1>تنظیمات هوش مصنوعی</h1>
+  return <main className="settings-page"><Link href="/">بازگشت به جریان‌ها</Link><h1>تنظیمات هوش مصنوعی</h1>
     <p>توکن در سرور رمزگذاری می‌شود و در مرورگر دوباره نمایش داده نمی‌شود.</p>
     {configurationProblem ? <p className="settings-setup-error" role="alert">{setupErrors[configurationProblem]}</p> : null}
     <section className="settings-card"><h2>مدل‌های قابل استفاده در جریان‌ها</h2>

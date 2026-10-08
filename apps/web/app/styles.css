@@ -1539,3 +1539,15 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 
 .youtube-connect-panel { display: grid; gap: 12px; }
 .youtube-connect-panel .connection-note { margin: 0; line-height: 1.9; }
+
+.app-navigation { display:flex; align-items:center; gap:12px; padding:10px 76px 10px 20px; border-bottom:1px solid var(--border); background:var(--panel); color:var(--text); position:relative; z-index:60; direction:rtl; }
+.app-navigation-links { display:flex; gap:5px; overflow-x:auto; min-width:0; }
+.app-navigation a,.app-navigation summary { display:block; padding:9px 13px; border-radius:8px; color:var(--muted); text-decoration:none; font:inherit; font-size:13px; white-space:nowrap; }
+.app-navigation a:hover,.app-navigation summary:hover { background:var(--panel2); color:var(--text); }
+.app-navigation a[aria-current="page"],.app-navigation summary.active { background:var(--panel2); color:var(--accent-text); font-weight:700; box-shadow:inset 0 -2px var(--green); }
+.app-navigation a:focus-visible,.app-navigation summary:focus-visible { outline:2px solid var(--green); outline-offset:2px; }
+.app-navigation-settings { position:relative; flex:none; margin-inline-start:auto; }
+.app-navigation-settings summary { cursor:pointer; list-style:none; border:1px solid var(--border); }
+.app-navigation-settings summary::-webkit-details-marker { display:none; }
+.app-navigation-popover { position:absolute; top:calc(100% + 8px); inset-inline-end:0; width:210px; padding:6px; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:0 12px 28px rgba(0,0,0,.15); }
+@media(max-width:700px) { .app-navigation { padding:9px 60px 9px 10px; gap:6px; } .app-navigation a,.app-navigation summary { padding:8px 10px; font-size:12px; } }
