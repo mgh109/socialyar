@@ -318,16 +318,6 @@ export function ConnectionsManager() {
         </div>
 
         <aside className="connection-form-panel">
-          <button type="button" disabled={busy} onClick={async () => {
-            setBusy(true); try { const r = await apiFetch("/youtube/health", { method: "POST" }); const data = await r.json();
-              setMessage(data.checks ? data.checks.map((c: { service: string; reachable: boolean; error?: string }) => `${({ google: "گوگل", youtube: "یوتیوب", upload: "بارگذاری" } as Record<string,string>)[c.service] ?? "سرویس مقصد"}: ${c.reachable ? "در دسترس" : persianError(c.error, "قطع ارتباط")}`).join(" · ") : "بررسی شبکه ناموفق بود");
-            } catch (e) { setMessage(persianError(e, "خطای بررسی شبکه")); } finally { setBusy(false); }
-          }}>بررسی دسترسی سرور به گوگل و یوتیوب</button>
-          <button type="button" disabled={busy} onClick={async () => {
-            setBusy(true); try { const r = await apiFetch("/youtube/connect", { method: "POST" }); const data = await r.json();
-              if (!r.ok) throw new Error(data.message ?? data.error); window.location.assign(data.url);
-            } catch (e) { setMessage(persianError(e, "اتصال گوگل ناموفق بود")); } finally { setBusy(false); }
-          }}>▶ اتصال یوتیوب با گوگل</button>
           <form className="connection-form" onSubmit={submit}>
             <h2>اتصال جدید</h2>
 
@@ -345,6 +335,22 @@ export function ConnectionsManager() {
               </select>
             </label>
 
+            {channel === "youtube" ? (
+              <div className="youtube-connect-panel">
+                <div className="connection-note">
+                  با حساب گوگل وارد شوید و کانال یوتیوب را انتخاب کنید. اطلاعات کانال پس از تأیید، خودکار ثبت می‌شود.
+                </div>
+                <button className="primary-button wide" type="submit" disabled={busy}>
+                  {busy ? "در حال اتصال…" : "اتصال یوتیوب با گوگل"}
+                </button>
+          <button className="ghost-button wide" type="button" disabled={busy} onClick={async () => {
+            setBusy(true); try { const r = await apiFetch("/youtube/health", { method: "POST" }); const data = await r.json();
+              setMessage(data.checks ? data.checks.map((c: { service: string; reachable: boolean; error?: string }) => `${({ google: "گوگل", youtube: "یوتیوب", upload: "بارگذاری" } as Record<string,string>)[c.service] ?? "سرویس مقصد"}: ${c.reachable ? "در دسترس" : persianError(c.error, "قطع ارتباط")}`).join(" · ") : "بررسی شبکه ناموفق بود");
+            } catch (e) { setMessage(persianError(e, "خطای بررسی شبکه")); } finally { setBusy(false); }
+          }}>بررسی ارتباط با یوتیوب</button>
+              </div>
+            ) : (
+              <>
             <label>
               <span>نام نمایشی</span>
               <input
@@ -440,6 +446,8 @@ export function ConnectionsManager() {
             <button className="primary-button wide" disabled={busy}>
               ذخیره اتصال
             </button>
+              </>
+            )}
           </form>
         </aside>
       </section>

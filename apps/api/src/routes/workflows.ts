@@ -73,7 +73,7 @@ const updateWorkflowSchema = z.object({
 const blueprintSchema = z.object({
   name: z.string().trim().min(1).max(80),
   nodes: z.array(z.object({ id: z.string().min(1).max(40), type: z.enum([
-    "rss_source", "api_source", "manual_input", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action",
+    "rss_source", "api_source", "manual_input", "collection_source", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action",
   ]), name: z.string().trim().min(1).max(70), config: z.record(z.unknown()).default({}) })).min(2).max(12),
   edges: z.array(z.object({ from: z.string(), to: z.string(), decision: z.enum(["approve", "reject", "reply", "review"]).optional() })).min(1).max(24),
 });
@@ -346,7 +346,7 @@ export async function workflowRoutes(app: FastifyInstance) {
     if (graphProblem(blueprint.nodes.map((node) => ({ key: node.id, type: node.type })), connections, true) ||
       blueprint.edges.some((edge) => edge.decision && blueprint.nodes.find((node) => node.id === edge.from)?.type !== "comment_decision"))
       return reply.code(502).send({ error: "ai_graph_invalid", usage: usageReport.value });
-    const depths = new Map(blueprint.nodes.filter((node) => ["rss_source", "api_source", "manual_input"].includes(node.type))
+    const depths = new Map(blueprint.nodes.filter((node) => ["rss_source", "api_source", "manual_input", "collection_source"].includes(node.type))
       .map((node) => [node.id, 0]));
     for (let i = 0; i < blueprint.nodes.length; i++) for (const edge of blueprint.edges) {
       const depth = depths.get(edge.from);
@@ -355,6 +355,8 @@ export async function workflowRoutes(app: FastifyInstance) {
     const maxDepth = Math.max(...depths.values());
     const rows = new Map<number, number>();
     const warnings: string[] = [];
+    if (/کاور|تصویر/.test(input.request) && /تولید|بساز|ساخت/.test(input.request))
+      warnings.push("تولید کاور با هوش مصنوعی هنوز فعال نیست؛ فعلاً لینک کاور را در مجموعه وارد کن.");
     if (useCommentTemplate) warnings.push("مسیر خواندن کامنت‌ها، فیلدهای پاسخ API و مسیر تأیید/ارسال پاسخ را با API سایت خودت تطبیق بده.");
     const steps = blueprint.nodes.map((node) => {
       const config = node.config;
@@ -364,14 +366,20 @@ export async function workflowRoutes(app: FastifyInstance) {
       const text = (key: string, max?: number) => safeText(config[key], max);
       const suppliedFeed = text("feedUrl", 500);
       const suppliedChannel = text("channel", 100);
-      const mapped: Record<string, unknown> = node.type === "rss_source" ?
+      const suppliedSheet = text("sheetUrl", 500);
+      const mapped: Record<string, unknown> = node.type === "collection_source" ? {
+        collectionSource: config.collectionSource === "google_sheet" ? "google_sheet" : "excel",
+        sheetUrl: suppliedSheet && input.request.includes(suppliedSheet) ? suppliedSheet : "",
+        sheetGid: text("sheetGid", 30) || "0", sheetAutoRefresh: config.sheetAutoRefresh === true,
+        sheetRefreshMinutes: Math.max(5, Math.min(10080, Number(config.sheetRefreshMinutes) || 5)),
+      } : node.type === "rss_source" ?
         kind === "rss" ? { sourceKind: kind, feedUrl: input.request.includes(suppliedFeed) && suppliedFeed ? suppliedFeed : "" } :
           { sourceKind: kind, channel: input.request.includes(suppliedChannel) && suppliedChannel ? suppliedChannel : "" } :
         node.type === "filter" ? { keywords: text("keywords", 500), mode: config.mode === "exclude" ? "exclude" : "include" } :
         node.type === "ai" ? { profileId: input.profileId ?? "default", aiMode: config.aiMode === "feedback" ? "feedback" : "rewrite",
           instructions: text("instructions", 3000) } :
         node.type === "comment_decision" ? { profileId: input.profileId ?? "default", rules: text("rules", 3000) } :
-        node.type === "publish" ? { accountId, publishIntervalSeconds: Math.max(30, Math.min(604800,
+        node.type === "publish" ? { accountId, videoType: config.videoType === "shorts" ? "shorts" : "video", publishIntervalSeconds: Math.max(30, Math.min(604800,
           Number.isInteger(config.publishIntervalSeconds) ? Number(config.publishIntervalSeconds) : 30)) } :
         node.type === "api_source" ? { connectionId, path: text("path", 300) || "/comments", itemsPath: "data.comments",
           idField: "id", textField: "text", contextField: "context", readMode: ["single", "batch", "post"].includes(String(config.readMode)) ? config.readMode : "single",
@@ -380,6 +388,10 @@ export async function workflowRoutes(app: FastifyInstance) {
         node.type === "api_action" ? { connectionId, path: text("path", 300) || "/comments/moderate",
           action: ["approve", "reject", "reply"].includes(String(config.action)) ? config.action : "approve", method: "POST",
           idField: "commentId", statusField: "status", replyField: "reply" } : {};
+      if (node.type === "collection_source") {
+        warnings.push(`ستون‌ها و زمان انتشار مجموعهٔ «${node.name}» را تطبیق بده و ورود محتوا را تأیید کن.`);
+        if (mapped.collectionSource === "google_sheet" && !mapped.sheetUrl) warnings.push(`لینک گوگل‌شیت «${node.name}» را وارد کن.`);
+      }
       if (node.type === "publish" && !accountId) warnings.push(`مقصد انتشار کارت «${node.name}» را انتخاب کن.`);
       if (["api_source", "api_action"].includes(node.type) && !connectionId) warnings.push(`اتصال کارت «${node.name}» را انتخاب کن.`);
       if (node.type === "rss_source" && !(mapped.feedUrl || mapped.channel)) warnings.push(`نشانی کارت «${node.name}» را وارد کن.`);

@@ -1536,3 +1536,6 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 @media (min-width: 700px) { .collection-mapping { grid-template-columns: repeat(2, minmax(0,1fr)); } }
 
 .collection-panel .collection-fields { display: grid; gap: 14px; border: 0; padding: 0; margin: 0; min-width: 0; }
+
+.youtube-connect-panel { display: grid; gap: 12px; }
+.youtube-connect-panel .connection-note { margin: 0; line-height: 1.9; }
