@@ -7,7 +7,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:collections": "node --import tsx --test src/content-collections.test.ts",
-    "test:integrity": "node --import tsx --test src/run-integrity.test.ts"
+    "test:integrity": "node --import tsx --test src/run-integrity.test.ts",
+    "test:access": "node --import tsx --test src/password.test.ts src/auth-access.test.ts src/access-policy.test.ts src/team-access.test.ts src/scope-response.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

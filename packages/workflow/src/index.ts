@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIRequestUsage, type AIConnection } from "@socialyar/ai";
 import { apiRequest } from "./api-client";
 import {
-  ExecutionOwnershipError, withExecutionLock, aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
+  assertWorkspaceOperational, createTenantAIQuota, ExecutionOwnershipError, withExecutionLock, aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
 } from "@socialyar/db";
 
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
@@ -67,6 +67,9 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
   if (!claimed) return;
 
   try {
+    const [tenant] = await db.select({ workspaceId: workflows.workspaceId }).from(workflows).where(eq(workflows.id, run.workflowId)).limit(1);
+    if (!tenant) throw new Error("فضای کاری جریان پیدا نشد.");
+    await assertWorkspaceOperational(db, tenant.workspaceId);
     const steps = await db.select().from(workflowSteps)
       .where(eq(workflowSteps.workflowVersionId, run.workflowVersionId)).orderBy(asc(workflowSteps.order));
     const edges = await db.select().from(workflowConnections)
@@ -192,8 +195,10 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
               eq(aiProfiles.workspaceId, workflow.workspaceId))).limit(1) :
             await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
           if (!settings) throw new Error("Selected AI profile is not available");
+          const quota = createTenantAIQuota(db, workflow!.workspaceId);
           const connection = { provider: settings.provider as AIConnection["provider"],
-            model: settings.model, token: decryptSecret(settings.encryptedToken), onUsage: accountUsage };
+            model: settings.model, token: decryptSecret(settings.encryptedToken), beforeRequest: quota.beforeRequest,
+            onRequestRejected: quota.onRequestRejected, onUsage: async (usage: AIRequestUsage) => { await quota.onUsage(usage); await accountUsage(usage); } };
           const instructions = typeof step.config.instructions === "string" ? step.config.instructions : undefined;
           const retry = async (attempt: number, error: unknown) => {
             await db.update(runSteps).set({ status: "retrying", attempt }).where(eq(runSteps.id, record.id));
@@ -227,8 +232,10 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
             await db.select().from(aiProfiles).where(and(eq(aiProfiles.id, profileId), eq(aiProfiles.workspaceId, workflow.workspaceId))).limit(1) :
             await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workflow.workspaceId)).limit(1) : [];
           if (!settings) throw new Error("مدل AI انتخاب‌شده در دسترس نیست");
+          const quota = createTenantAIQuota(db, workflow!.workspaceId);
           const connection = { provider: settings.provider as AIConnection["provider"], model: settings.model,
-            token: decryptSecret(settings.encryptedToken), onUsage: accountUsage };
+            token: decryptSecret(settings.encryptedToken), beforeRequest: quota.beforeRequest,
+            onRequestRejected: quota.onRequestRejected, onUsage: async (usage: AIRequestUsage) => { await quota.onUsage(usage); await accountUsage(usage); } };
           const decision = await retryAI(() => decideComment(connection, upstream.text!, upstream.context ?? "",
             String(step.config.rules ?? "")), async (attempt, error) => {
             await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "retry",
@@ -268,6 +275,7 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
               else body[String(step.config.statusField || "status")] = action === "approve" ?
                 String(step.config.approveValue || "approved") : String(step.config.rejectValue || "rejected");
               await assertOwned();
+              await assertWorkspaceOperational(db, workflow.workspaceId);
               await apiRequest({ ...connection, token: decryptSecret(connection.encryptedToken) }, String(step.config.path),
                 step.config.method === "PATCH" ? "PATCH" : "POST", body, claim.id);
               await db.update(commentActions).set({ status: "succeeded", detail: { action }, updatedAt: new Date() })

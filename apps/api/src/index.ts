@@ -8,6 +8,9 @@ import { contentRoutes } from "./routes/content";
 import { approvalRoutes } from "./routes/approvals";
 import { accountRoutes } from "./routes/accounts";
 import { analyticsRoutes } from "./routes/analytics";
+import { teamRoutes } from "./routes/team";
+import { platformRoutes } from "./routes/platform";
+import { TenantPolicyError } from "@socialyar/db";
 import { authRoutes } from "./routes/auth";
 import { aiSettingsRoutes } from "./routes/ai-settings";
 import { apiConnectionRoutes } from "./routes/api-connections";
@@ -32,6 +35,7 @@ await app.register(cors, {
 await authPlugin(app);
 
 app.setErrorHandler((error, _request, reply) => {
+  if (error instanceof TenantPolicyError) return reply.code(error.statusCode).send({error:error.message,code:error.code});
   if (error instanceof ZodError) {
     return reply.code(400).send({
       error: "validation_error",
@@ -84,9 +88,9 @@ const openapi = {
             "application/json": {
               schema: {
                 type: "object",
-                required: ["email", "password"],
+                required: ["phone", "password"],
                 properties: {
-                  email: { type: "string", format: "email" },
+                  phone: { type: "string" },
                   password: { type: "string", format: "password" },
                 },
               },
@@ -242,6 +246,8 @@ app.get("/health", async () => ({
 }));
 
 await app.register(authRoutes);
+await app.register(teamRoutes);
+await app.register(platformRoutes);
 await app.register(aiSettingsRoutes);
 await app.register(apiConnectionRoutes);
 await app.register(workflowRoutes);

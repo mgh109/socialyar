@@ -7,6 +7,11 @@ import { generateWorkflowBlueprint, type AIConnection, type AIRequestUsage } fro
 import { graphProblem } from "@socialyar/workflow/graph";
 import {
   getDb,
+  assertWorkspaceOperational,
+  reserveResourceQuota,
+  createTenantAIQuota,
+  TenantPolicyError,
+  workspaces,
   aiProfiles,
   aiSettings,
   aiUsageEvents,
@@ -300,6 +305,8 @@ export async function workflowRoutes(app: FastifyInstance) {
   app.post("/workflows/generate", async (request, reply) => {
     const input = generatorInputSchema.parse(request.body);
     const workspaceId = request.auth.workspaceId;
+    await assertWorkspaceOperational(db, workspaceId);
+    const quota = createTenantAIQuota(db, workspaceId);
     const [profile] = input.profileId && input.profileId !== "default" ? await db.select().from(aiProfiles)
       .where(and(eq(aiProfiles.id, input.profileId), eq(aiProfiles.workspaceId, workspaceId))).limit(1) :
       await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
@@ -310,7 +317,7 @@ export async function workflowRoutes(app: FastifyInstance) {
       db.select({ id: apiConnections.id, label: apiConnections.name }).from(apiConnections)
         .where(eq(apiConnections.workspaceId, workspaceId)),
     ]);
-    const accounts = accountRows.filter((item) => ["eitaa", "telegram", "bale", "instagram", "website", "youtube"].includes(item.channel));
+    const accounts = accountRows.filter((item) => (request.auth.channelIds == null || request.auth.channelIds.includes(item.id)) && ["eitaa", "telegram", "bale", "instagram", "website", "youtube"].includes(item.channel));
     const validAccounts = new Set(accounts.map((item) => item.id));
     const validConnections = new Set(connectionRows.map((item) => item.id));
     const usageReport: { value: AIRequestUsage | null } = { value: null };
@@ -321,7 +328,8 @@ export async function workflowRoutes(app: FastifyInstance) {
       if (useCommentTemplate) raw = JSON.stringify(commentModerationTemplate(connectionRows.length === 1 ? connectionRows[0].id : ""));
       else {
       raw = await generateWorkflowBlueprint({ provider: profile.provider as AIConnection["provider"],
-        model: profile.model, token: decryptSecret(profile.encryptedToken), onUsage: async (report) => {
+        model: profile.model, token: decryptSecret(profile.encryptedToken), beforeRequest: quota.beforeRequest, onRequestRejected: quota.onRequestRejected, onUsage: async (report) => {
+          await quota.onUsage(report);
           usageReport.value = report;
           try {
             await ensureAIUsageStorage();
@@ -333,6 +341,7 @@ export async function workflowRoutes(app: FastifyInstance) {
       });
       }
     } catch (error) {
+      if (error instanceof TenantPolicyError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
       request.log.error({ error }, "Workflow generation failed");
       return reply.code(502).send({ error: "ai_provider_error" });
     }
@@ -523,6 +532,9 @@ export async function workflowRoutes(app: FastifyInstance) {
     }
 
     const result = await db.transaction(async (tx) => {
+      await tx.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.id, request.auth.workspaceId)).for("update");
+      if (input.status === "active") await reserveResourceQuota(tx, request.auth.workspaceId, "workflows");
+      else await assertWorkspaceOperational(tx, request.auth.workspaceId);
       const [workflow] = await tx
         .insert(workflows)
         .values({
@@ -696,17 +708,22 @@ export async function workflowRoutes(app: FastifyInstance) {
       if (problem) return reply.code(409).send({ error: problem });
     }
 
-    const nextVersion = existing.currentVersion + 1;
-
     const result = await db.transaction(async (tx) => {
+      await tx.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.id, request.auth.workspaceId)).for("update");
+      await assertWorkspaceOperational(tx, request.auth.workspaceId);
+      const [locked] = await tx.select().from(workflows).where(and(eq(workflows.id, workflowId), eq(workflows.workspaceId, request.auth.workspaceId))).for("update");
+      if (!locked) throw new TenantPolicyError("workflow_not_found", "جریان پیدا نشد.", 404);
+      if (locked.status !== "active" && (input.status ?? locked.status) === "active") await reserveResourceQuota(tx, request.auth.workspaceId, "workflows");
+      const nextVersion = locked.currentVersion + 1;
+
       const [workflow] = await tx
         .update(workflows)
         .set({
-          name: input.name ?? existing.name,
+          name: input.name ?? locked.name,
           description:
-            input.description === undefined ? existing.description : input.description,
-          autonomyMode: input.autonomyMode ?? existing.autonomyMode,
-          status: input.status ?? existing.status,
+            input.description === undefined ? locked.description : input.description,
+          autonomyMode: input.autonomyMode ?? locked.autonomyMode,
+          status: input.status ?? locked.status,
           currentVersion: nextVersion,
           updatedAt: new Date(),
         })
@@ -720,7 +737,7 @@ export async function workflowRoutes(app: FastifyInstance) {
           version: nextVersion,
           prompt: input.prompt ?? null,
           snapshot: {
-            autonomyMode: input.autonomyMode ?? existing.autonomyMode,
+            autonomyMode: input.autonomyMode ?? locked.autonomyMode,
             pollIntervalMinutes: input.pollIntervalMinutes,
             stepCount: input.steps.length,
             connectionCount: input.connections.length,

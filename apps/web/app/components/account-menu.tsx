@@ -13,7 +13,7 @@ export function AccountMenu() {
   const [email, setEmail] = useState("");
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    setEmail(getStoredUser()?.email ?? ""); setOpen(false);
+    setEmail(getStoredUser()?.phone ?? getStoredUser()?.email ?? ""); setOpen(false);
     document.documentElement.dataset.theme = localStorage.getItem("hoorplus-theme") === "dark" ? "dark" : "light";
   }, [pathname]);
   useEffect(() => {

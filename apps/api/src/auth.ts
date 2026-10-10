@@ -1,3 +1,7 @@
+import { and, eq } from "drizzle-orm";
+import { getDb, users, workspaceMembers, workspaces, auditLogs } from "@socialyar/db";
+import { scopeResponseHook } from "./scope-response";
+import { enforceAccess } from "./access";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
@@ -5,12 +9,18 @@ export type AuthContext = {
   userId: string;
   email: string;
   workspaceId: string;
+  role?: string;
+  channelIds?: string[] | null;
+  workflowIds?: string[] | null;
+  isPlatformAdmin?: boolean;
+  mustChangePassword?: boolean;
 };
 
 type TokenPayload = {
   sub: string;
   email: string;
   workspaceId: string;
+  sessionVersion?: number;
   iat: number;
   exp: number;
 };
@@ -29,6 +39,7 @@ declare module "fastify" {
       sub: string;
       email: string;
       workspaceId: string;
+      sessionVersion?: number;
     }) => string;
   }
 }
@@ -111,7 +122,8 @@ function verifyToken(token: string, secret: string): TokenPayload {
   return payload;
 }
 
-export async function authPlugin(app: FastifyInstance) {
+export async function authPlugin(app: FastifyInstance, options: { db?: ReturnType<typeof getDb> } = {}) {
+  const db = options.db ?? getDb();
   const secret = process.env.JWT_SECRET;
   if (!secret || secret.length < 32) {
     throw new Error("JWT_SECRET must be at least 32 characters");
@@ -137,13 +149,32 @@ export async function authPlugin(app: FastifyInstance) {
       const token = authorization.slice("Bearer ".length).trim();
       const payload = verifyToken(token, secret);
 
-      request.auth = {
-        userId: payload.sub,
-        email: payload.email,
-        workspaceId: payload.workspaceId,
-      };
+      const [user] = await db.select().from(users).where(eq(users.id,payload.sub)).limit(1);
+      if (!user?.isActive || (payload.sessionVersion ?? 0) !== user.sessionVersion) {
+        await reply.code(401).send({error:"unauthorized"}); return;
+      }
+      const [member] = await db.select({member:workspaceMembers,ownerId:workspaces.ownerId,workspaceActive:workspaces.isActive}).from(workspaceMembers)
+        .innerJoin(workspaces,eq(workspaces.id,workspaceMembers.workspaceId))
+        .where(and(eq(workspaceMembers.userId,user.id),eq(workspaceMembers.workspaceId,payload.workspaceId))).limit(1);
+      const platform = user.isPlatformAdmin || (process.env.HOOR_PLATFORM_ADMIN_USER_IDS ?? '').split(',').map(x=>x.trim()).includes(user.id);
+      if (!member || !member.member.isActive || !member.workspaceActive) { await reply.code(401).send({error:"unauthorized"}); return; }
+      request.auth = { userId:user.id,email:user.email ?? '',workspaceId:payload.workspaceId,
+        role:member.ownerId===user.id?'manager':member.member.role,
+        channelIds:member.member.channelIds,workflowIds:member.member.workflowIds,
+        isPlatformAdmin:platform,mustChangePassword:user.mustChangePassword };
+
     } catch {
       await reply.code(401).send({ error: "unauthorized" });
     }
   });
+  app.addHook("onResponse", async (request,reply) => {
+    if (!request.auth || reply.statusCode >= 400 || ["GET","HEAD","OPTIONS"].includes(request.method)) return;
+    const path=request.routeOptions.url ?? request.url.split('?')[0];
+    if (path.startsWith('/team') || path.startsWith('/platform')) return;
+    try { await db.insert(auditLogs).values({workspaceId:request.auth.workspaceId,actorId:request.auth.userId,
+      action:`${request.method} ${path}`,targetType:'route',targetId:null,detail:{statusCode:reply.statusCode}}); }
+    catch { request.log.error("ثبت گزارش فعالیت مدیریتی انجام نشد."); }
+  });
+  scopeResponseHook(app,db);
+  app.addHook("preHandler", async (request,reply) => { if (request.auth && !reply.sent) await enforceAccess(db,request,reply); });
 }

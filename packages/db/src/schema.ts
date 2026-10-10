@@ -1,5 +1,6 @@
 import {
   boolean,
+  bigint,
   index,
   integer,
   jsonb,
@@ -24,16 +25,23 @@ export const scheduleStatus = pgEnum("schedule_status", ["scheduled", "processin
 
 export const users = pgTable("users", {
   id: uuid("id").defaultRandom().primaryKey(),
-  email: text("email").notNull(),
+  email: text("email"),
+  phone: text("phone"),
+  isActive: boolean("is_active").default(true).notNull(),
+  mustChangePassword: boolean("must_change_password").default(false).notNull(),
+  sessionVersion: integer("session_version").default(0).notNull(),
+  isPlatformAdmin: boolean("is_platform_admin").default(false).notNull(),
   name: text("name"),
   passwordHash: text("password_hash"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   emailIdx: uniqueIndex("users_email_uq").on(t.email),
+  phoneIdx: uniqueIndex("users_phone_uq").on(t.phone),
 }));
 
 export const workspaces = pgTable("workspaces", {
+  isActive: boolean("is_active").default(true).notNull(),
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
   slug: text("slug").notNull(),
@@ -48,11 +56,48 @@ export const workspaces = pgTable("workspaces", {
 export const workspaceMembers = pgTable("workspace_members", {
   workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-  role: text("role").default("member").notNull(),
+  role: text("role").default("editor").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  channelIds: uuid("channel_ids").array(),
+  workflowIds: uuid("workflow_ids").array(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   pk: primaryKey({ columns: [t.workspaceId, t.userId] }),
 }));
+
+export const workspaceSubscriptions = pgTable("workspace_subscriptions", {
+  workspaceId: uuid("workspace_id").primaryKey().references(() => workspaces.id, { onDelete: "cascade" }),
+  plan: text("plan").default("legacy").notNull(),
+  status: text("status").default("active").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  maxUsers: integer("max_users"),
+  maxChannels: integer("max_channels"),
+  maxWorkflows: integer("max_workflows"),
+  aiTokenLimit: bigint("ai_token_limit", { mode: "number" }),
+  aiTokensUsed: bigint("ai_tokens_used", { mode: "number" }).default(0).notNull(),
+  aiTokensReserved: bigint("ai_tokens_reserved", { mode: "number" }).default(0).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const auditLogs = pgTable("audit_logs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "set null" }),
+  actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
+  action: text("action").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id"),
+  detail: jsonb("detail").$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ workspaceIdx: index("audit_logs_workspace_created_idx").on(t.workspaceId, t.createdAt) }));
+
+export const tenantAIReservations = pgTable("tenant_ai_reservations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  amount: integer("amount").notNull(),
+  actualTokens: integer("actual_tokens"),
+  status: text("status").default("reserved").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ workspaceIdx: index("tenant_ai_reservations_workspace_status_idx").on(t.workspaceId, t.status) }));
 
 export const socialAccounts = pgTable("social_accounts", {
   id: uuid("id").defaultRandom().primaryKey(),

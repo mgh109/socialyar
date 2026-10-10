@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { setTimeout as pause } from "node:timers/promises";
-import { getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts } from "@socialyar/db";
+import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts } from "@socialyar/db";
 
 import { attachYoutubePlaylist } from "./youtube-playlist";
 
@@ -19,11 +19,15 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0)
   };
   let transport: Awaited<ReturnType<typeof publishingTransport>> | undefined;
   try {
+    await assertWorkspaceOperational(db,item.workspaceId);
     transport = await publishingTransport(item.workspaceId, item.settings.connection, "youtube", async (event) => {
       await db.insert(publicationConnectionEvents).values({ workspaceId: item.workspaceId, youtubeItemId: item.id, ...event });
       await log("connection", event);
     });
-    const request = transport.fetch;
+    const request: typeof fetch = async (url, init) => {
+      if (init?.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) await assertWorkspaceOperational(db, item.workspaceId);
+      return transport!.fetch(url, init);
+    };
     const { token, privateOnly } = await youtubeToken(item.accountId, item.workspaceId, request);
     const headers = { Authorization: `Bearer ${token}` };
     const media = async (kind: "video" | "image") => {

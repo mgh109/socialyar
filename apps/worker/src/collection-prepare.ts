@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import { getDb, getPool, youtubeItems, fetchCollectionMedia, storeYoutubeMedia, inspectVideo, assertShorts, readYoutubeMedia } from "@socialyar/db";
+import { assertWorkspaceOperational, getDb, getPool, youtubeItems, fetchCollectionMedia, storeYoutubeMedia, inspectVideo, assertShorts, readYoutubeMedia } from "@socialyar/db";
 export async function prepareCollectionVideo(id: string, version: number, db = getDb()) {
   const lock = await getPool().connect();
   try {
@@ -10,6 +10,7 @@ export async function prepareCollectionVideo(id: string, version: number, db = g
     .where(and(eq(youtubeItems.id, id), eq(youtubeItems.queueVersion, version), isNull(youtubeItems.approvedAt), inArray(youtubeItems.status, ["waiting_video", "failed", "preparing"]))).returning();
   if (!item || !item.settings.collectionId) return;
   try {
+    await assertWorkspaceOperational(db,item.workspaceId);
     const settings = { ...item.settings };
     if (!settings.videoMediaId) {
       const media = await fetchCollectionMedia(item.workspaceId, String(settings.sourceVideoUrl ?? settings.videoUrl), "video", settings.mediaConnection);

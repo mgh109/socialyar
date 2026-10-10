@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { randomBytes, createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { getDb, socialAccounts, youtubeItems, youtubeOAuthStates, youtubeConfig, googleJson,
+import { getDb, assertWorkspaceOperational, reserveResourceQuota, TenantPolicyError, workspaces, socialAccounts, youtubeItems, youtubeOAuthStates, youtubeConfig, googleJson,
   encryptSecret, decryptSecret, youtubeToken, workflows, storeYoutubeMedia, readYoutubeMedia, fetchYoutubeMedia, validateConnectionPolicy, secretConfigurationProblem } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 import { policySchema } from "./proxies";
@@ -18,6 +18,7 @@ export async function youtubeRoutes(app: FastifyInstance) {
       gt(youtubeOAuthStates.expiresAt, new Date()))).returning();
     if (!state) return reply.code(400).send({ error: "oauth_state_expired" });
     if (query.error || !query.code) return reply.code(400).send({ error: "google_authorization_denied" });
+    await assertWorkspaceOperational(db, state.workspaceId);
     const config = youtubeConfig();
     const tokens = await googleJson(await fetch("https://oauth2.googleapis.com/token", {
       method: "POST", body: new URLSearchParams({ client_id: config.clientId, client_secret: config.clientSecret,
@@ -34,11 +35,23 @@ export async function youtubeRoutes(app: FastifyInstance) {
     const refreshTokenEnc = tokens.refresh_token ? encryptSecret(tokens.refresh_token) : existing?.credentials.refreshTokenEnc;
     if (!refreshTokenEnc) return reply.code(400).send({ error: "google_refresh_token_missing_reconnect" });
     const credentials = { refreshTokenEnc, accessTokenEnc: encryptSecret(tokens.access_token), expiresAt: Date.now() + tokens.expires_in * 1000 };
-    await db.insert(socialAccounts).values({ workspaceId: state.workspaceId, channel: "youtube", externalAccountId: channel.id,
-      displayName: channel.snippet.title, credentials }).onConflictDoUpdate({
-      target: [socialAccounts.workspaceId, socialAccounts.channel, socialAccounts.externalAccountId],
-      set: { credentials, displayName: channel.snippet.title, isActive: true, updatedAt: new Date() },
-    });
+    try {
+      await db.transaction(async (tx) => {
+        await tx.select({ id: workspaces.id }).from(workspaces).where(eq(workspaces.id, state.workspaceId)).for("update");
+        await assertWorkspaceOperational(tx, state.workspaceId);
+        const [current] = await tx.select({ id: socialAccounts.id }).from(socialAccounts).where(and(eq(socialAccounts.workspaceId, state.workspaceId),
+          eq(socialAccounts.channel, "youtube"), eq(socialAccounts.externalAccountId, channel.id))).limit(1);
+        if (!current) await reserveResourceQuota(tx, state.workspaceId, "channels");
+        await tx.insert(socialAccounts).values({ workspaceId: state.workspaceId, channel: "youtube", externalAccountId: channel.id,
+          displayName: channel.snippet.title, credentials }).onConflictDoUpdate({
+          target: [socialAccounts.workspaceId, socialAccounts.channel, socialAccounts.externalAccountId],
+          set: { credentials, displayName: channel.snippet.title, isActive: true, updatedAt: new Date() },
+        });
+      });
+    } catch (error) {
+      if (error instanceof TenantPolicyError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
+      throw error;
+    }
     return reply.redirect(`${process.env.YOUTUBE_WEB_ORIGIN ?? "http://localhost:3000"}/connections?youtube=connected`);
   });
   app.register(async (secured) => {

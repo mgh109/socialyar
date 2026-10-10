@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { generateNewsDraft, type AIConnection } from "@socialyar/ai";
-import { aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, decryptSecret, encryptSecret, getDb, secretConfigurationProblem, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
+import { createTenantAIQuota, TenantPolicyError, aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, decryptSecret, encryptSecret, getDb, secretConfigurationProblem, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
 
 const settingsSchema = z.object({
   provider: z.enum(["openai", "openrouter", "gapgpt"]),
@@ -170,13 +170,16 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
       await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, request.auth.workspaceId)).limit(1);
     if (!row) return reply.code(409).send({ error: "ai_not_configured" });
     try {
+      const quota = createTenantAIQuota(db, request.auth.workspaceId);
       const text = await generateNewsDraft({ provider: row.provider as AIConnection["provider"],
-        model: row.model, token: decryptSecret(row.encryptedToken), onUsage: async (usage) => {
+        model: row.model, token: decryptSecret(row.encryptedToken), beforeRequest: quota.beforeRequest, onRequestRejected: quota.onRequestRejected, onUsage: async (usage) => {
+          await quota.onUsage(usage);
           await ensureAIUsageStorage();
           await db.insert(aiUsageEvents).values({ workspaceId: request.auth.workspaceId, ...usage });
         } }, { title: "آزمایش اتصال", text: input.text });
       return { text };
     } catch (error) {
+      if (error instanceof TenantPolicyError) return reply.code(error.statusCode).send({ error: error.code, message: error.message });
       request.log.error({ error }, "AI connection test failed");
       return reply.code(502).send({ error: "ai_provider_error", message: error instanceof Error ? error.message : "Provider error" });
     }

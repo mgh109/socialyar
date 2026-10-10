@@ -1,11 +1,12 @@
 import { and, desc, eq } from "drizzle-orm";
-import { getDb, workflows, workflowVersions, workflowSteps, collectionSheetSnapshots, fetchGoogleSheet } from "@socialyar/db";
+import { assertWorkspaceOperational, getDb, workflows, workflowVersions, workflowSteps, collectionSheetSnapshots, fetchGoogleSheet } from "@socialyar/db";
 let running=false;
 export async function pollCollectionSheets(db=getDb(),read=fetchGoogleSheet) {
   if(running)return;running=true;
   try {
     const active=await db.select().from(workflows).where(eq(workflows.status,"active"));
     for(const workflow of active){
+      try { await assertWorkspaceOperational(db,workflow.workspaceId); } catch { continue; }
       const [version]=await db.select().from(workflowVersions).where(eq(workflowVersions.workflowId,workflow.id)).orderBy(desc(workflowVersions.version)).limit(1);if(!version)continue;
       const sources=await db.select().from(workflowSteps).where(and(eq(workflowSteps.workflowVersionId,version.id),eq(workflowSteps.type,"collection_source")));
       for(const source of sources){

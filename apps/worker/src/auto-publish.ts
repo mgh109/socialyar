@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, sql, inArray } from "drizzle-orm";
 import { Queue } from "bullmq";
-import { withExecutionLock, contentItems, contentVariants, getDb, schedules, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows, youtubeItems, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
+import { assertWorkspaceOperational, withExecutionLock, contentItems, contentVariants, getDb, schedules, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows, youtubeItems, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
 import { connection, reservePublicationSlot } from "./queue";
 
 const publicationQueue = new Queue("publication-jobs", { connection });
@@ -32,6 +32,7 @@ async function enqueueClaimedAutoPublication(runId: string) {
     const [youtubeAccount] = typeof publishStep.config.accountId === "string" ? await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, publishStep.config.accountId), eq(socialAccounts.workspaceId, row.workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true))).limit(1) : [];
     try {
+    await assertWorkspaceOperational(db, row.workspaceId);
     if (youtubeAccount) {
       if (!generated) continue; // Respect upstream filters and approval gates.
       const videoUrl = generated?.videoUrl ?? publishStep.config.videoUrl;

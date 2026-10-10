@@ -8,7 +8,7 @@ import { saveSession, type AuthSession } from "../lib/session";
 export default function LoginPage() {
   const router = useRouter();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
-  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -22,7 +22,7 @@ export default function LoginPage() {
       const response = await fetch(`${apiUrl}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(phone.includes("@") ? { email: phone.trim(), password } : { phone: phone.trim(), password }),
       });
 
       const data = await response.json();
@@ -30,13 +30,13 @@ export default function LoginPage() {
       if (!response.ok) {
         const error =
           data.error === "invalid_credentials"
-            ? "ایمیل یا رمز عبور اشتباه است."
+            ? "شماره همراه یا رمز عبور اشتباه است."
             : "ورود انجام نشد. اطلاعات را بررسی کن.";
         throw new Error(error);
       }
 
       saveSession(data as AuthSession);
-      router.replace("/");
+      router.replace(data.user?.mustChangePassword ? "/account/password" : "/");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "خطای ورود");
     } finally {
@@ -50,11 +50,11 @@ export default function LoginPage() {
         <BrandLogo large />
         <h1>مدیریت محتوا، از ایده تا انتشار</h1>
         <p>
-          وارد فضای کاری خودت شو و Workflowها، محتوا، تأیید، انتشار و تحلیل را یکجا مدیریت کن.
+          وارد فضای کاری خودت شو و جریان‌ها، محتوا، تأیید، انتشار و تحلیل را یکجا مدیریت کن.
         </p>
 
         <div className="auth-features">
-          <span>✦ Workflow هوشمند</span>
+          <span>✦ جریان هوشمند</span>
           <span>✓ تأیید انسانی</span>
           <span>↗ انتشار چندکاناله</span>
         </div>
@@ -68,18 +68,20 @@ export default function LoginPage() {
 
         <form className="auth-form" onSubmit={submit}>
           <label>
-            <span>ایمیل</span>
+            <span>شماره همراه</span>
             <input
-              type="email"
+              type="text"
+              inputMode="tel"
               dir="ltr"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              value={phone}
+              onChange={(event) => setPhone(event.target.value)}
               required
-              autoComplete="email"
-              placeholder="name@example.com"
+              autoComplete="username"
+              placeholder="09123456789"
             />
           </label>
 
+          <small>اگر حساب قدیمی شما هنوز شماره همراه ندارد، برای انتقال حساب می‌توانید یک‌بار با ایمیل وارد شوید.</small>
           <label>
             <span>رمز عبور</span>
             <input

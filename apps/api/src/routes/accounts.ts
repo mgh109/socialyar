@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { decryptSecret, encryptSecret, getDb, socialAccounts } from "@socialyar/db";
+import { decryptSecret, encryptSecret, getDb, reserveResourceQuota, socialAccounts } from "@socialyar/db";
 
 const channelSchema = z.enum(["instagram", "telegram", "website", "x", "linkedin", "eitaa", "youtube", "bale"]);
 
@@ -144,7 +144,9 @@ export async function accountRoutes(app: FastifyInstance) {
       ? { chatId: input.credentials.chatId, botTokenEnc: encryptSecret(input.credentials.botToken as string) }
       : input.credentials;
 
-    const [account] = await db
+    const account = await db.transaction(async (tx) => {
+      await reserveResourceQuota(tx, request.auth.workspaceId, "channels");
+      const [created] = await tx
       .insert(socialAccounts)
       .values({
         workspaceId: request.auth.workspaceId,
@@ -156,6 +158,8 @@ export async function accountRoutes(app: FastifyInstance) {
       })
       .returning();
 
+      return created;
+    });
     return reply.code(201).send(safeAccount(account));
   });
 

@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 import { and, eq, inArray } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { XMLParser } from "fast-xml-parser";
-import { apiConnections, decryptSecret, ensureCommentStorage, getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
+import { assertWorkspaceOperational, apiConnections, decryptSecret, ensureCommentStorage, getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
 import { readApiComments } from "@socialyar/workflow/api-client";
 import { connection } from "./queue";
 import { channelHandle, fetchEitaaPosts } from "./eitaa-source";
@@ -185,6 +185,7 @@ async function poll() {
       .where(and(eq(workflows.status, "active"), eq(workflows.autonomyMode, "full_auto")));
     for (const workflow of active) {
       try {
+        await assertWorkspaceOperational(db, workflow.workspaceId);
         const [version] = await db.select().from(workflowVersions)
           .where(and(eq(workflowVersions.workflowId, workflow.id), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
         if (!version) continue;

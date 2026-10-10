@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import { getStoredMembership, getStoredUser } from "../lib/session";
 
 const workLinks = [
   { href: "/", label: "جریان‌ها", prefix: "/workflows" },
@@ -19,6 +21,9 @@ const settingsLinks = [
 
 export function TopMenu() {
   const pathname = usePathname();
+  const [manager,setManager]=useState(false);
+  const [platform,setPlatform]=useState(false);
+  useEffect(()=>{const sync=()=>{setManager(["manager","owner"].includes(getStoredMembership()?.role??""));setPlatform(Boolean(getStoredUser()?.isPlatformAdmin));};sync();window.addEventListener("hoor-session-change",sync);return()=>window.removeEventListener("hoor-session-change",sync);},[]);
   const settings = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (settings.current) settings.current.open = false;
@@ -34,7 +39,7 @@ export function TopMenu() {
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
   }, []);
-  if (pathname === "/login") return null;
+  if (pathname === "/login" || pathname === "/account/password") return null;
   return <nav className="app-navigation" aria-label="منوی اصلی هور+">
     <div className="app-navigation-links">
       {workLinks.map((item) => {
@@ -42,11 +47,13 @@ export function TopMenu() {
         return <Link key={item.href} href={item.href} aria-current={active ? "page" : undefined}>{item.label}</Link>;
       })}
     </div>
-    <details className="app-navigation-settings" ref={settings}>
+    {manager || platform ? <details className="app-navigation-settings" ref={settings}>
       <summary className={pathname.startsWith("/settings/") ? "active" : undefined}>تنظیمات <span aria-hidden="true">⌄</span></summary>
       <div className="app-navigation-popover">
-        {settingsLinks.map((item) => <Link key={item.href} href={item.href} aria-current={pathname === item.href ? "page" : undefined}>{item.label}</Link>)}
+        {manager?<Link href="/settings/team">اعضای سازمان</Link>:null}
+        {platform?<Link href="/platform">مدیریت سامانه</Link>:null}
+        {manager ? settingsLinks.map((item) => <Link key={item.href} href={item.href} aria-current={pathname === item.href ? "page" : undefined}>{item.label}</Link>) : null}
       </div>
-    </details>
+    </details> : null}
   </nav>;
 }

@@ -3,7 +3,7 @@ import { publishToChannel } from "@socialyar/channels";
 import { setTimeout as pause } from "node:timers/promises";
 import { reservePublicationSlot } from "./queue";
 import {
-  ExecutionOwnershipError, withExecutionLock, contentItems,
+  assertWorkspaceOperational, ExecutionOwnershipError, withExecutionLock, contentItems,
   contentVariants,
   getDb,
   decryptSecret,
@@ -145,6 +145,7 @@ async function executeClaimedPublication(input: { publicationId: string; attempt
     }
     let providerState = { ...variant.settings };
     await assertOwned();
+    await assertWorkspaceOperational(db, publication.workspaceId);
     await db.update(publications).set({ sendStartedAt: new Date() }).where(eq(publications.id, publication.id));
     await assertOwned();
     sendAttempted=true;

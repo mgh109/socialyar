@@ -18,12 +18,13 @@ const jobs: unknown[]=[];
 const row=(id="one",order=1): CollectionRow => ({ id,order,title:`قسمت ${order}`,description:"توضیحات",videoUrl:`https://files.example.com/${id}.mp4`,coverUrl:"",scheduledAt:"2028-01-01T14:30:00.000Z",videoType:"video",playlist:"مجموعه",tags:[],privacy:"private",madeForKids:false });
 before(async()=>{
   connection.disconnect();
-  for (const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0007_publishing_proxies.sql","0008_publication_calendar.sql","0009_content_collections.sql","0011_execution_recovery.sql"])
+  for (const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0007_publishing_proxies.sql","0008_publication_calendar.sql","0009_content_collections.sql","0011_execution_recovery.sql", "0012_tenant_access.sql"])
     await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),"utf8"));
   // Additive publishing migrations must be safe on the next rollout too.
   await engine.exec(await readFile(new URL("../../../packages/db/migrations/0009_content_collections.sql",import.meta.url),"utf8"));
   await db.insert(tables.users).values({ id:userId,email:"collection-test@example.com" });
   await db.insert(tables.workspaces).values([{ id:workspaceId,name:"test",slug:"test",ownerId:userId },{ id:otherWorkspaceId,name:"other",slug:"other",ownerId:userId }]);
+  await db.insert(tables.workspaceSubscriptions).values([{workspaceId},{workspaceId:otherWorkspaceId}]);
   await db.insert(tables.socialAccounts).values({ id:accountId,workspaceId,channel:"youtube",externalAccountId:"test-channel",displayName:"کانال تست" });
   await db.insert(tables.workflows).values({ id:workflowId,workspaceId,name:"مجموعه" });
   await db.insert(tables.workflowVersions).values({ id:versionId,workflowId,version:1 });
