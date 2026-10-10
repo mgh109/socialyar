@@ -379,7 +379,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         node.type === "ai" ? { profileId: input.profileId ?? "default", aiMode: config.aiMode === "feedback" ? "feedback" : "rewrite",
           instructions: text("instructions", 3000) } :
         node.type === "comment_decision" ? { profileId: input.profileId ?? "default", rules: text("rules", 3000) } :
-        node.type === "publish" ? { accountId, videoType: config.videoType === "shorts" ? "shorts" : "video", publishIntervalSeconds: Math.max(30, Math.min(604800,
+        node.type === "publish" ? { accountId, instagramType: ["image","reel","carousel"].includes(String(config.instagramType)) ? config.instagramType : undefined, instagramCaption:text("instagramCaption",2200), instagramRequireApproval:config.instagramRequireApproval !== false, imageUrl:text("imageUrl",500) && input.request.includes(text("imageUrl",500)) ? text("imageUrl",500) : "", videoUrl:text("videoUrl",500) && input.request.includes(text("videoUrl",500)) ? text("videoUrl",500) : "", instagramImages: Array.isArray(config.instagramImages) ? config.instagramImages.filter((url) => typeof url === "string" && input.request.includes(url)).slice(0,10) : [], videoType: config.videoType === "shorts" ? "shorts" : "video", publishIntervalSeconds: Math.max(30, Math.min(604800,
           Number.isInteger(config.publishIntervalSeconds) ? Number(config.publishIntervalSeconds) : 30)) } :
         node.type === "api_source" ? { connectionId, path: text("path", 300) || "/comments", itemsPath: "data.comments",
           idField: "id", textField: "text", contextField: "context", readMode: ["single", "batch", "post"].includes(String(config.readMode)) ? config.readMode : "single",

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { PersianDateTimeField } from "./persian-date-time-field";
+import { InstagramFields } from "./instagram-fields";
 import { BrandLogo } from "./brand-logo";
 import type { CalendarItem } from "@socialyar/shared";
 import { calendarLabels } from "./calendar-detail";
@@ -179,7 +181,7 @@ export function WorkflowBuilder() {
   const refreshYoutube = () => {
     if (!workflowId) return;
     void apiFetch(`/youtube/items?workflowId=${workflowId}`).then((r) => r.ok ? r.json() : []).then(setYoutubeItems).catch(()=>{});
-    void apiFetch(`/calendar/items?workflowId=${workflowId}`).then((r)=>r.ok?r.json():[]).then((items:CalendarItem[])=>setCollectionOutputs(items.filter((i)=>i.workflowId===workflowId && i.settings.collectionId && i.kind==="variant"))).catch(()=>{});
+    void apiFetch(`/calendar/items?workflowId=${workflowId}`).then((r)=>r.ok?r.json():[]).then((items:CalendarItem[])=>setCollectionOutputs(items.filter((i)=>i.workflowId===workflowId && i.kind==="variant"))).catch(()=>{});
   };
   useEffect(() => { refreshYoutube(); const timer = setInterval(refreshYoutube, 3000); return () => clearInterval(timer); }, [workflowId]);
   useEffect(() => { void apiFetch("/proxies").then((r) => r.ok ? r.json() : []).then(setSavedProxies).catch(() => {}); }, [selectedKey]);
@@ -953,7 +955,15 @@ export function WorkflowBuilder() {
           {["youtube", "telegram", "instagram"].includes(accounts.find((a) => a.id === selected.config.accountId)?.channel ?? "") ?
             <ConnectionSelector key={String(selected.config.accountId)} target={accounts.find((a) => a.id === selected.config.accountId)!.channel as "youtube" | "telegram" | "instagram"}
               value={selected.config.connection} onChange={(value) => update(selected.key, "connection", value)} /> : null}
-          <a href="/connections">اتصال کانال یوتیوب با گوگل</a>
+          <Link href="/connections">مدیریت اتصال کانال‌ها</Link>
+          {accounts.find((a) => a.id === selected.config.accountId)?.channel === "instagram" ? <>
+            <small className="builder-note">حساب مقصد فعال است؛ مجوز انتشار را با «تست اتصال» در صفحه کانال‌ها بررسی کنید.</small>
+            <InstagramFields settings={selected.config} caption={String(selected.config.instagramCaption ?? "")} setSetting={(key,value) => update(selected.key,key,value)} setCaption={(value) => update(selected.key,"instagramCaption",value)} inherited />
+            <label><span>تأیید انتشار</span><select value={selected.config.instagramRequireApproval === false ? "auto" : "review"} onChange={(e)=>update(selected.key,"instagramRequireApproval",e.target.value === "review")}><option value="review">پس از تأیید من</option><option value="auto">انتشار خودکار</option></select></label>
+            <div>زمان انتشار پیش‌فرض<PersianDateTimeField value={selected.config.scheduledAt} onChange={(value)=>update(selected.key,"scheduledAt",value)} /></div>
+            <small className="builder-note">برای مجموعه، زمان هر ردیف شیت استفاده می‌شود و ورود محتوا به تأیید نیاز دارد.</small>
+            <Link href="/calendar">پیش‌نمایش خروجی‌ها، تأیید و زمان‌بندی در تقویم</Link>
+          </> : null}
           {accounts.find((a) => a.id === selected.config.accountId)?.channel === "youtube" ? <YoutubePanel key={`${selected.key}-${selected.config.accountId}`} workflowId={workflowId} stepKey={selected.key}
             accountId={String(selected.config.accountId)} config={selected.config} update={(key, value) => update(selected.key, key, value)} items={youtubeItems} refresh={refreshYoutube} /> : null}
           {accounts.find((a) => a.id === selected.config.accountId)?.channel !== "youtube" ? <><label><span>فاصلهٔ انتشار در همین کانال</span><select

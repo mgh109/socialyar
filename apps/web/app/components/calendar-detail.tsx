@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { canMoveCalendarItem, type CalendarItem } from "@socialyar/shared";
+import { InstagramFields } from "./instagram-fields";
+import { instagramProblems, canMoveCalendarItem, type CalendarItem } from "@socialyar/shared";
 import { MediaPreview } from "./youtube-panel";
 import { ConnectionSelector } from "./connection-selector";
 import { ConnectionHistory } from "./connection-history";
@@ -33,13 +34,13 @@ export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, 
     <p>زمان انتشار: {item.scheduledAt ? new Date(item.scheduledAt).toLocaleString("fa-IR-u-ca-persian", { timeZone: timezone }) : "بدون زمان‌بندی"}</p>
     {error ? <p className="calendar-warning" role="alert">{error}</p> : null}{message ? <p className="calendar-success" role="status">{message}</p> : null}
     {item.overdue ? <p className="calendar-warning">زمان انتشار گذشته؛ نیازمند تعیین تکلیف</p> : null}
-    <MediaPreview mediaId={item.coverMediaId} url={item.imageUrl} /><MediaPreview video mediaId={item.videoMediaId} url={item.videoUrl} />
+    {item.channel !== "instagram" ? <><MediaPreview mediaId={item.coverMediaId} url={item.imageUrl} /><MediaPreview video mediaId={item.videoMediaId} url={item.videoUrl} /></> : null}
     <label>عنوان<input value={title} maxLength={item.kind === "youtube" ? 100 : 300} disabled={!editable || busy} onChange={(e) => { setTitle(e.target.value); setDirty(true); }} /></label>
-    <label>{item.kind === "youtube" ? "توضیحات" : "متن خروجی"}<textarea rows={8} value={body} disabled={!editable || busy} onChange={(e) => { setBody(e.target.value); setDirty(true); }} /></label>
+    {item.channel === "instagram" ? <InstagramFields settings={settings} caption={body} setSetting={setSetting} setCaption={(value) => { setBody(value); setDirty(true); }} disabled={!editable || busy} /> : <label>{item.kind === "youtube" ? "توضیحات" : "متن خروجی"}<textarea rows={8} value={body} disabled={!editable || busy} onChange={(e) => { setBody(e.target.value); setDirty(true); }} /></label>}
     {editable ? <><label>حساب مقصد<select value={accountId} disabled={busy} onChange={(e) => { setAccountId(e.target.value); setDirty(true); }}><option value="">انتخاب حساب</option>
       {accountId && !eligibleAccounts.some((a) => a.id === accountId) ? <option value={accountId} disabled>حساب فعلی غیرفعال است</option> : null}
       {eligibleAccounts.map((account) => <option key={account.id} value={account.id}>{account.displayName ?? account.externalAccountId}</option>)}</select></label>
-      <label>آدرس تصویر یا کاور<input dir="ltr" value={String(settings[item.kind === "youtube" ? "coverUrl" : "imageUrl"] ?? "")} onChange={(e) => setSetting(item.kind === "youtube" ? "coverUrl" : "imageUrl", e.target.value || null)} /></label>
+      {item.channel !== "instagram" ? <><label>آدرس تصویر یا کاور<input dir="ltr" value={String(settings[item.kind === "youtube" ? "coverUrl" : "imageUrl"] ?? "")} onChange={(e) => setSetting(item.kind === "youtube" ? "coverUrl" : "imageUrl", e.target.value || null)} /></label>
       {item.kind !== "youtube" ? <label>آدرس ویدئو<input dir="ltr" value={String(settings.videoUrl ?? "")} onChange={(e) => setSetting("videoUrl", e.target.value || null)} /></label> : <>
         <label>نوع محتوا<select value={String(settings.videoType ?? "video")} onChange={(e) => setSetting("videoType",e.target.value)}><option value="video">ویدئوی معمولی</option><option value="shorts">ویدئوی کوتاه / Shorts</option></select></label>
         <label>پلی‌لیست<input value={String(settings.playlist ?? "")} onChange={(e) => setSetting("playlist",e.target.value)} /></label>
@@ -47,9 +48,10 @@ export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, 
         <label>برچسب‌ها<input value={Array.isArray(settings.tags) ? settings.tags.join("،") : ""} onChange={(e) => setSetting("tags", e.target.value.split(/[,،]/).map((t) => t.trim()).filter(Boolean))} /></label>
         <label><input type="checkbox" checked={settings.madeForKids === true} onChange={(e) => setSetting("madeForKids", e.target.checked)} /> محتوای مخصوص کودکان</label>
       </>}
+      </> : null}
       {["youtube", "telegram", "instagram"].includes(item.channel) ? <ConnectionSelector target={item.channel as "youtube" | "telegram" | "instagram"} value={settings.connection} onChange={(value) => setSetting("connection", value)} /> : null}
       {dirty && stale ? <p className="calendar-warning">این آیتم در جای دیگری تغییر کرده است. پیش از ویرایش، نسخه تازه را دریافت کنید. <button type="button" onClick={reset}>بازخوانی</button></p> : null}
-      <button type="button" className="primary-button" disabled={busy || !dirty || !title.trim() || stale} onClick={() => void save()}>ذخیره تغییرات و ارسال برای تأیید</button>
+      <button type="button" className="primary-button" disabled={busy || !dirty || !title.trim() || stale || item.channel === "instagram" && instagramProblems(settings,body).length > 0} onClick={() => void save()}>ذخیره تغییرات و ارسال برای تأیید</button>
       {item.status === "draft" && !dirty && !item.approved ? <button type="button" disabled={busy} onClick={() => void mutate(item, "edit")}>ارسال برای تأیید</button> : null}
       {item.status === "draft" && item.approved ? <small>محتوا تأیید شده و آمادهٔ تعیین زمان انتشار است.</small> : null}
       {dirty ? <small>پس از ویرایش، محتوا دوباره نیازمند تأیید است.</small> : null}

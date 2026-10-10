@@ -117,10 +117,11 @@ export async function executePublication(input: {
       if(file.bytes.length>(variant.channel==="eitaa" ? variant.settings.videoUrl?20_000_000:5_000_000 : 50_000_000))throw new Error("حجم فایل برای مقصد بیش از حد مجاز است.");
       media=new Blob([new Uint8Array(file.bytes)],{type:file.type});
     }
+    let providerState = { ...variant.settings };
     sendAttempted=true;
     const result = await publishToChannel({
       media,providerState:variant.settings,
-      saveProviderState:async(state)=>{await db.update(contentVariants).set({settings:{...variant.settings,...state}}).where(eq(contentVariants.id,variant.id));},
+      saveProviderState:async(state)=>{providerState={...providerState,...state};await db.update(contentVariants).set({settings:providerState}).where(eq(contentVariants.id,variant.id));},
       fetch: transport?.fetch,
       publicationId: publication.id,
       channel: variant.channel,
@@ -128,6 +129,8 @@ export async function executePublication(input: {
       content: variant.body,
       imageUrl: typeof variant.settings.imageUrl === "string" ? variant.settings.imageUrl : null,
       videoUrl: typeof variant.settings.videoUrl === "string" ? variant.settings.videoUrl : null,
+      instagramType: typeof variant.settings.instagramType === "string" ? variant.settings.instagramType : undefined,
+      instagramImages: Array.isArray(variant.settings.instagramImages) ? variant.settings.instagramImages as string[] : undefined,
       credentials: typeof account.credentials.botTokenEnc === "string"
         ? { ...account.credentials, botToken: decryptSecret(account.credentials.botTokenEnc) }
         : typeof account.credentials.accessTokenEnc === "string" ? {...account.credentials,accessToken:decryptSecret(account.credentials.accessTokenEnc)} : account.credentials,

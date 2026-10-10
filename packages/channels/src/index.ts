@@ -1,3 +1,4 @@
+import { instagramProblems } from "@socialyar/shared";
 import type { Channel } from "@socialyar/shared";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
@@ -15,6 +16,8 @@ export type PublishRequest = {
   content: string;
   imageUrl?: string | null;
   videoUrl?: string | null;
+  instagramType?: string;
+  instagramImages?: string[];
   credentials: ChannelCredentials;
   externalAccountId?: string | null;
 };
@@ -316,12 +319,26 @@ async function publishInstagram(request:PublishRequest):Promise<PublishResult> {
   const endpoint=`${origin}/${version}`;const send=request.fetch??fetch;
   const headers={Authorization:`Bearer ${token}`};
   const json=async(response:Response)=>{const data=await response.json().catch(()=>null);if(!response.ok || data?.error)throw new Error(data?.error?.message ?? `Instagram HTTP ${response.status}`);if(!data)throw Object.assign(new Error("نتیجه انتشار اینستاگرام نامشخص است؛ مقصد را بررسی کنید."),{code:"DELIVERY_UNKNOWN"});return data;};
-  if(!request.videoUrl && !request.imageUrl)throw new Error("اینستاگرام به تصویر یا ویدئو نیاز دارد.");
-  const caption=request.title && request.content!==request.title ? `${request.title}\n\n${request.content}` : request.content;
-  if(caption.length>2200)throw new Error("کپشن اینستاگرام بیش از ۲۲۰۰ نویسه است.");
+  const caption=request.content;
+  const type=request.instagramType ?? (request.videoUrl ? "reel" : "image");
+  const problems=instagramProblems({instagramType:type,imageUrl:request.imageUrl,videoUrl:request.videoUrl,instagramImages:request.instagramImages},caption);
+  if(problems.length)throw new Error(problems.join(" "));
+  if(!request.saveProviderState)throw new Error("ذخیره وضعیت آماده‌سازی اینستاگرام ضروری است.");
   let container=typeof request.providerState?.instagramContainerId==="string" ? request.providerState.instagramContainerId : undefined;
   if(!container){
-    const parameters=new URLSearchParams({caption,...(request.videoUrl ? {media_type:"REELS",video_url:request.videoUrl,...(request.imageUrl?{cover_url:request.imageUrl}:{})} : {image_url:request.imageUrl!})});
+    let children = Array.isArray(request.providerState?.instagramChildren) ? request.providerState.instagramChildren as string[] : [];
+    if(type === "carousel") {
+      for(let i=children.length;i<request.instagramImages!.length;i++) {
+        const child=await json(await send(`${endpoint}/${account}/media`,{method:"POST",headers,body:new URLSearchParams({image_url:request.instagramImages![i],is_carousel_item:"true"}),signal:AbortSignal.timeout(30000)}));
+        if(typeof child.id!=="string")throw new Error("شناسه تصویر آلبوم دریافت نشد.");
+        children=[...children,child.id];await request.saveProviderState!({instagramChildren:children});
+      }
+      for(const id of children) {
+        const child=await json(await send(`${endpoint}/${id}?fields=status_code`,{headers,signal:AbortSignal.timeout(15000)}));
+        if(child.status_code!=="FINISHED")throw new Error(child.status_code==="IN_PROGRESS" ? "اینستاگرام در حال آماده‌سازی ویدئو است؛ بعداً دوباره تلاش کنید." : "آماده‌سازی تصویر آلبوم ناموفق بود.");
+      }
+    }
+    const parameters=new URLSearchParams({caption,...(type === "carousel" ? {media_type:"CAROUSEL",children:children.join(",")} : type === "reel" ? {media_type:"REELS",video_url:request.videoUrl!,...(request.imageUrl?{cover_url:request.imageUrl}:{})} : {image_url:request.imageUrl!})});
     const data=await json(await send(`${endpoint}/${account}/media`,{method:"POST",headers,body:parameters,signal:AbortSignal.timeout(30000)}));
     if(typeof data.id!=="string")throw new Error("شناسه آماده‌سازی اینستاگرام دریافت نشد.");container=data.id;
     if(!request.saveProviderState)throw new Error("ذخیره وضعیت آماده‌سازی اینستاگرام ضروری است.");

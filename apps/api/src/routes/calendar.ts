@@ -1,13 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { calendarStatus, assertCalendarAction, type CalendarItem } from "@socialyar/shared";
+import { instagramProblems, calendarStatus, assertCalendarAction, type CalendarItem } from "@socialyar/shared";
 import { getDb, contentVariants, contentItems, publications, schedules, socialAccounts, workflows, runs, approvals, youtubeItems,
   calendarActions, validateConnectionPolicy, readYoutubeMedia, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 import { policySchema } from "./proxies";
 
-const settingsSchema = z.object({ imageUrl: z.string().url().nullable().optional(), videoUrl: z.string().url().nullable().optional(),
+const settingsSchema = z.object({ instagramType: z.enum(["image", "reel", "carousel"]).optional(), instagramImages: z.array(z.string().url()).max(10).optional(), imageUrl: z.string().url().nullable().optional(), videoUrl: z.string().url().nullable().optional(),
   coverUrl: z.string().url().nullable().optional(), privacy: z.enum(["public", "private", "unlisted"]).optional(),
   tags: z.array(z.string().max(100)).max(50).optional(), videoType: z.enum(["video", "shorts"]).optional(), playlist: z.string().max(150).optional(), madeForKids: z.boolean().optional(), connection: policySchema.optional() });
 const mutationSchema = z.object({ action: z.enum(["edit", "schedule", "unschedule", "stop", "approve", "reject", "retry"]),
@@ -157,7 +157,11 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
           if (input.action === "retry" && !approved) throw new CalendarConflict("محتوا پیش از ارسال نیازمند تأیید است.");
           const settings: Record<string, unknown> = { ...variant.settings, ...(input.action === "edit" ? input.settings : {}), calendarPaused: input.action === "stop" || input.action === "reject",
             calendarUnscheduled: input.action === "unschedule", calendarHold: !approved || input.action === "unschedule" };
-          if (input.action === "edit") delete settings.instagramContainerId;
+          if (input.action === "edit") { delete settings.instagramContainerId; delete settings.instagramChildren; }
+          if (variant.channel === "instagram" && ["edit", "approve", "schedule", "retry"].includes(input.action)) {
+            const problems = instagramProblems(settings, input.body ?? variant.body);
+            if (problems.length) throw new CalendarConflict(problems.join(" "));
+          }
           if (input.action === "edit" && input.settings?.connection) await validateConnectionPolicy(auth.workspaceId, input.settings.connection);
           const accountId = input.accountId ?? publication?.socialAccountId ?? string(variant.settings.accountId);
           if (accountId && !["stop", "reject", "unschedule"].includes(input.action)) {
@@ -165,7 +169,7 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
             if (!account) throw new CalendarConflict("حساب مقصد فعال و معتبر نیست.");
             settings.accountId = account.id; settings.accountName = account.displayName ?? account.externalAccountId;
           }
-          const date = input.action === "schedule" ? new Date(input.scheduledAt!) : input.action === "unschedule" ? null : input.action === "retry" ? new Date(Math.max(Date.now(), dateBefore?.getTime() ?? 0)) : dateBefore;
+          const date = input.action === "schedule" ? new Date(input.scheduledAt!) : input.action === "unschedule" ? null : input.action === "retry" ? new Date(Math.max(Date.now(), dateBefore?.getTime() ?? 0)) : input.action === "approve" && variant.channel === "instagram" && settings.instagramImmediate === true && !dateBefore ? new Date(Date.now()+1000) : dateBefore;
           const stopped = input.action === "stop" || input.action === "reject";
           const nextContent = input.action === "reject" ? "rejected" : approved ? date && !stopped ? "scheduled" : "approved" : "waiting_approval";
           const queued = Boolean(approved && date && !stopped);

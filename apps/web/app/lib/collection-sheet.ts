@@ -50,7 +50,9 @@ export function mapCollectionRows(sheet: SheetData, mapping: ColumnMapping, defa
       if (privacy && !privacies[privacy]) throw new Error("وضعیت نمایش معتبر نیست.");
       if (kids && !["true", "false", "بله", "خیر", "1", "0"].includes(kids)) throw new Error("مخصوص کودکان را بله یا خیر وارد کنید.");
       const specific=Object.fromEntries(["youtubeDescription","instagramCaption","telegramText","eitaaText","baleText"].filter((key)=>(mapping[key]??-1)>=0).map((key)=>[key,get(key)]));
-      const row = collectionRowSchema.parse({ ...defaults,...specific, id: get("id"), order: get("order") ? Number(latinDigits(get("order"))) : index + 1,
+      const row = collectionRowSchema.parse({ ...defaults,...specific,
+        ...((mapping.instagramType ?? -1) >= 0 ? {instagramType:get("instagramType") || undefined} : {}),
+        ...((mapping.instagramImages ?? -1) >= 0 ? {instagramImages:get("instagramImages").split(/\n|\|/).map((value)=>value.trim()).filter(Boolean)} : {}), id: get("id"), order: get("order") ? Number(latinDigits(get("order"))) : index + 1,
         title: get("title"), description: get("description"), videoUrl: get("videoUrl"), coverUrl: get("coverUrl"), scheduledAt,
         videoType: type ? videoTypes[type] : defaults.videoType ?? "video", privacy: privacy ? privacies[privacy] : defaults.privacy ?? "private",
         playlist: get("playlist") || defaults.playlist || "", tags: get("tags") ? get("tags").split(/[,،]/).map((v) => v.trim()).filter(Boolean) : defaults.tags ?? [],
@@ -93,7 +95,7 @@ export async function downloadCollectionTemplate() {
     const note = key === "order" ? "اگر خالی باشد، ترتیب ردیف استفاده می‌شود." : key === "date" ? "شمسی؛ اگر خالی باشد زمان را در کارت تعیین کنید." : key === "time" ? "با تاریخ استفاده شود؛ در صورت خالی‌بودن، ۱۸:۰۰ به وقت تهران." :
       key === "videoType" ? "video یا shorts؛ اگر خالی باشد از تنظیم کارت استفاده می‌شود." : key === "privacy" ? "private / public / unlisted؛ اگر خالی باشد از تنظیم کارت استفاده می‌شود." :
       key === "madeForKids" ? "بله / خیر یا true / false؛ اگر خالی باشد از تنظیم کارت استفاده می‌شود." : key === "tags" ? "برچسب‌ها با ویرگول جدا شوند." :
-      key === "playlist" ? "نام پلی‌لیست یا شناسه PL…؛ خالی یعنی استفاده از تنظیم کارت در صورت وجود." : key === "description" ? "متن مشترک؛ متن اختصاصی هر شبکه بر آن اولویت دارد." :
+      key === "instagramType" ? "image برای پست، reel برای ریلز یا carousel برای آلبوم؛ خالی یعنی تشخیص از رسانه." : key === "instagramImages" ? "۲ تا ۱۰ لینک تصویر JPEG؛ هر لینک در یک خط یا جداشده با |." : key === "playlist" ? "نام پلی‌لیست یا شناسه PL…؛ خالی یعنی استفاده از تنظیم کارت در صورت وجود." : key === "description" ? "متن مشترک؛ متن اختصاصی هر شبکه بر آن اولویت دارد." :
       ["youtubeDescription", "instagramCaption", "telegramText", "eitaaText", "baleText"].includes(key) ? "فقط برای همین شبکه؛ خالی یعنی استفاده از توضیحات مشترک." :
       key === "coverUrl" ? "لینک تصویر/کاور؛ برای اینستاگرام حداقل تصویر یا ویدئو لازم است." : key === "videoUrl" ? "لینک عمومی فایل واقعی ویدئو." : key === "id" ? "شناسه متنی ثابت و یکتا." : "عنوان محتوا.";
     help.addRow([label, requirement, note]);

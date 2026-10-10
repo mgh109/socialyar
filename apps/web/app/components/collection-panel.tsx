@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { InstagramFields } from "./instagram-fields";
 import { useEffect, useState } from "react";
 import { collectionColumns, collectionRowsSchema, validateCollectionDestination, type CollectionRow, type CollectionChange, type CollectionRecord, type CalendarItem } from "@socialyar/shared";
 import { apiFetch } from "../lib/session";
@@ -143,8 +144,9 @@ export function CollectionPanel({ workflowId, stepKey, targets, config, update, 
         <label>عنوان<input maxLength={100} value={row.title} onChange={(e) => change(row.id,{ title:e.target.value })} /></label>
         <label>توضیحات<textarea maxLength={5000} value={row.description} onChange={(e) => change(row.id,{ description:e.target.value })} /></label>
         <details><summary>متن اختصاصی شبکه‌ها (اختیاری)</summary>{(["youtubeDescription","instagramCaption","telegramText","eitaaText","baleText"] as const).map((key)=><label key={key}>{collectionColumns.find(([field])=>field===key)?.[1]}<textarea value={row[key]??""} onChange={(e)=>change(row.id,{[key]:e.target.value})} /></label>)}<small>فیلد خالی از توضیحات مشترک استفاده می‌کند.</small></details>
-        <label>لینک ویدئو<input dir="ltr" value={row.videoUrl} onChange={(e) => change(row.id,{ videoUrl:e.target.value })} /></label>
-        <label>لینک تصویر / کاور<input dir="ltr" value={row.coverUrl} onChange={(e) => change(row.id,{ coverUrl:e.target.value })} /></label>
+        {String(target?.config.collectionChannel) !== "instagram" ? <label>لینک ویدئو<input dir="ltr" value={row.videoUrl} onChange={(e) => change(row.id,{ videoUrl:e.target.value })} /></label> : null}
+        {String(target?.config.collectionChannel) === "instagram" ? <InstagramFields settings={{instagramType:row.instagramType,instagramImages:row.instagramImages,imageUrl:row.coverUrl,videoUrl:row.videoUrl}} caption={row.instagramCaption || row.description} setCaption={(value)=>change(row.id,{instagramCaption:value})} setSetting={(key,value)=>change(row.id,{[key === "imageUrl" ? "coverUrl" : key]:value ?? ""})} /> : null}
+        {String(target?.config.collectionChannel) !== "instagram" ? <label>لینک تصویر / کاور<input dir="ltr" value={row.coverUrl} onChange={(e) => change(row.id,{ coverUrl:e.target.value })} /></label> : null}
         {isYoutube ? <><label>نوع محتوا<select value={row.videoType} onChange={(e) => change(row.id,{ videoType:e.target.value as CollectionRow["videoType"] })}><option value="video">ویدئوی معمولی</option><option value="shorts">ویدئوی کوتاه / Shorts</option></select></label>
         <label>پلی‌لیست<input value={row.playlist} onChange={(e) => change(row.id,{ playlist:e.target.value })} /></label>
         <label>برچسب‌ها<input value={row.tags.join("، ")} onChange={(e) => change(row.id,{ tags:e.target.value.split(/[,،]/).map((t) => t.trim()).filter(Boolean) })} /></label>

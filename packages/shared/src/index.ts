@@ -8,3 +8,5 @@ export const runStatusSchema = z.enum(["queued", "running", "waiting_approval", 
 export type RunStatus = z.infer<typeof runStatusSchema>;
 export * from "./content-collection";
 export * from "./google-sheet";
+
+export * from "./instagram";

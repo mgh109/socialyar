@@ -55,7 +55,11 @@ export async function applyCollectionDestination(db: Db, auth:{workspaceId:strin
         const settings:Record<string,unknown>={...old?.variant.settings,accountId:target.account.id,accountName:target.account.displayName ?? target.account.externalAccountId,
           connection:old?.variant.settings.connection ?? target.step.config.connection,mediaConnection:target.source.config.mediaConnection,
           collectionId:collection.id,collectionSourceKey:input.sourceStepKey,collectionRowId:row.id,workflowId:input.workflowId,publishStepKey:input.targetStepKey,calendarHold:true,calendarPaused:false};
-        delete settings.instagramContainerId;
+        delete settings.instagramContainerId; delete settings.instagramChildren;
+        if(target.account.channel === "instagram") {
+          if(!old || change.fields.includes("instagramType")) settings.instagramType=row.instagramType ?? target.step.config.instagramType;
+          if(!old || change.fields.includes("instagramImages")) settings.instagramImages=row.instagramImages ?? target.step.config.instagramImages ?? [];
+        }
         for(const [field,key] of [["videoUrl","videoUrl"],["coverUrl","imageUrl"],["videoType","videoType"]] as const) if(!old || change.fields.includes(field)) settings[key]=row[field] || null;
         const title=!old || change.fields.includes("title") ? row.title : old.variant.title;
         const body=!old || collectionTextChanged(change.fields,target.account.channel) || change.fields.includes("title") && !row.description ? collectionBody(row,target.account.channel) : old.variant.body;

@@ -51,3 +51,21 @@ test("per-network text columns map independently while old spreadsheets preserve
   const {inferMapping,mapCollectionRows}=await import("../../web/app/lib/collection-sheet");const {collectionBody}=await import("../../../packages/shared/src/index");
   const sheet={headers:["شناسه محتوا","عنوان","متن","کپشن اینستاگرام","متن تلگرام"],rows:[["id","عنوان","متن مشترک","کپشن مستقل","متن تلگرام مستقل"]]};const {rows,errors}=mapCollectionRows(sheet,inferMapping(sheet.headers));assert.equal(errors.length,0);assert.equal(collectionBody(rows[0],"instagram"),"کپشن مستقل");assert.equal(collectionBody(rows[0],"telegram"),"متن تلگرام مستقل");assert.equal(collectionBody(rows[0],"bale"),"متن مشترک");assert.equal(rows[0].youtubeDescription,undefined);
 });
+
+test("Instagram carousel persists children and parent and retries without recreating media",async()=>{
+  let persisted:Record<string,unknown>={};let creations=0;let pending=true;let published=0;
+  const request={channel:"instagram" as const,instagramType:"carousel",instagramImages:["https://files.example/1.jpg","https://files.example/2.jpg"],content:"کپشن",title:"نباید تکرار شود",externalAccountId:"123",credentials:{accessToken:"test",apiVersion:"v25.0"},saveProviderState:async(state:Record<string,unknown>)=>{persisted={...persisted,...state};},fetch:mockFetch((url,init)=>{
+    if(url.endsWith("/media")){creations++;const params=init?.body as URLSearchParams;if(creations<=2)assert.equal(params.get("is_carousel_item"),"true");else{assert.equal(params.get("media_type"),"CAROUSEL");assert.equal(params.get("children"),"c1,c2");assert.equal(params.get("caption"),"کپشن");}return ok({id:`c${creations}`});}
+    if(url.includes("status_code"))return ok({status_code:url.includes("/c3?") && pending ? "IN_PROGRESS":"FINISHED"});
+    if(url.endsWith("media_publish")){published++;return ok({id:"remote"});}return ok({permalink:"https://www.instagram.com/p/test/"});
+  })};
+  await assert.rejects(()=>publishToChannel(request),/آماده‌سازی/);assert.equal(creations,3);assert.equal(published,0);pending=false;
+  await publishToChannel({...request,providerState:persisted});assert.equal(creations,3);assert.equal(published,1);
+});
+test("Instagram validates carousel count and media type before any provider call",async()=>{
+  const {instagramProblems}=await import("../../../packages/shared/src/index");
+  assert.ok(instagramProblems({instagramType:"carousel",instagramImages:["https://files.example/a.jpg"]},"caption").length);
+  assert.ok(instagramProblems({instagramType:"reel",imageUrl:"https://files.example/a.jpg"},"caption").length);
+  assert.ok(instagramProblems({instagramType:"image",imageUrl:"http://files.example/a.jpg"},"caption").length);
+  assert.equal(instagramProblems({instagramType:"image",imageUrl:"https://files.example/a.jpg"},"caption").length,0);
+});

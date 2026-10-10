@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { Queue } from "bullmq";
-import { contentItems, contentVariants, getDb, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows, youtubeItems, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
+import { contentItems, contentVariants, getDb, schedules, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows, youtubeItems, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
 import { connection, reservePublicationSlot } from "./queue";
 
 const publicationQueue = new Queue("publication-jobs", { connection });
@@ -80,6 +80,9 @@ export async function enqueueAutoPublication(runId: string) {
     if (!account || !["eitaa", "telegram", "bale", "instagram", "website"].includes(account.channel))
       throw new Error("مقصد انتشار معتبر یا فعال نیست");
 
+    const needsInstagramApproval = account.channel === "instagram" && publishStep.config.instagramRequireApproval !== false;
+    const instagramDate = account.channel === "instagram" && typeof publishStep.config.scheduledAt === "string" && publishStep.config.scheduledAt ? new Date(publishStep.config.scheduledAt) : null;
+    if (instagramDate && (!Number.isFinite(instagramDate.getTime()) || instagramDate.getTime() <= Date.now())) throw new Error("زمان انتشار اینستاگرام گذشته یا نامعتبر است؛ زمان تازه تعیین کنید.");
     const existing = await db.select().from(contentItems).where(eq(contentItems.runId, runId));
     let content = existing.find((item) => item.metadata.publishStepKey === publishStep.key) ??
       (publishSteps.length === 1 ? existing.find((item) => !item.metadata.publishStepKey) : undefined);
@@ -94,9 +97,9 @@ export async function enqueueAutoPublication(runId: string) {
       eq(contentVariants.contentItemId, content.id), eq(contentVariants.channel, account.channel))).limit(1);
     if (!variant) {
       [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: account.channel,
-        title: content.title, body: generated.text,
-        settings: { imageUrl: generated.imageUrl ?? null, videoUrl: generated.videoUrl ?? null, connection: publishStep.config.connection,
-          publishIntervalSeconds }, status: "approved", generatedBy: "ai" }).returning();
+        title: content.title, body: account.channel === "instagram" ? String(publishStep.config.instagramCaption || generated.text) : generated.text,
+        settings: { ...(account.channel === "instagram" ? {instagramType:publishStep.config.instagramType,instagramImages:publishStep.config.instagramImages} : {}), imageUrl: publishStep.config.imageUrl || generated.imageUrl || null, videoUrl: publishStep.config.videoUrl || generated.videoUrl || null, connection: publishStep.config.connection,
+          publishIntervalSeconds, ...(account.channel === "instagram" ? {calendarHold:needsInstagramApproval,instagramImmediate:!instagramDate,accountId:account.id,accountName:account.displayName ?? account.externalAccountId} : {}) }, status: needsInstagramApproval ? "waiting_approval" : "approved", generatedBy: "ai" }).returning();
     } else if (variant.settings.publishIntervalSeconds !== publishIntervalSeconds) {
       [variant] = await db.update(contentVariants).set({ settings: { ...variant.settings, publishIntervalSeconds } })
         .where(eq(contentVariants.id, variant.id)).returning();
@@ -104,12 +107,13 @@ export async function enqueueAutoPublication(runId: string) {
     let [publication] = await db.select().from(publications)
       .where(eq(publications.contentVariantId, variant.id)).limit(1);
     if (!publication) {
+      const [instagramSchedule] = account.channel === "instagram" && instagramDate ? await db.insert(schedules).values({workspaceId:row.workspaceId,contentVariantId:variant.id,socialAccountId:account.id,scheduledAt:instagramDate!,timezone:"Asia/Tehran",status:"scheduled"}).returning() : [];
       [publication] = await db.insert(publications).values({ workspaceId: row.workspaceId,
-        contentVariantId: variant.id, socialAccountId: account.id, status: "queued" }).returning();
+        contentVariantId: variant.id, socialAccountId: account.id, scheduleId:instagramSchedule?.id, status: needsInstagramApproval ? "cancelled" : "queued" }).returning();
     }
     if (["published", "publishing", "cancelled", "failed"].includes(publication.status) || publication.queueVersion > 0) continue;
     if (await publicationQueue.getJob(`publication-${publication.id}`)) continue;
-    const delay = await reservePublicationSlot(account.id, publishIntervalSeconds);
+    const delay = Math.max(await reservePublicationSlot(account.id, publishIntervalSeconds), instagramDate ? instagramDate.getTime()-Date.now() : 0);
     await db.update(contentVariants).set({ settings: { ...variant.settings, pacedInQueue: true } })
       .where(eq(contentVariants.id, variant.id));
     await publicationQueue.add("publish-content", { publicationId: publication.id }, {

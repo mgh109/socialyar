@@ -1,3 +1,4 @@
+import { instagramProblems } from "./instagram";
 import { z } from "zod";
 const mediaUrl = z.string().trim().url().refine((value) => {
   try { const u = new URL(value); return u.protocol === "https:" && !u.username && !u.password && !u.port; } catch { return false; }
@@ -5,6 +6,7 @@ const mediaUrl = z.string().trim().url().refine((value) => {
 export const collectionRowSchema = z.object({
   id: z.string().trim().min(1).max(100), order: z.number().int().min(1).max(10000),
   title: z.string().trim().min(1).max(100), description: z.string().max(5000).default(""),
+  instagramType:z.enum(["image","reel","carousel"]).optional(), instagramImages:z.array(mediaUrl).max(10).optional(),
   youtubeDescription:z.string().max(5000).optional(),instagramCaption:z.string().max(2200).optional(),
   telegramText:z.string().max(4096).optional(),eitaaText:z.string().max(5000).optional(),baleText:z.string().max(4096).optional(),
   videoUrl: z.union([mediaUrl, z.literal("")]).default(""), coverUrl: z.union([mediaUrl, z.literal("")]).default(""),
@@ -61,6 +63,7 @@ export function dropboxDownloadUrl(raw: string) {
 export const collectionColumns = [
   ["id", "شناسه محتوا"], ["order", "ترتیب قسمت"], ["title", "عنوان"], ["description", "توضیحات"],
   ["videoUrl", "لینک ویدئو"], ["coverUrl", "لینک کاور"], ["date", "تاریخ انتشار شمسی"], ["time", "ساعت انتشار"],
+  ["instagramType","نوع انتشار اینستاگرام"],["instagramImages","تصاویر آلبوم اینستاگرام"],
   ["youtubeDescription","توضیحات یوتیوب"],["instagramCaption","کپشن اینستاگرام"],["telegramText","متن تلگرام"],["eitaaText","متن ایتا"],["baleText","متن بله"],
   ["videoType", "نوع محتوا"], ["playlist", "پلی‌لیست"], ["tags", "برچسب‌ها"], ["privacy", "وضعیت نمایش"], ["madeForKids", "مخصوص کودکان"],
 ] as const;
@@ -78,9 +81,9 @@ export function validateCollectionDestination(rows: CollectionRow[], channel: st
   if (!collectionDestinations.includes(channel as typeof collectionDestinations[number])) throw new Error("این مقصد برای مجموعه محتوا پشتیبانی نمی‌شود.");
   for (const row of rows) {
     if (channel === "youtube" && !row.videoUrl) throw new Error(`«${row.title}»: یوتیوب به لینک ویدئو نیاز دارد.`);
-    if (channel === "instagram" && !row.videoUrl && !row.coverUrl) throw new Error(`«${row.title}»: اینستاگرام به تصویر یا ویدئو نیاز دارد.`);
+    if (channel === "instagram") { const problems=instagramProblems({instagramType:row.instagramType,instagramImages:row.instagramImages,imageUrl:row.coverUrl,videoUrl:row.videoUrl},collectionBody(row,channel)); if(problems.length)throw new Error(`«${row.title}»: ${problems.join(" ")}`); }
     const text = `${row.title}\n\n${collectionBody(row,channel)}`;
     if (["telegram", "bale"].includes(channel) && text.length > (row.videoUrl || row.coverUrl ? 1024 : 4096)) throw new Error(`«${row.title}»: متن از محدودیت مقصد طولانی‌تر است.`);
-    if (channel === "instagram" && text.length > 2200) throw new Error(`«${row.title}»: کپشن اینستاگرام حداکثر ۲۲۰۰ نویسه است.`);
+    if (channel === "instagram" && collectionBody(row,channel).length > 2200) throw new Error(`«${row.title}»: کپشن اینستاگرام حداکثر ۲۲۰۰ نویسه است.`);
   }
 }
