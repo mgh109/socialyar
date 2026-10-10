@@ -1576,3 +1576,15 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .workflow-start-card:hover, .workflow-start-card:focus-visible { border-color: #378d71; }
 .workflow-start-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-block-start: 16px; }
 @media (max-width: 700px) { .workflow-start-grid { grid-template-columns: 1fr; } }
+
+/* Compact canvas health and reversible edit feedback. */
+.graph-sync-status { display:inline-flex; align-items:center; gap:5px; direction:rtl; color:var(--muted); font-size:11px; white-space:nowrap; }
+.graph-sync-status > span { color:var(--green); font-size:8px; }
+.graph-sync-status.stale, .graph-sync-status.stale > span { color:var(--amber); }
+.builder-recovery-inline { display:inline-flex; align-items:center; gap:8px; min-width:0; color:var(--muted); font-size:12px; }
+.builder-recovery-inline > span { max-width:190px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.builder-recovery-inline .ghost-button { padding:5px 8px; font-size:12px; }
+.graph-node .graph-node-description { white-space:normal; overflow-wrap:anywhere; text-overflow:clip; direction:auto; line-height:1.55; max-height:34px; overflow:auto; scrollbar-width:thin; }
+.graph-node:has(.graph-node-description) { padding-top:10px; }
+.graph-node:has(.graph-node-description) > strong { margin-top:4px; }
+@media(max-width:700px) { .graph-canvas-controls { flex-wrap:wrap; gap:8px; } .graph-canvas-meta { flex-wrap:wrap; justify-content:flex-start; } .graph-sync-status { font-size:10px; } }

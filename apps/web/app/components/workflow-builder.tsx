@@ -717,9 +717,27 @@ export function WorkflowBuilder() {
     finally { setBusy(false); }
   };
   const stroke = (from: Position, to: Position) => `M ${from.x} ${from.y} C ${from.x - 92} ${from.y}, ${to.x + 92} ${to.y}, ${to.x} ${to.y}`;
+  const cardDescription = (step: Step) => step.type === "rss_source" ?
+            String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
+            step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
+            step.type === "publish" ? publishAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "مقصد را انتخاب کن" :
+            step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال سرویس را انتخاب کن" :
+            step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
+            step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
+            step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "تأیید پیش از ادامه" : "به کارت‌های دیگر وصل کن";
   return <main className="workflow-page builder-page">
     <header className="app-header"><div className="brand-lockup"><BrandLogo /><span>میز کار / {name}</span></div>
-      <div className="header-actions"><span className="save-status" role="status">{dirty ? "تغییرات ذخیره نشده · " : ""}{message}</span>
+      <div className="header-actions"><span className="save-status" role="status">{dirty ? "تغییرات ذخیره نشده · " : ""}{removedCard && message === "کارت حذف شد؛ تغییرات را ذخیره کن." ? "" : message}</span>
+        {removedCard ? <div className="builder-recovery-inline" role="status"><span title={`کارت «${removedCard.step.name}» حذف شد؛ تغییر هنوز ذخیره نشده است.`}>«{removedCard.step.name}» حذف شد</span>
+      <button className="ghost-button" onClick={() => {
+        const restored = removedCard;
+        if (!steps.some((step) => step.key === restored.step.key)) setSteps((current) => [...current, restored.step]);
+        setEdges((current) => [...current, ...restored.edges.filter((edge) =>
+          [restored.step.key, ...steps.map((step) => step.key)].includes(edge.sourceKey) &&
+          [restored.step.key, ...steps.map((step) => step.key)].includes(edge.targetKey) &&
+          !current.some((existing) => existing.sourceKey === edge.sourceKey && existing.targetKey === edge.targetKey))]);
+        setSelectedKey(restored.step.key); setRemovedCard(null); setMessage("کارت و اتصال‌ها بازگردانده شدند؛ تغییرات را ذخیره کن.");
+      }}>بازگردانی</button></div> : null}
         <details className="workflow-settings-menu"><summary>تنظیمات جریان</summary><div className="workflow-settings-popover">
           <strong>تنظیمات عمومی</strong>
           <label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
@@ -738,18 +756,6 @@ export function WorkflowBuilder() {
             {autoEnabled ? "توقف پایش" : "فعال‌سازی خودکار"}</button>}
       </div></header>
     {goalSteps ? <section className="builder-goal-help"><strong>برای اولین نتیجه</strong><p>{goalSteps}</p><Link href="/connections">مدیریت کانال‌ها</Link> · <Link href="/settings/ai">تنظیم مدل هوش مصنوعی</Link></section> : null}
-    {workflowId ? <p className="builder-health" role="status">{outputStale ? "دریافت وضعیت خروجی‌ها ناموفق یا قدیمی است. " : ""}آخرین دریافت کامل خروجی‌ها: {outputUpdatedAt ? new Date(outputUpdatedAt).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran" }) : "هنوز دریافت نشده"}</p> : null}
-    {liveStale ? <p className="builder-health" role="status">ارتباط با وضعیت زنده برقرار نیست. اطلاعات قبلی را نتیجهٔ جاری فرض نکنید؛ دریافت خودکار دوباره تلاش می‌کند.</p> : null}
-    {removedCard ? <div className="builder-recovery" role="status"><span>کارت «{removedCard.step.name}» از بوم حذف شد؛ تا ذخیره، نسخهٔ سرور تغییر نکرده است.</span>
-      <button className="ghost-button" onClick={() => {
-        const restored = removedCard;
-        if (!steps.some((step) => step.key === restored.step.key)) setSteps((current) => [...current, restored.step]);
-        setEdges((current) => [...current, ...restored.edges.filter((edge) =>
-          [restored.step.key, ...steps.map((step) => step.key)].includes(edge.sourceKey) &&
-          [restored.step.key, ...steps.map((step) => step.key)].includes(edge.targetKey) &&
-          !current.some((existing) => existing.sourceKey === edge.sourceKey && existing.targetKey === edge.targetKey))]);
-        setSelectedKey(restored.step.key); setRemovedCard(null);
-      }}>بازگردانی کارت و اتصال‌ها</button></div> : null}
     <div className="builder-layout"><section className="builder-workspace" aria-label="بوم جریان">
       <div className="graph-frame"><div className="graph-canvas-controls"><div className="graph-canvas-actions">
         {!workflowId ? <button type="button" className="graph-icon-action graph-ai-create" onClick={() => setGeneratorOpen(true)}>✦ ساخت با هوش مصنوعی</button> : null}
@@ -773,6 +779,10 @@ export function WorkflowBuilder() {
             </> : <span>هنوز مصرفی برای این جریان ثبت نشده است.</span>}
             <Link href="/analytics">آمار همهٔ جریان‌ها ←</Link>
           </div></details> : null}
+        {workflowId ? <span className={`graph-sync-status ${outputStale || liveStale ? "stale" : ""}`} role="status"
+          title={`${outputStale ? "وضعیت خروجی‌ها قدیمی یا دریافت ناموفق است. " : ""}${liveStale ? "ارتباط با وضعیت زنده برقرار نیست. " : ""}آخرین دریافت کامل خروجی‌ها: ${outputUpdatedAt ? new Date(outputUpdatedAt).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran" }) : "هنوز دریافت نشده"}`}>
+          <span aria-hidden="true">{outputStale || liveStale ? "◌" : "●"}</span> {outputStale || liveStale ? "دریافت ناموفق" : "دریافت"} {outputUpdatedAt ? <time dateTime={new Date(outputUpdatedAt).toISOString()}>{new Date(outputUpdatedAt).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran", hour: "2-digit", minute: "2-digit" })}</time> : "در انتظار"}
+        </span> : null}
         {activity && (activity.publication || activity.queueCount || activity.run) ? <details className="graph-activity"><summary title="آخرین فعالیت همین جریان" aria-label="آخرین فعالیت همین جریان">فعالیت</summary><div><strong>آخرین فعالیت همین جریان</strong><span>{activity.publication?.status === "published" ? "منتشر شد" :
         activity.publication?.status === "failed" ? "ارسال ناموفق" : activity.publication ? "در صف انتشار" : activity.run?.status ?? "بدون خبر"}
         {activity.queueCount ? ` · ${activity.queueCount.toLocaleString("fa-IR")} خبر در صف` : ""}</span>
@@ -859,16 +869,9 @@ export function WorkflowBuilder() {
               </div></details></div>
           <span className="graph-role-label">{stepActivity(step) ? <><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</> :
             isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>
-          <strong>{step.type === "publish" && accounts.find((a) => a.id === step.config.accountId)?.channel === "youtube" ? <><YoutubeIcon /> یوتیوب</> : step.type === "publish" ? "انتشار شبکه‌ها" : step.name}</strong>
+          <strong title={step.name}>{step.type === "publish" && accounts.find((a) => a.id === step.config.accountId)?.channel === "youtube" ? <><YoutubeIcon /> یوتیوب</> : step.type === "publish" ? "انتشار شبکه‌ها" : step.name}</strong>
           {youtubeItems.find((i) => i.stepKey === step.key)?.status === "published" ? <a onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer" href={`https://www.youtube.com/watch?v=${youtubeItems.find((i) => i.stepKey === step.key)?.videoId}`}>مشاهده در یوتیوب</a> : null}
-          <small title={step.type === "rss_source" ? String(step.config.feedUrl ?? step.config.channel ?? "") : undefined}>{step.type === "rss_source" ?
-            String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
-            step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
-            step.type === "publish" ? publishAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "مقصد را انتخاب کن" :
-            step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال سرویس را انتخاب کن" :
-            step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
-            step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
-            step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "تأیید پیش از ادامه" : "به کارت‌های دیگر وصل کن"}</small>
+          <small className="graph-node-description" title={cardDescription(step)}>{cardDescription(step)}</small>
           {step.type === "rss_source" ? <div className="graph-source-footer graph-source-schedule"><span>{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
