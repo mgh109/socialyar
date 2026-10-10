@@ -1,7 +1,9 @@
 export const statusLabel = (status: string | null | undefined) => ({ pending: "منتظر تأیید", waiting_approval: "منتظر تأیید", approved: "تأییدشده", rejected: "ردشده", changes_requested: "نیازمند اصلاح",
   queued: "در صف", running: "در حال اجرا", retrying: "در حال تلاش مجدد", completed: "تکمیل‌شده", failed: "ناموفق", cancelled: "متوقف‌شده", skipped: "رد شده در مسیر", draft: "پیش‌نویس",
-  generated: "تولیدشده", scheduled: "زمان‌بندی‌شده", publishing: "در حال ارسال", published: "منتشرشده", uploading: "در حال بارگذاری", processing: "در حال پردازش" } as Record<string,string>)[status ?? ""] ?? "نامشخص";
+  generated: "تولیدشده", scheduled: "زمان‌بندی‌شده", publishing: "در حال ارسال", published: "منتشرشده", uploading: "در حال بارگذاری", processing: "در حال پردازش",
+  partial_success: "تکمیل با خطا در بعضی مراحل", preparing: "در حال آماده‌سازی", ready: "آماده بررسی", waiting_video: "منتظر دریافت ویدئو" } as Record<string,string>)[status ?? ""] ?? "نامشخص";
 const errors: Record<string,string> = {
+  run_has_no_draft_output: "این اجرا هنوز پیش‌نویس آماده‌ای ندارد؛ نتیجه مراحل را بررسی کنید.", run_has_no_text_output: "متن خروجی این اجرا خالی است.",
   validation_error: "اطلاعات واردشده معتبر نیست؛ فیلدها را بررسی کنید.", proxy_not_found: "پروکسی پیدا نشد.", proxy_inactive_or_not_found: "پروکسی انتخاب‌شده فعال نیست یا پیدا نشد.",
   connection_check_queue_unavailable: "صف بررسی اتصال در دسترس نیست.", check_not_found: "نتیجه بررسی اتصال پیدا نشد.", youtube_requires_google_oauth: "برای اتصال یوتیوب از ورود رسمی گوگل استفاده کنید.",
   use_youtube_oauth_routes: "اتصال یوتیوب باید از مسیر ورود گوگل مدیریت شود.", youtube_requires_google_oauth_routes: "از اتصال رسمی گوگل استفاده کنید.",

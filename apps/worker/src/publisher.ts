@@ -3,7 +3,7 @@ import { publishToChannel } from "@socialyar/channels";
 import { setTimeout as pause } from "node:timers/promises";
 import { reservePublicationSlot } from "./queue";
 import {
-  contentItems,
+  ExecutionOwnershipError, withExecutionLock, contentItems,
   contentVariants,
   getDb,
   decryptSecret,
@@ -25,7 +25,11 @@ export async function executePublication(input: {
   attempt: number;
   maxAttempts: number;
   queueVersion?: number;
-}, db = getDb()) {
+}, db = getDb(), lock = withExecutionLock) {
+  return lock(`publication:${input.publicationId}`, (assertOwned) => executeClaimedPublication(input, db, assertOwned));
+}
+
+async function executeClaimedPublication(input: { publicationId: string; attempt: number; maxAttempts: number; queueVersion?: number }, db = getDb(), assertOwned: () => Promise<void> = async () => {}) {
 
   const [publication] = await db
     .select()
@@ -38,7 +42,28 @@ export async function executePublication(input: {
   }
   if (publication.status === "published" || publication.status === "cancelled") return;
   if (publication.queueVersion !== (input.queueVersion ?? 0)) return;
-  if (publication.externalId) return; // A confirmed remote send must never be replayed after a local write failure.
+  if (publication.externalId) {
+    await db.transaction(async (tx) => {
+      await tx.update(publications).set({ status: "published", error: null, updatedAt: new Date() }).where(eq(publications.id, publication.id));
+      await tx.update(contentVariants).set({ status: "published", updatedAt: new Date() }).where(eq(contentVariants.id, publication.contentVariantId));
+      if (publication.scheduleId) await tx.update(schedules).set({ status: "completed", updatedAt: new Date() }).where(eq(schedules.id, publication.scheduleId));
+    });
+    return;
+  } // A confirmed remote send is repaired locally, never replayed.
+  if (publication.status === "publishing") {
+    // Exclusive ownership proves the former sender is gone. Once sending began,
+    // its remote result cannot be inferred from a missing local success record.
+    if (publication.sendStartedAt) {
+      await db.transaction(async (tx) => {
+        await tx.update(publications).set({ status: "failed", error: { message: "ارسال قبلی متوقف شده و نتیجه مقصد نامعلوم است؛ پیش از تلاش مجدد مقصد را بررسی کنید.", deliveryUnknown: true }, updatedAt: new Date() }).where(eq(publications.id, publication.id));
+        await tx.update(contentVariants).set({ status: "failed", updatedAt: new Date() }).where(eq(contentVariants.id, publication.contentVariantId));
+        if (publication.scheduleId) await tx.update(schedules).set({ status: "failed", updatedAt: new Date() }).where(eq(schedules.id, publication.scheduleId));
+      });
+      return;
+    }
+    await db.update(publications).set({ status: "queued", updatedAt: new Date() }).where(eq(publications.id, publication.id));
+  }
+
 
   const [variant] = await db
     .select()
@@ -92,6 +117,7 @@ export async function executePublication(input: {
     .update(publications)
     .set({
       status: "publishing",
+      sendStartedAt: null,
       attempt: publication.attempt + 1,
       error: null,
       socialAccountId: account?.id ?? null,
@@ -118,6 +144,9 @@ export async function executePublication(input: {
       media=new Blob([new Uint8Array(file.bytes)],{type:file.type});
     }
     let providerState = { ...variant.settings };
+    await assertOwned();
+    await db.update(publications).set({ sendStartedAt: new Date() }).where(eq(publications.id, publication.id));
+    await assertOwned();
     sendAttempted=true;
     const result = await publishToChannel({
       media,providerState:variant.settings,
@@ -174,6 +203,7 @@ export async function executePublication(input: {
 
     return result;
   } catch (error) {
+    if (error instanceof ExecutionOwnershipError) throw error;
     const unknown = error instanceof AmbiguousDeliveryError || (error as { code?: string })?.code === "DELIVERY_UNKNOWN" ||
       Boolean(sendAttempted && isConnectionError(error) && !definitelyNotSent(error));
     const details = {
@@ -188,14 +218,15 @@ export async function executePublication(input: {
     // Hold unknown deliveries for manual destination review instead of blindly retrying.
     const finalAttempt = input.attempt >= input.maxAttempts || unknown || Boolean(confirmed);
     if (transport) await db.insert(publicationConnectionEvents).values({ workspaceId: publication.workspaceId, publicationId: publication.id,
-      ...transport.getRoute(), result: unknown ? "delivery_unknown" : "failed", error: details.message });
+      ...transport.getRoute(), result: unknown ? "delivery_unknown" : "failed", error: details.message }).catch(() => {});
 
     await db
       .update(publications)
       .set({
-        status: finalAttempt ? "failed" : "queued",
+        status: confirmed ? "published" : finalAttempt ? "failed" : "queued",
+        ...(!unknown && !confirmed ? { sendStartedAt: null } : {}),
         ...(confirmed ? { externalId: confirmed.externalId, externalUrl: confirmed.externalUrl ?? null, publishedAt: new Date(confirmed.publishedAt) } : {}),
-        error: details,
+        error: confirmed ? null : details,
         updatedAt: new Date(),
       })
       .where(eq(publications.id, publication.id));
@@ -204,7 +235,7 @@ export async function executePublication(input: {
       await db
         .update(contentVariants)
         .set({
-          status: "failed",
+          status: confirmed ? "published" : "failed",
           updatedAt: new Date(),
         })
         .where(eq(contentVariants.id, variant.id));
@@ -213,13 +244,14 @@ export async function executePublication(input: {
         await db
           .update(schedules)
           .set({
-            status: "failed",
+            status: confirmed ? "completed" : "failed",
             updatedAt: new Date(),
           })
           .where(eq(schedules.id, publication.scheduleId));
       }
     }
 
+    if (confirmed) return confirmed;
     throw error;
   } finally { await transport?.close(); }
 }

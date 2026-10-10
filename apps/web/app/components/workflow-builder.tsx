@@ -10,6 +10,7 @@ import type { CalendarItem } from "@socialyar/shared";
 import { calendarLabels } from "./calendar-detail";
 import { CollectionPanel } from "./collection-panel";
 import { YoutubePanel, YoutubeIcon, youtubeStatus, type YoutubeItem } from "./youtube-panel";
+import { getWorkflowGoal } from "./workflow-goals";
 import { ConnectionSelector, type SavedProxy } from "./connection-selector";
 import { apiFetch } from "../lib/session";
 
@@ -178,12 +179,61 @@ export function WorkflowBuilder() {
   const [edgePulses, setEdgePulses] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("آماده ذخیره");
-  const refreshYoutube = () => {
+  const [savedSnapshot, setSavedSnapshot] = useState(() => JSON.stringify({ name: "جریان جدید", pollIntervalMinutes: 5, prompt: "", steps: [], edges: [], autoEnabled: false }));
+  const [loaded, setLoaded] = useState(false);
+  const [goalSteps, setGoalSteps] = useState<string>("");
+  const [removedCard, setRemovedCard] = useState<{ step: Step; edges: Edge[] } | null>(null);
+  const [liveUpdatedAt, setLiveUpdatedAt] = useState<number | null>(null);
+  const [liveError, setLiveError] = useState(false);
+  const [outputPollError, setOutputPollError] = useState(false);
+  const [outputUpdatedAt, setOutputUpdatedAt] = useState<number | null>(null);
+  const editorSnapshot = JSON.stringify({ name: name.trim(), pollIntervalMinutes, prompt, steps, edges, autoEnabled });
+  const dirty = loaded && editorSnapshot !== savedSnapshot;
+  const outputStale = Boolean(workflowId && (outputPollError || (outputUpdatedAt !== null && clock - outputUpdatedAt > 15000)));
+  const liveStale = Boolean(workflowId && (liveError || (liveUpdatedAt !== null && clock - liveUpdatedAt > 15000)));
+  useEffect(() => {
+    if (!dirty) return;
+    const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    const leave = (event: MouseEvent) => {
+      const link = (event.target as Element).closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!link || link.target === "_blank" || event.ctrlKey || event.metaKey || event.shiftKey || link.href === window.location.href) return;
+      if (!window.confirm("تغییرات این جریان ذخیره نشده است. از صفحه خارج شوید؟")) {
+        event.preventDefault(); event.stopPropagation();
+      }
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    document.addEventListener("click", leave, true);
+    return () => { window.removeEventListener("beforeunload", beforeUnload); document.removeEventListener("click", leave, true); };
+  }, [dirty]);
+  const youtubeRefreshRef = useRef<() => void>(() => {});
+  const refreshYoutube = () => youtubeRefreshRef.current();
+  useEffect(() => {
+    setYoutubeItems([]); setCollectionOutputs([]); setOutputPollError(false); setOutputUpdatedAt(null);
     if (!workflowId) return;
-    void apiFetch(`/youtube/items?workflowId=${workflowId}`).then((r) => r.ok ? r.json() : []).then(setYoutubeItems).catch(()=>{});
-    void apiFetch(`/calendar/items?workflowId=${workflowId}`).then((r)=>r.ok?r.json():[]).then((items:CalendarItem[])=>setCollectionOutputs(items.filter((i)=>i.workflowId===workflowId && i.kind==="variant"))).catch(()=>{});
-  };
-  useEffect(() => { refreshYoutube(); const timer = setInterval(refreshYoutube, 3000); return () => clearInterval(timer); }, [workflowId]);
+    let active = true;
+    let fetching = false;
+    const refresh = async () => {
+      if (fetching || document.hidden) return;
+      fetching = true;
+      try {
+        const results = await Promise.allSettled([
+          apiFetch(`/youtube/items?workflowId=${workflowId}`).then(async (response) => { if (!response.ok) throw new Error("youtube_unavailable"); return response.json() as Promise<YoutubeItem[]>; }),
+          apiFetch(`/calendar/items?workflowId=${workflowId}`).then(async (response) => { if (!response.ok) throw new Error("calendar_unavailable"); return response.json() as Promise<CalendarItem[]>; }),
+        ]);
+        if (!active) return;
+        const complete = results.every((result) => result.status === "fulfilled");
+        setOutputPollError(!complete);
+        if (complete) setOutputUpdatedAt(Date.now());
+        if (results[0].status === "fulfilled") setYoutubeItems(results[0].value);
+        if (results[1].status === "fulfilled") setCollectionOutputs(results[1].value.filter((item) => item.workflowId === workflowId && item.kind === "variant"));
+      } finally { fetching = false; }
+    };
+    youtubeRefreshRef.current = () => { void refresh(); };
+    void refresh(); const timer = window.setInterval(() => void refresh(), 3000);
+    const visible = () => { if (!document.hidden) void refresh(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => { active = false; youtubeRefreshRef.current = () => {}; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
+  }, [workflowId]);
   useEffect(() => { void apiFetch("/proxies").then((r) => r.ok ? r.json() : []).then(setSavedProxies).catch(() => {}); }, [selectedKey]);
   const cardConnection = (step: Step) => {
     const channel = accounts.find((a) => a.id === step.config.accountId)?.channel;
@@ -203,6 +253,8 @@ export function WorkflowBuilder() {
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
   const stepActivity = (step: Step) => {
+    if ((step.type === "collection_source" || step.type === "publish") && outputStale) return { label: "اطلاعات خروجی‌ها به‌روز نیست", state: "idle" };
+    if (liveStale) return { label: "وضعیت زنده در دسترس نیست", state: "idle" };
     if (step.type === "collection_source") {
       const outputs=youtubeItems.filter((i) => i.settings.collectionSourceKey===step.key);
       const other=collectionOutputs.filter((i)=>i.settings.collectionSourceKey===step.key);
@@ -243,11 +295,10 @@ export function WorkflowBuilder() {
     if (active?.status === "waiting_approval") return { label: "در انتظار تأیید شما", state: "waiting" };
     if (active) return { label: step.type === "ai" || step.type === "comment_decision" ? "هوش مصنوعی در حال کار..." : "در حال پردازش...", state: "running" };
     const recent = [...(live?.events ?? [])].reverse().find((item) => item.stepKey === step.key &&
-      Date.now() - new Date(item.createdAt).getTime() < 8000 &&
-      ["step_completed", "step_failed", "retry", "approval_requested"].includes(item.type));
+      ["step_started", "step_completed", "step_failed", "retry", "approval_requested", "approval_resolved"].includes(item.type));
     if (recent?.type === "step_failed") return { label: "خطا؛ جزئیات در آخرین اجرا", state: "failed" };
-    if (recent?.type === "retry") return { label: "تلاش دوباره...", state: "running" };
-    if (recent?.type === "approval_requested") return { label: "در انتظار تأیید شما", state: "waiting" };
+    if (recent?.type === "retry") return { label: "آخرین رویداد: تلاش دوباره", state: "idle" };
+    if (recent?.type === "approval_requested") return { label: "آخرین رویداد: درخواست تأیید", state: "idle" };
     const filterResult = step.type === "filter" ? live?.filters?.find((item) => item.stepKey === step.key) : null;
     if (filterResult) return { label: filterResult.passed ? "آخرین خبر عبور کرد" : "آخرین خبر رد شد",
       state: filterResult.passed ? "completed" : "filtered" };
@@ -273,6 +324,7 @@ export function WorkflowBuilder() {
   }, []);
 
   useEffect(() => {
+    setLiveUpdatedAt(null); setLiveError(false);
     seenLiveEvents.current.clear();
     seenPublicationStates.current.clear();
     seenSourceOutputs.current.clear();
@@ -292,14 +344,14 @@ export function WorkflowBuilder() {
       timers.add(timer);
     };
     const refresh = async () => {
-      if (fetching) return;
+      if (fetching || document.hidden) return;
       fetching = true;
       try {
         const response = await apiFetch(`/workflows/${encodeURIComponent(workflowId)}/live`);
-        if (!response.ok) return;
+        if (!response.ok) throw new Error("live_unavailable");
         const snapshot = await response.json() as LiveState;
         if (!active) return;
-        setLive(snapshot);
+        setLive(snapshot); setLiveUpdatedAt(Date.now()); setLiveError(false);
         for (const source of snapshot.sources) {
           if (source.status !== "queued" || !source.queuedCount) continue;
           const outputId = `${source.stepKey}:${source.at}`;
@@ -327,7 +379,7 @@ export function WorkflowBuilder() {
           for (const edge of edgesRef.current.filter((item) => item.targetKey === publication.stepKey))
             flash(`${edge.sourceKey}→${edge.targetKey}`, `publication-${publication.id}`);
         }
-      } catch { /* The next poll can recover without showing a fake running state. */ }
+      } catch { if (active) setLiveError(true); }
       finally { fetching = false; }
     };
     void refresh();
@@ -338,14 +390,20 @@ export function WorkflowBuilder() {
   useEffect(() => {
     if (!workflowId) { setUsage(null); return; }
     let active = true;
-    const refresh = () => void apiFetch(`/analytics/ai-usage?workflowId=${encodeURIComponent(workflowId)}&period=${usagePeriod}`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error("گزارش مصرف در دسترس نیست");
+    let fetching = false;
+    const refresh = async () => {
+      if (fetching || document.hidden) return;
+      fetching = true;
+      try {
+        const response = await apiFetch(`/analytics/ai-usage?workflowId=${encodeURIComponent(workflowId)}&period=${usagePeriod}`);
+        if (!response.ok) throw new Error("usage_unavailable");
         const report = await response.json() as WorkflowUsage;
         if (active) { setUsage(report); setUsageError(""); }
-      }).catch(() => { if (active) setUsageError("گزارش مصرف در دسترس نیست"); });
-    refresh();
-    const timer = window.setInterval(refresh, 30_000);
+      } catch { if (active) setUsageError("گزارش مصرف در دسترس نیست؛ اطلاعات قبلی ممکن است به‌روز نباشد"); }
+      finally { fetching = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
     return () => { active = false; window.clearInterval(timer); };
   }, [workflowId, usagePeriod]);
 
@@ -357,11 +415,21 @@ export function WorkflowBuilder() {
   useEffect(() => {
     if (!workflowId || selected?.type !== "api_source") return;
     const key = selected.key;
-    const refresh = () => void apiFetch(`/workflows/${workflowId}/sources/${encodeURIComponent(key)}/status`)
-      .then(async (response) => response.ok ? response.json() as Promise<SourceHealth> : null)
-      .then((value) => { if (value) setSourceHealth(value); }).catch(() => {});
-    refresh(); const timer = window.setInterval(refresh, 15000);
-    return () => window.clearInterval(timer);
+    let active = true;
+    let fetching = false;
+    const refresh = async () => {
+      if (fetching || document.hidden) return;
+      fetching = true;
+      try {
+        const response = await apiFetch(`/workflows/${workflowId}/sources/${encodeURIComponent(key)}/status`);
+        if (!response.ok) throw new Error("source_status_unavailable");
+        const value = await response.json() as SourceHealth;
+        if (active) setSourceHealth(value);
+      } catch { if (active) setSourceHealth(null); }
+      finally { fetching = false; }
+    };
+    void refresh(); const timer = window.setInterval(() => void refresh(), 15000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [workflowId, selectedKey, selected?.type]);
 
   useEffect(() => {
@@ -384,10 +452,25 @@ export function WorkflowBuilder() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("ai") === "1") setGeneratorOpen(true);
     const id = params.get("id");
-    if (!id) return;
-    const refresh = () => void apiFetch(`/workflows/${encodeURIComponent(id)}/activity`)
-      .then(async (response) => response.ok ? response.json() : null).then(setActivity).catch(() => {});
-    refresh(); const timer = window.setInterval(refresh, 30_000);
+    if (!id) {
+      const goal = getWorkflowGoal(params.get("goal"));
+      if (goal) { setName(goal.name); setSteps(goal.steps); setEdges(goal.connections); setGoalSteps(goal.hint); setSelectedKey(goal.steps[0]?.key ?? ""); }
+      setLoaded(true); return;
+    }
+    let active = true;
+    let fetching = false;
+    const refresh = async () => {
+      if (fetching || document.hidden) return;
+      fetching = true;
+      try {
+        const response = await apiFetch(`/workflows/${encodeURIComponent(id)}/activity`);
+        if (!response.ok) throw new Error("activity_unavailable");
+        const value = await response.json() as Activity;
+        if (active) setActivity(value);
+      } catch { if (active) setActivity(null); }
+      finally { fetching = false; }
+    };
+    void refresh(); const timer = window.setInterval(() => void refresh(), 30_000);
     void apiFetch(`/workflows/${encodeURIComponent(id)}`).then(async (response) => {
       if (!response.ok) throw new Error("جریان پیدا نشد");
       return response.json();
@@ -395,6 +478,7 @@ export function WorkflowBuilder() {
       version: { prompt: string | null; snapshot?: { pollIntervalMinutes?: number } } | null;
       steps: Array<{ key: string; type: string; name: string; config: Record<string, unknown>; position: Position; order: number }>;
       connections: Array<{ sourceKey?: string; targetKey?: string; sourceStepId: string; targetStepId: string; condition?: { decision?: string } | null }> }) => {
+      if (!active) return;
       setWorkflowId(data.workflow.id); setName(data.workflow.name); setPrompt(data.version?.prompt ?? "");
       setPollIntervalMinutes(data.version?.snapshot?.pollIntervalMinutes ?? 5);
       setAutoEnabled(data.workflow.status === "active");
@@ -404,10 +488,13 @@ export function WorkflowBuilder() {
       const loaded = data.steps.sort((a, b) => a.order - b.order).map((step, index) => ({ ...step,
         position: step.position?.x || step.position?.y ? step.position : { x: 110 + index * 240, y: 230 } }));
       const migrated = migrate(loaded, links);
+      setSavedSnapshot(JSON.stringify({ name: data.workflow.name, pollIntervalMinutes: data.version?.snapshot?.pollIntervalMinutes ?? 5,
+        prompt: data.version?.prompt ?? "", steps: migrated.steps, edges: migrated.connections, autoEnabled: data.workflow.status === "active" }));
+      setLoaded(true);
       setSteps(migrated.steps); setEdges(migrated.connections); setSelectedKey(migrated.steps.some((step) => step.key === params.get("step")) ? params.get("step")! : migrated.steps[0]?.key ?? "");
       setMessage("جریان بارگذاری شد");
-    }).catch((error) => setMessage(error instanceof Error ? error.message : "بارگذاری ناموفق بود"));
-    return () => window.clearInterval(timer);
+    }).catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "بارگذاری ناموفق بود"); });
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
 
   useEffect(() => {
@@ -516,6 +603,7 @@ export function WorkflowBuilder() {
   const remove = (key: string) => {
     const step = steps.find((item) => item.key === key);
     if (!step || !window.confirm(`کارت «${step.name}» و اتصال‌هایش حذف شود؟`)) return;
+    setRemovedCard({ step, edges: edges.filter((edge) => edge.sourceKey === key || edge.targetKey === key) });
     setSteps((current) => current.filter((step) => step.key !== key));
     setEdges((current) => current.filter((edge) => edge.sourceKey !== key && edge.targetKey !== key));
     setSelectedEdge(null);
@@ -606,6 +694,7 @@ export function WorkflowBuilder() {
       });
       if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(errors[error.error] ?? error.error ?? `ذخیره ناموفق (${response.status})`); }
       const data = await response.json(); setWorkflowId(data.workflow.id); setAutoEnabled(active);
+      setSavedSnapshot(JSON.stringify({ name: body.name, pollIntervalMinutes, prompt, steps, edges, autoEnabled: active })); setRemovedCard(null);
       if (!workflowId) window.history.replaceState(null, "", `/workflows/new?id=${data.workflow.id}`);
       setMessage(active ? "✓ جریان فعال شد" : "✓ تغییرات ذخیره شد");
       return data.workflow.id as string;
@@ -630,7 +719,7 @@ export function WorkflowBuilder() {
   const stroke = (from: Position, to: Position) => `M ${from.x} ${from.y} C ${from.x - 92} ${from.y}, ${to.x + 92} ${to.y}, ${to.x} ${to.y}`;
   return <main className="workflow-page builder-page">
     <header className="app-header"><div className="brand-lockup"><BrandLogo /><span>میز کار / {name}</span></div>
-      <div className="header-actions"><span className="save-status" role="status">{message}</span>
+      <div className="header-actions"><span className="save-status" role="status">{dirty ? "تغییرات ذخیره نشده · " : ""}{message}</span>
         <details className="workflow-settings-menu"><summary>تنظیمات جریان</summary><div className="workflow-settings-popover">
           <strong>تنظیمات عمومی</strong>
           <label><span>نام جریان</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
@@ -648,6 +737,19 @@ export function WorkflowBuilder() {
           <button className="primary-button" onClick={() => void save(!autoEnabled)} disabled={busy || !steps.length}>
             {autoEnabled ? "توقف پایش" : "فعال‌سازی خودکار"}</button>}
       </div></header>
+    {goalSteps ? <section className="builder-goal-help"><strong>برای اولین نتیجه</strong><p>{goalSteps}</p><Link href="/connections">مدیریت کانال‌ها</Link> · <Link href="/settings/ai">تنظیم مدل هوش مصنوعی</Link></section> : null}
+    {workflowId ? <p className="builder-health" role="status">{outputStale ? "دریافت وضعیت خروجی‌ها ناموفق یا قدیمی است. " : ""}آخرین دریافت کامل خروجی‌ها: {outputUpdatedAt ? new Date(outputUpdatedAt).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran" }) : "هنوز دریافت نشده"}</p> : null}
+    {liveStale ? <p className="builder-health" role="status">ارتباط با وضعیت زنده برقرار نیست. اطلاعات قبلی را نتیجهٔ جاری فرض نکنید؛ دریافت خودکار دوباره تلاش می‌کند.</p> : null}
+    {removedCard ? <div className="builder-recovery" role="status"><span>کارت «{removedCard.step.name}» از بوم حذف شد؛ تا ذخیره، نسخهٔ سرور تغییر نکرده است.</span>
+      <button className="ghost-button" onClick={() => {
+        const restored = removedCard;
+        if (!steps.some((step) => step.key === restored.step.key)) setSteps((current) => [...current, restored.step]);
+        setEdges((current) => [...current, ...restored.edges.filter((edge) =>
+          [restored.step.key, ...steps.map((step) => step.key)].includes(edge.sourceKey) &&
+          [restored.step.key, ...steps.map((step) => step.key)].includes(edge.targetKey) &&
+          !current.some((existing) => existing.sourceKey === edge.sourceKey && existing.targetKey === edge.targetKey))]);
+        setSelectedKey(restored.step.key); setRemovedCard(null);
+      }}>بازگردانی کارت و اتصال‌ها</button></div> : null}
     <div className="builder-layout"><section className="builder-workspace" aria-label="بوم جریان">
       <div className="graph-frame"><div className="graph-canvas-controls"><div className="graph-canvas-actions">
         {!workflowId ? <button type="button" className="graph-icon-action graph-ai-create" onClick={() => setGeneratorOpen(true)}>✦ ساخت با هوش مصنوعی</button> : null}
@@ -734,7 +836,10 @@ export function WorkflowBuilder() {
         </svg>
         {!steps.length ? <div className="graph-empty">بوم خالی است. از «افزودن کارت» شروع کن.</div> : null}
         {steps.map((step) => <article key={step.key} className={`graph-node ${isSource(step) ? "role-source" : isTerminal(step) ? "role-output" : "role-process"} ${selectedKey === step.key ? "selected" : ""} ${stepActivity(step)?.state ? `node-${stepActivity(step)?.state}` : ""}`}
-          style={{ left: step.position.x, top: step.position.y }} onClick={() => { setSelectedKey(step.key); setSelectedEdge(null); }}>
+          tabIndex={0} aria-label={`تنظیمات کارت ${step.name}`} onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedKey(step.key); setSelectedEdge(null); }
+          }} style={{ left: step.position.x, top: step.position.y }} onClick={() => { setSelectedKey(step.key); setSelectedEdge(null); }}>
           {!isSource(step) ? <button className="graph-port input" title="ورودی؛ خروجی یک کارت را اینجا رها کن"
             aria-label={`ورودی ${step.name}`} onPointerUp={(event) => { event.stopPropagation(); if (connecting) connect(connecting, step.key); }}
             onClick={() => { if (connecting) connect(connecting, step.key); }}>●</button> : null}
@@ -747,8 +852,11 @@ export function WorkflowBuilder() {
             step.type === "filter" ? "شرط" : step.type === "publish" ?
               publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "خروجی" :
               step.type === "ai" ? "هوش" : "کارت"}</span>
-            <button type="button" className="graph-delete" title="حذف کارت" aria-label={`حذف ${step.name}`} onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => { event.stopPropagation(); remove(step.key); }}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg></button></div>
+            <details className="graph-card-menu" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+              <summary aria-label={`گزینه‌های کارت ${step.name}`}>⋮</summary><div>
+                <button className="ghost-button" onClick={() => { setSelectedKey(step.key); setSelectedEdge(null); }}>تنظیمات کارت</button>
+                <button className="danger-button" onClick={() => remove(step.key)}>حذف کارت و اتصال‌ها</button>
+              </div></details></div>
           <span className="graph-role-label">{stepActivity(step) ? <><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</> :
             isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>
           <strong>{step.type === "publish" && accounts.find((a) => a.id === step.config.accountId)?.channel === "youtube" ? <><YoutubeIcon /> یوتیوب</> : step.type === "publish" ? "انتشار شبکه‌ها" : step.name}</strong>
@@ -760,7 +868,7 @@ export function WorkflowBuilder() {
             step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال سرویس را انتخاب کن" :
             step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
             step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
-            step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "در انتظار بررسی شما" : "به کارت‌های دیگر وصل کن"}</small>
+            step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "تأیید پیش از ادامه" : "به کارت‌های دیگر وصل کن"}</small>
           {step.type === "rss_source" ? <div className="graph-source-footer graph-source-schedule"><span>{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>

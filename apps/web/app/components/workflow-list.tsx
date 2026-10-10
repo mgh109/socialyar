@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/session";
+import { WorkflowStart } from "./workflow-start";
 
 type Workflow = {
   id: string;
@@ -72,10 +73,11 @@ export function WorkflowList() {
     <section className="workflow-library" aria-labelledby="workflow-library-title">
       <div className="home-status-grid" aria-label="وضعیت فضای کاری">
         <div><span>پایش‌های فعال</span><strong>{items.filter((item) => item.status === "active").length}</strong><small>از {items.length} جریان</small></div>
-        <div><span>آخرین خبر ارسالی</span><strong className="home-status-title">{latest ? latest.content.title || "بدون عنوان" : "هنوز ارسال موفقی ثبت نشده"}</strong><small>{latest ? new Date(latest.publication.publishedAt ?? latest.publication.createdAt).toLocaleString("fa-IR") : "پس از اولین انتشار نمایش داده می‌شود"}</small>{latest?.publication.externalUrl ? <a href={latest.publication.externalUrl} target="_blank" rel="noreferrer">دیدن خبر ↗</a> : null}</div>
+        <div><span>آخرین محتوای منتشرشده</span><strong className="home-status-title">{latest ? latest.content.title || "بدون عنوان" : "هنوز ارسال موفقی ثبت نشده"}</strong><small>{latest ? new Date(latest.publication.publishedAt ?? latest.publication.createdAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" }) : "پس از اولین انتشار نمایش داده می‌شود"}</small>{latest?.publication.externalUrl ? <a href={latest.publication.externalUrl} target="_blank" rel="noreferrer">دیدن محتوا ↗</a> : null}</div>
         <div><span>در صف انتشار</span><strong>{queued}</strong><small>در انتظار پردازش</small></div>
         <div className={failed ? "needs-attention" : ""}><span>نیاز به بررسی</span><strong>{failed}</strong>{failed ? <Link href="/analytics">دیدن خطاها ←</Link> : <small>خطایی ثبت نشده</small>}</div>
       </div>
+      <WorkflowStart />
       <div className="workflow-library-heading">
         <div>
           <h1 id="workflow-library-title">جریان‌های من</h1>

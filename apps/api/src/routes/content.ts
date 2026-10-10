@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
@@ -7,6 +7,8 @@ import {
   contentVariants,
   getDb,
   runs,
+  runSteps,
+  workflowSteps,
   workflows,
 } from "@socialyar/db";
 
@@ -83,8 +85,8 @@ function buildVariant(
   };
 }
 
-export async function contentRoutes(app: FastifyInstance) {
-  const db = getDb();
+export async function contentRoutes(app: FastifyInstance, options: { database?: ReturnType<typeof getDb> } = {}) {
+  const db = options.database ?? getDb();
   app.addHook("onRequest", app.authenticate);
 
   app.post("/runs/:runId/content", async (request, reply) => {
@@ -113,87 +115,88 @@ export async function contentRoutes(app: FastifyInstance) {
     if (!workflow) {
       return reply.code(404).send({ error: "workflow_not_found" });
     }
-    if (ownedRun.status !== "completed") {
-      return reply.code(409).send({ error: "run_not_completed" });
-    }
+    const draftRows = await db.select({ key: workflowSteps.key, output: runSteps.output }).from(runSteps)
+      .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
+      .where(and(eq(runSteps.runId, runId), eq(workflowSteps.workflowVersionId, ownedRun.workflowVersionId),
+        eq(workflowSteps.type, "draft"), eq(runSteps.status, "completed"))).orderBy(asc(workflowSteps.order));
+    const draft = draftRows.find((item) => typeof item.output?.text === "string" && item.output.text.trim());
+    if (!draft) return reply.code(409).send({ error: "run_has_no_draft_output" });
 
-    let [content] = await db
-      .select()
-      .from(contentItems)
-      .where(eq(contentItems.runId, runId))
-      .orderBy(asc(contentItems.createdAt))
-      .limit(1);
+    return db.transaction(async (tx) => {
+      // Serialize materialization so simultaneous tabs cannot create duplicate drafts.
+      await tx.execute(sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`);
+      const existing = await tx
+        .select()
+        .from(contentItems)
+        .where(eq(contentItems.runId, runId))
+        .orderBy(asc(contentItems.createdAt));
 
-    if (!content) {
-      const prompt =
-        typeof ownedRun.input === "object" &&
-        ownedRun.input &&
-        "prompt" in ownedRun.input &&
-        typeof ownedRun.input.prompt === "string"
-          ? ownedRun.input.prompt
-          : null;
+      let content = existing.find((item) => item.metadata.draftStepKey === draft.key) ??
+        existing.find((item) => !item.metadata.draftStepKey && !item.metadata.publishStepKey && !item.metadata.automated);
 
-      const draft = ownedRun.output?.draft;
-      const generatedBody = draft && typeof draft === "object" && "text" in draft && typeof draft.text === "string"
-        ? draft.text : prompt;
-      if (!generatedBody?.trim()) return reply.code(409).send({ error: "run_has_no_text_output" });
+      if (!content) {
+        const generatedBody = draft.output?.text as string;
+        if (!generatedBody?.trim()) return reply.code(409).send({ error: "run_has_no_text_output" });
 
-      [content] = await db
-        .insert(contentItems)
-        .values({
-          workspaceId: workflow.workspaceId,
-          runId,
-          title: `خروجی ${workflow.name}`,
-          body: generatedBody,
-          metadata: {
-            provenance: {
-              runId,
-              workflowId: workflow.id,
-              workflowName: workflow.name,
+        [content] = await tx
+          .insert(contentItems)
+          .values({
+            workspaceId: workflow.workspaceId,
+            runId,
+            title: `خروجی ${workflow.name}`,
+            body: generatedBody,
+            metadata: {
+              draftStepKey: draft.key,
+              provenance: {
+                runId,
+                workflowId: workflow.id,
+                workflowName: workflow.name,
+              },
             },
-          },
-          status: "generated" as const,
-        })
-        .returning();
+            status: "generated" as const,
+          })
+          .returning();
 
-      const title = content.title ?? "خروجی Workflow";
-      const variants = [
-        buildVariant("instagram", title, content.body),
-        buildVariant("telegram", title, content.body),
-        buildVariant("eitaa", title, content.body),
-        buildVariant("website", title, content.body),
-      ];
+        const title = content.title ?? "خروجی Workflow";
+        const variants = [
+          buildVariant("instagram", title, content.body),
+          buildVariant("telegram", title, content.body),
+          buildVariant("eitaa", title, content.body),
+          buildVariant("website", title, content.body),
+        ];
 
-      await db.insert(contentVariants).values(
-        variants.map((variant) => ({
-          contentItemId: content.id,
-          channel: variant.channel,
-          format: variant.format,
-          title: variant.title,
-          body: variant.body,
-          hashtags: variant.hashtags,
-          settings: variant.settings,
-          status: "generated" as const,
-          generatedBy: "system",
-        })),
-      );
-    }
+        const contentId = content.id;
+        await tx.insert(contentVariants).values(
+          variants.map((variant) => ({
+            contentItemId: contentId,
+            channel: variant.channel,
+            format: variant.format,
+            title: variant.title,
+            body: variant.body,
+            hashtags: variant.hashtags,
+            settings: variant.settings,
+            status: "generated" as const,
+            generatedBy: "system",
+          })),
+        );
+      }
 
-    const variants = await db
-      .select()
-      .from(contentVariants)
-      .where(eq(contentVariants.contentItemId, content.id))
-      .orderBy(asc(contentVariants.createdAt));
+      const variants = await tx
+        .select()
+        .from(contentVariants)
+        .where(eq(contentVariants.contentItemId, content.id))
+        .orderBy(asc(contentVariants.createdAt));
 
-    return {
-      content,
-      variants,
-      provenance: {
-        runId,
-        workflowId: workflow.id,
-        workflowName: workflow.name,
-      },
-    };
+      return {
+        content,
+        variants,
+        provenance: {
+          runId,
+          workflowId: workflow.id,
+          workflowName: workflow.name,
+        },
+      };
+    });
   });
 
   app.patch("/content/:contentItemId", async (request, reply) => {

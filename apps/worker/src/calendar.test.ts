@@ -62,7 +62,7 @@ test("stale queue jobs cannot claim a rescheduled publication or YouTube item", 
   let writes = 0;
   const db = { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ status: "queued", queueVersion: 3 }] }) }) }),
     update: () => { writes++; throw new Error("Should not claim"); } };
-  await executePublication({ publicationId: "test", attempt: 1, maxAttempts: 3, queueVersion: 2 }, db as any);
+  await executePublication({ publicationId: "test", attempt: 1, maxAttempts: 3, queueVersion: 2 }, db as any, async (_key, operation) => operation(async () => {}));
   const youtubeDb = { select: () => ({ from: () => ({ where: async () => [{ status: "queued", approvedAt: new Date(), queueVersion: 3 }] }) }),
     update: () => { writes++; throw new Error("Should not claim"); } };
   await executeYoutube("test", youtubeDb as any, 2); assert.equal(writes, 0);
@@ -71,5 +71,5 @@ test("a matching job still cannot upload unapproved content", async () => {
   let read = 0; let writes = 0;
   const db = { select: () => ({ from: () => ({ where: () => ({ limit: async () => ++read === 1 ? [{ status: "queued", queueVersion: 1 }] : [{ status: "waiting_approval" }] }) }) }),
     update: () => { writes++; throw new Error("Should not claim"); } };
-  await executePublication({ publicationId: "test", attempt: 1, maxAttempts: 3, queueVersion: 1 }, db as any); assert.equal(writes, 0);
+  await executePublication({ publicationId: "test", attempt: 1, maxAttempts: 3, queueVersion: 1 }, db as any, async (_key, operation) => operation(async () => {})); assert.equal(writes, 0);
 });

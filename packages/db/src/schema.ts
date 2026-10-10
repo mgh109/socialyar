@@ -177,6 +177,7 @@ export const workflowConnections = pgTable("workflow_connections", {
 }));
 
 export const runs = pgTable("runs", {
+  dispatchVersion: integer("dispatch_version").default(0).notNull(),
   id: uuid("id").defaultRandom().primaryKey(),
   workflowId: uuid("workflow_id").notNull().references(() => workflows.id, { onDelete: "cascade" }),
   workflowVersionId: uuid("workflow_version_id").notNull().references(() => workflowVersions.id, { onDelete: "restrict" }),
@@ -325,6 +326,7 @@ export const publications = pgTable("publications", {
   socialAccountId: uuid("social_account_id").references(() => socialAccounts.id, { onDelete: "set null" }),
   status: publicationStatus("status").default("queued").notNull(),
   attempt: integer("attempt").default(0).notNull(),
+  sendStartedAt: timestamp("send_started_at", { withTimezone: true }),
   externalId: text("external_id"),
   externalUrl: text("external_url"),
   error: jsonb("error").$type<Record<string, unknown> | null>(),

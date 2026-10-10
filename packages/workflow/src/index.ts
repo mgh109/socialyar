@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIRequestUsage, type AIConnection } from "@socialyar/ai";
 import { apiRequest } from "./api-client";
 import {
-  aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
+  ExecutionOwnershipError, withExecutionLock, aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
 } from "@socialyar/db";
 
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
@@ -53,6 +53,10 @@ function orderedGraph(steps: Step[], edges: Edge[]): Step[] {
 }
 
 export async function executeRun(input: ExecuteRunInput) {
+  return withExecutionLock(`run:${input.runId}`, (assertOwned) => executeClaimedRun(input, assertOwned));
+}
+
+async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Promise<void>) {
   const db = getDb();
   const [run] = await db.select().from(runs).where(eq(runs.id, input.runId)).limit(1);
   if (!run || run.workflowId !== input.workflowId || run.workflowVersionId !== input.workflowVersionId)
@@ -70,7 +74,7 @@ export async function executeRun(input: ExecuteRunInput) {
     const ordered = orderedGraph(steps, edges);
     const previous = await db.select().from(runSteps).where(eq(runSteps.runId, run.id));
     const records = new Map(previous.map((record) => [record.workflowStepId, record]));
-    const outputs: Record<string, unknown> = { ...(run.output ?? {}) };
+    const outputs: Record<string, unknown> = { ...(run.output ?? {}), publicationPrepared: false };
     const states = new Map<string, string>();
     const selectedSource = typeof run.input.sourceKey === "string" ? run.input.sourceKey :
       ordered.find((step) => ["manual_input", "rss_source", "api_source", "source"].includes(step.type))?.key;
@@ -78,6 +82,7 @@ export async function executeRun(input: ExecuteRunInput) {
     let failed = false;
 
     for (const step of ordered) {
+      await assertOwned();
       // Spreadsheet collections are imported explicitly; polling/manual news runs must never publish them.
       if (step.type === "collection_source") { states.set(step.id, "skipped"); continue; }
       const prior = records.get(step.id);
@@ -262,6 +267,7 @@ export async function executeRun(input: ExecuteRunInput) {
               if (action === "reply") body[String(step.config.replyField || "reply")] = upstream.reply;
               else body[String(step.config.statusField || "status")] = action === "approve" ?
                 String(step.config.approveValue || "approved") : String(step.config.rejectValue || "rejected");
+              await assertOwned();
               await apiRequest({ ...connection, token: decryptSecret(connection.encryptedToken) }, String(step.config.path),
                 step.config.method === "PATCH" ? "PATCH" : "POST", body, claim.id);
               await db.update(commentActions).set({ status: "succeeded", detail: { action }, updatedAt: new Date() })
@@ -282,6 +288,7 @@ export async function executeRun(input: ExecuteRunInput) {
         await db.update(runSteps).set({ status: "completed", output, finishedAt: new Date() }).where(eq(runSteps.id, record.id));
         await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "step_completed", message: step.name, payload: output });
       } catch (error) {
+        if (error instanceof ExecutionOwnershipError) throw error;
         const message = error instanceof Error ? error.message : "Unknown step error";
         failed = true;
         states.set(step.id, "failed");
@@ -290,12 +297,18 @@ export async function executeRun(input: ExecuteRunInput) {
       }
     }
     const completed = ordered.some((step) => ["publish", "draft", "api_action"].includes(step.type) && states.get(step.id) === "completed");
-    const status = waiting ? "waiting_approval" : failed && !completed ? "failed" : "completed";
+    const status = waiting ? "waiting_approval" : failed ? "failed" : "completed";
+    const processingSummary = { status: waiting ? "waiting_approval" : failed && completed ? "partial_success" : status,
+      completedSteps: [...states.values()].filter((value) => value === "completed").length,
+      failedSteps: [...states.values()].filter((value) => value === "failed").length,
+      hasDraft: ordered.some((step) => step.type === "draft" && states.get(step.id) === "completed" && typeof (outputs[step.key] as News | undefined)?.text === "string" && Boolean((outputs[step.key] as News).text?.trim())) };
+    outputs.processingSummary = processingSummary;
     await db.update(runs).set({ status, output: outputs, finishedAt: waiting ? null : new Date() }).where(eq(runs.id, run.id));
     await db.insert(runEvents).values({ runId: run.id, type: status === "failed" ? "run_failed" : status === "completed" ? "run_completed" : "approval_requested",
       message: status, payload: { outputs } });
     return { runId: run.id, status, outputs };
   } catch (error) {
+    if (error instanceof ExecutionOwnershipError) throw error;
     const message = error instanceof Error ? error.message : "Unknown run error";
     await db.update(runs).set({ status: "failed", output: { error: { message } }, finishedAt: new Date() }).where(eq(runs.id, run.id));
     await db.insert(runEvents).values({ runId: run.id, type: "run_failed", message, payload: { message } });

@@ -10,7 +10,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:collections": "node --import tsx --test src/content-collection.test.ts",
-    "test:shared-collections": "node --import tsx --test src/shared-collections.test.ts"
+    "test:shared-collections": "node --import tsx --test src/shared-collections.test.ts",
+    "test:reliability": "node --import tsx --test src/execution-lock.test.ts src/publication-recovery.test.ts src/dispatch-recovery.test.ts"
   },
   "dependencies": {
     "@socialyar/channels": "workspace:*",

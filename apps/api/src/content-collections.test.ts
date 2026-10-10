@@ -18,7 +18,7 @@ const jobs: unknown[]=[];
 const row=(id="one",order=1): CollectionRow => ({ id,order,title:`قسمت ${order}`,description:"توضیحات",videoUrl:`https://files.example.com/${id}.mp4`,coverUrl:"",scheduledAt:"2028-01-01T14:30:00.000Z",videoType:"video",playlist:"مجموعه",tags:[],privacy:"private",madeForKids:false });
 before(async()=>{
   connection.disconnect();
-  for (const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0007_publishing_proxies.sql","0008_publication_calendar.sql","0009_content_collections.sql"])
+  for (const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0007_publishing_proxies.sql","0008_publication_calendar.sql","0009_content_collections.sql","0011_execution_recovery.sql"])
     await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),"utf8"));
   // Additive publishing migrations must be safe on the next rollout too.
   await engine.exec(await readFile(new URL("../../../packages/db/migrations/0009_content_collections.sql",import.meta.url),"utf8"));
@@ -164,12 +164,12 @@ test("a collection output flows through calendar approval and the real publisher
     const [collection]=await db.select().from(tables.contentCollections).where(eq(tables.contentCollections.targetStepKey,"bale"));const id=collection.records.find((r)=>r.row.id==="shared")!.itemId;
     const [variant]=await db.select().from(tables.contentVariants).where(eq(tables.contentVariants.id,id));let [publication]=await db.select().from(tables.publications).where(eq(tables.publications.contentVariantId,id));
     await db.update(tables.socialAccounts).set({credentials:{botToken:"fake",chatId:"@test"}}).where(eq(tables.socialAccounts.id,publication.socialAccountId!));
-    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any);assert.equal(sends,0);
+    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any,async (_key,operation)=>operation(async () => {}));assert.equal(sends,0);
     const result=await mutateCalendarItem(db as any,{workspaceId,userId,email:"test@example.com"},{kind:"variant",id},{action:"approve",version:variant.calendarVersion,updatedAt:variant.updatedAt.toISOString()});assert.equal(result.status,200,JSON.stringify(result.body));assert.equal(queued.length,1);assert.equal(queued[0][0],"publish-content");
     const oldVersion=publication.queueVersion;[publication]=await db.select().from(tables.publications).where(eq(tables.publications.id,publication.id));assert.equal(publication.status,"queued");
-    await executePublication({publicationId:publication.id,queueVersion:oldVersion,attempt:1,maxAttempts:1},db as any);assert.equal(sends,0);
-    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any);assert.equal(sends,1);
-    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any);assert.equal(sends,1);
+    await executePublication({publicationId:publication.id,queueVersion:oldVersion,attempt:1,maxAttempts:1},db as any,async (_key,operation)=>operation(async () => {}));assert.equal(sends,0);
+    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any,async (_key,operation)=>operation(async () => {}));assert.equal(sends,1);
+    await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any,async (_key,operation)=>operation(async () => {}));assert.equal(sends,1);
     const [sent]=await db.select().from(tables.publications).where(eq(tables.publications.id,publication.id));assert.equal(sent.externalId,"55");assert.equal(sent.status,"published");
   }finally{publicationQueue.add=add;publicationQueue.getJob=getJob;globalThis.fetch=originalFetch;}
 });

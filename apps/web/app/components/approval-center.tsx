@@ -1,4 +1,5 @@
 "use client";
+import { WorkflowApprovalCard, type WorkflowApproval } from "./workflow-approval-card";
 import { YoutubeApprovalQueue } from "./youtube-panel";
 import { apiFetch, getWorkspaceId } from "../lib/session";
 import { statusLabel, persianError } from "../lib/persian";
@@ -29,9 +30,7 @@ type ApprovalRow = {
     title: string | null;
   };
 };
-type WorkflowApproval = { runId: string; workflowName: string; stepKey: string; stepName: string;
-  output: { title?: string | null; text?: string; imageUrl?: string | null; videoUrl?: string | null;
-    commentId?: string; reply?: string; decision?: string; reason?: string } | null; createdAt: string | null };
+
 
 const channelLabels: Record<string, string> = {
   instagram: "اینستاگرام",
@@ -42,34 +41,6 @@ const channelLabels: Record<string, string> = {
   linkedin: "لینکدین",
 };
 
-function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowApproval; busy: boolean;
-  resolve: (item: WorkflowApproval, action: "approve" | "reject", edit?: { title?: string; text?: string; reply?: string }) => Promise<void> }) {
-  const [title, setTitle] = useState(item.output?.title ?? "");
-  const [text, setText] = useState(item.output?.text ?? "");
-  const [reply, setReply] = useState(item.output?.reply ?? "");
-  const isReply = item.output?.decision === "reply";
-  const isComment = Boolean(item.output?.commentId);
-  return <article>
-    <small>{item.workflowName} · {item.stepName}</small>
-    {isComment ? <strong>{isReply ? "پاسخ پیشنهادی به" : "بررسی"} کامنت #{item.output?.commentId}</strong> : null}
-    {!isComment ? <label className="workflow-approval-field"><span>عنوان خبر</span>
-      <input value={title} maxLength={300} onChange={(event) => setTitle(event.target.value)} /></label>
-      : null}
-    {item.output?.imageUrl ? <img src={item.output.imageUrl} alt="تصویر خبر برای بررسی" loading="lazy" /> : null}
-    {item.output?.videoUrl ? <video src={item.output.videoUrl} controls preload="metadata" aria-label="ویدئوی خبر برای بررسی" /> : null}
-    {isComment ? <><p className="workflow-approval-comment">کامنت: {item.output?.text}</p>
-      {item.output?.reason ? <small>دلیل پیشنهاد: {item.output.reason}</small> : null}
-      {isReply ? <label className="workflow-approval-field"><span>متن پاسخی که بعد از تأیید ارسال می‌شود</span>
-        <textarea value={reply} maxLength={3000} onChange={(event) => setReply(event.target.value)} rows={5} /></label> : null}</> :
-      <label className="workflow-approval-field"><span>متن خبر</span>
-        <textarea value={text} maxLength={20000} onChange={(event) => setText(event.target.value)} rows={8} /></label>}
-    <div><button className="ghost-button" disabled={busy} onClick={() => void resolve(item, "reject")}>رد این شاخه</button>
-      <button className="primary-button" disabled={busy || !(isReply ? reply.trim() : text.trim())}
-        onClick={() => void resolve(item, "approve", isReply ? { reply: reply.trim() } : isComment ? undefined : { title: title.trim(), text: text.trim() })}>
-        {isReply ? "تأیید و ارسال پاسخ" : isComment ? "تأیید کامنت" : "تأیید و ادامه"}</button>
-      <Link href={`/runs/${item.runId}`}>جزئیات اجرا</Link></div>
-  </article>;
-}
 
 export function ApprovalCenter() {
   const workspaceId = getWorkspaceId();
@@ -78,6 +49,10 @@ export function ApprovalCenter() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [message, setMessage] = useState("در حال دریافت صف تأیید...");
   const [busy, setBusy] = useState(false);
+  const [workflowLoaded, setWorkflowLoaded] = useState(false);
+  const [workflowError, setWorkflowError] = useState("");
+  const [workflowUpdatedAt, setWorkflowUpdatedAt] = useState<number | null>(null);
+  const [workflowRefresh, setWorkflowRefresh] = useState(0);
 
   const load = async () => {
     if (!workspaceId) {
@@ -102,6 +77,7 @@ export function ApprovalCenter() {
     const response = await apiFetch("/workflow-approvals");
     if (!response.ok) throw new Error("دریافت تأییدهای جریان ناموفق بود");
     setWorkflowApprovals(await response.json());
+    setWorkflowLoaded(true); setWorkflowError(""); setWorkflowUpdatedAt(Date.now());
   };
   const resolveWorkflow = async (item: WorkflowApproval, action: "approve" | "reject", edit?: { title?: string; text?: string; reply?: string }) => {
     if (action === "reject" && !window.confirm("این شاخه رد شود؟ خبر از این مسیر منتشر نمی‌شود.")) return;
@@ -117,14 +93,30 @@ export function ApprovalCenter() {
 
   useEffect(() => {
     void load().catch((error) =>
-      setMessage(persianError(error, "خطا در دریافت Approval")),
+      setMessage(persianError(error, "خطا در دریافت صف تأیید")),
     );
   }, [workspaceId]);
   useEffect(() => {
-    void loadWorkflowApprovals().catch((error) => setMessage(persianError(error)));
-    const timer = window.setInterval(() => void loadWorkflowApprovals().catch(() => {}), 15_000);
-    return () => window.clearInterval(timer);
-  }, []);
+    let active = true;
+    let fetching = false;
+    const controller = new AbortController();
+    const refresh = async () => {
+      if (fetching || document.visibilityState === "hidden") return;
+      fetching = true;
+      try {
+        const response = await apiFetch("/workflow-approvals", { signal: controller.signal });
+        if (!response.ok) throw new Error("دریافت صف تأیید ناموفق بود؛ پیش از تصمیم، اطلاعات را به‌روز کنید.");
+        const items = await response.json() as WorkflowApproval[];
+        if (active) { setWorkflowApprovals(items); setWorkflowLoaded(true); setWorkflowError(""); setWorkflowUpdatedAt(Date.now()); }
+      } catch (error) { if (active) setWorkflowError(persianError(error, "صف تأیید به‌روز نیست؛ دوباره تلاش کنید.")); }
+      finally { fetching = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15_000);
+    const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { active = false; controller.abort(); window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [workflowRefresh]);
 
   const active = useMemo(
     () => rows.find((row) => row.approval.id === activeId) ?? null,
@@ -195,10 +187,12 @@ export function ApprovalCenter() {
         </div>
       </header>
 
-      <section className="workflow-approval-section"><div><h1>تأیید انسانی جریان‌ها</h1><p>خبرهای این کارت‌ها تا تصمیم شما در همین شاخه متوقف می‌مانند.</p></div>
+      <section className="workflow-approval-section"><div><h1>تأیید انسانی جریان‌ها</h1><p>خروجی‌های این کارت‌ها تا تصمیم شما در همین شاخه متوقف می‌مانند.</p></div>
+        {workflowError ? <p role="alert">{workflowError} <button className="ghost-button" onClick={() => setWorkflowRefresh((value) => value + 1)}>تلاش دوباره</button></p> : null}
+        {workflowUpdatedAt ? <p className="save-status">آخرین دریافت: {new Date(workflowUpdatedAt).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran" })} · به وقت تهران</p> : null}
         {workflowApprovals.length ? <div className="workflow-approval-grid">{workflowApprovals.map((item) =>
-          <WorkflowApprovalCard key={`${item.runId}-${item.stepKey}`} item={item} busy={busy} resolve={resolveWorkflow} />)}</div> :
-          <p className="workflow-approval-empty">در حال حاضر خبری منتظر تأیید انسانی نیست.</p>}
+          <WorkflowApprovalCard key={`${item.runId}-${item.stepKey}`} item={item} busy={busy || Boolean(workflowError)} resolve={resolveWorkflow} />)}</div> :
+          <p className="workflow-approval-empty">{workflowLoaded ? "در حال حاضر خروجی‌ای منتظر تأیید انسانی نیست." : "در حال دریافت صف تأیید…"}</p>}
       </section>
 
       <YoutubeApprovalQueue />
@@ -305,7 +299,7 @@ export function ApprovalCenter() {
                 <div className="approval-next-step">
                   <strong>این نسخه تأیید شده و آماده زمان‌بندی است.</strong>
                   <Link className="primary-link" href="/calendar">
-                    رفتن به Calendar / Publish
+                    رفتن به تقویم انتشار
                   </Link>
                 </div>
               ) : null}

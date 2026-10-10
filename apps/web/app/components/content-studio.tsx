@@ -1,5 +1,6 @@
 "use client";
 import { apiFetch, getWorkspaceId } from "../lib/session";
+import { persianError } from "../lib/persian";
 
 import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
@@ -42,7 +43,7 @@ const channelLabels: Record<string, string> = {
 export function ContentStudio({ runId }: { runId: string }) {
   const [data, setData] = useState<StudioPayload | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [message, setMessage] = useState("در حال دریافت خروجی Run...");
+  const [message, setMessage] = useState("در حال دریافت پیش‌نویس...");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -52,7 +53,10 @@ export function ContentStudio({ runId }: { runId: string }) {
       body: "{}",
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error(`Content Studio failed (${response.status})`);
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(persianError(body.error, "دریافت پیش‌نویس ناموفق بود؛ نتیجه اجرا را بررسی کنید."));
+        }
         return response.json();
       })
       .then((payload: StudioPayload) => {

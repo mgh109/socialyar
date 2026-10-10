@@ -1,5 +1,6 @@
 "use client";
 
+import { WorkflowApprovalCard, type WorkflowApproval } from "./workflow-approval-card";
 import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -11,6 +12,10 @@ import { faDigits } from "../lib/persian-calendar";
 type RunData = {
   id: string;
   status: string;
+  workflowId?: string;
+  processingSummary?: { status: string; completedSteps: number; failedSteps: number; hasDraft: boolean };
+  publicationSummary?: { published: number; queued: number; publishing: number; waitingApproval: number; failed: number; unknown: number;
+    items: Array<{ id: string; channel: string; status: string; externalUrl: string | null; error: string | null; deliveryUnknown: boolean }> };
   createdAt?: string;
   startedAt?: string | null;
   finishedAt?: string | null;
@@ -41,62 +46,81 @@ export function RunLive({ runId }: { runId: string }) {
   const [run, setRun] = useState<RunData | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [steps, setSteps] = useState<Array<{ key: string; name: string; type: string; status: string | null;
-    output: { text?: string; reply?: string; commentId?: string;
+    output: NonNullable<WorkflowApproval["output"]> & {
       feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } } | null;
     error: { message?: string } | null; attempt: number | null }>>([]);
   const [connected, setConnected] = useState(false);
+  const [pollError, setPollError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
 
-  const resolve = async (action: "approve" | "reject", stepKey: string) => {
+  const resolve = async (item: WorkflowApproval, action: "approve" | "reject", edit?: { title?: string; text?: string; reply?: string }) => {
+    if (action === "reject" && !window.confirm("این شاخه رد شود؟ محتوا از این مسیر منتشر نمی‌شود.")) return;
     setActionBusy(true);
     setActionError("");
     try {
       const response = await apiFetch(`/runs/${runId}/approval`, {
-        method: "POST", body: JSON.stringify({ action, stepKey }),
+        method: "POST", body: JSON.stringify({ action, stepKey: item.stepKey, edit }),
       });
-      if (!response.ok) throw new Error(`تصمیم ثبت نشد (${response.status})`);
-      setRun((current) => current ? { ...current, status: "queued" } : current);
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(persianError(body.error, `تصمیم ثبت نشد (${response.status})`));
+      }
+      const result = await response.json() as { status: string };
+      setRun((current) => current ? { ...current, status: result.status } : current);
     } catch (error) {
       setActionError(persianError(error, "خطا در ثبت تصمیم"));
-    } finally { setActionBusy(false); }
+    } finally { setActionBusy(false); setRefreshKey((value) => value + 1); }
   };
 
   useEffect(() => {
     let active = true;
+    let fetching = false;
+    const controller = new AbortController();
     const refresh = async () => {
+      if (fetching || document.visibilityState === "hidden") return;
+      fetching = true;
       try {
         const [runResponse, eventResponse, stepsResponse] = await Promise.all([
-          apiFetch(`/runs/${runId}`),
-          apiFetch(`/runs/${runId}/events`),
-          apiFetch(`/runs/${runId}/steps`),
+          apiFetch(`/runs/${runId}`, { signal: controller.signal }),
+          apiFetch(`/runs/${runId}/events`, { signal: controller.signal }),
+          apiFetch(`/runs/${runId}/steps`, { signal: controller.signal }),
         ]);
-        if (!runResponse.ok || !eventResponse.ok) throw new Error("دریافت وضعیت اجرا ناموفق بود");
+        if (!runResponse.ok || !eventResponse.ok || !stepsResponse.ok) throw new Error("دریافت وضعیت اجرا ناموفق بود؛ اطلاعات نمایش‌داده‌شده ممکن است قدیمی باشد.");
         const [nextRun, nextEvents] = await Promise.all([
           runResponse.json() as Promise<RunData>,
           eventResponse.json() as Promise<RunEvent[]>,
         ]);
+        const nextSteps = await stepsResponse.json();
         if (active) {
           setRun(nextRun);
           setEvents(nextEvents);
-          if (stepsResponse.ok) setSteps(await stepsResponse.json());
+          setSteps(nextSteps);
+          setLastUpdated(Date.now());
+          setPollError("");
           setConnected(true);
         }
-      } catch {
-        if (active) setConnected(false);
-      }
+      } catch (error) {
+        if (active) { setConnected(false); setPollError(persianError(error, "دریافت وضعیت اجرا ناموفق بود؛ اطلاعات نمایش‌داده‌شده ممکن است قدیمی باشد.")); }
+      } finally { fetching = false; }
     };
     void refresh();
     const interval = window.setInterval(() => void refresh(), 2000);
+    const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       active = false;
+      controller.abort();
+      document.removeEventListener("visibilitychange", onVisibility);
       window.clearInterval(interval);
     };
-  }, [runId]);
+  }, [runId, refreshKey]);
 
   const progress = useMemo(() => steps.filter((step) => step.status === "completed").length, [steps]);
 
-  const canOpenStudio = run?.status === "completed";
+  const canOpenStudio = run?.processingSummary?.hasDraft === true;
 
   return (
     <main className="workflow-page">
@@ -108,9 +132,9 @@ export function RunLive({ runId }: { runId: string }) {
         <div className="header-actions">
           <span className={connected ? "live-dot online" : "live-dot"} />
           <span className="save-status">
-            {connected ? "نمایش زنده" : "در حال اتصال..."}
+            {connected ? "اطلاعات به‌روز" : pollError ? "ارتباط قطع شده" : "در حال اتصال..."}
           </span>
-          <Link className="ghost-link" href="/workflows/new">
+          <Link className="ghost-link" href={run?.workflowId ? `/workflows/new?id=${run.workflowId}` : "/"}>
             ← بازگشت به جریان
           </Link>
         </div>
@@ -118,12 +142,14 @@ export function RunLive({ runId }: { runId: string }) {
 
       <section className="run-layout">
         <div className="run-main">
+          {pollError ? <p role="alert" className="run-step-error">{pollError} <button className="ghost-button" onClick={() => setRefreshKey((value) => value + 1)}>تلاش دوباره</button></p> : null}
+          {lastUpdated ? <p className="save-status">آخرین دریافت: {new Date(lastUpdated).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran" })} · به وقت تهران</p> : null}
           <ConnectionHistory runId={runId} />
           <div className="canvas-title">
             <div>
               <h1>اجرای جاری</h1>
               <p>
-                شناسه اجرا: {runId.slice(0, 8)} · وضعیت: {statusLabel(run?.status)}
+                شناسه اجرا: {runId.slice(0, 8)} · وضعیت: {statusLabel(run?.processingSummary?.status ?? run?.status)}
               </p>
             </div>
             <span className="status-pill">{faDigits(progress)} از {faDigits(steps.length)} مرحله</span>
@@ -150,16 +176,13 @@ export function RunLive({ runId }: { runId: string }) {
             })}
           </div>
 
-          {run?.status === "waiting_approval" ? steps.filter((step) => step.status === "waiting_approval").map((step) => (
-            <div className="run-output-ready" key={step.key}>
-              <strong>{step.name} · منتظر تصمیم شما</strong>
-              {step.output?.text ? <p>{step.output.text.slice(0, 700)}</p> : null}
-              {step.output?.reply ? <p>پاسخ پیشنهادی: {step.output.reply}</p> : null}
-              <button className="primary-button" disabled={actionBusy} onClick={() => void resolve("approve", step.key)}>تأیید این شاخه</button>
-              <button className="ghost-button" disabled={actionBusy} onClick={() => void resolve("reject", step.key)}>رد این شاخه</button>
-              {actionError ? <span role="alert">{actionError}</span> : null}
-            </div>
-          )) : null}
+          <section className="workflow-approval-section" aria-label="بررسی کامل و تأیید خروجی">
+            <div className="workflow-approval-grid">{steps.filter((step) => step.status === "waiting_approval").map((step) => (
+              <WorkflowApprovalCard key={`${runId}-${step.key}`} item={{ runId, stepKey: step.key, stepName: step.name,
+                workflowName: "اجرای جاری", output: step.output, createdAt: null }} busy={actionBusy || !connected || run?.status !== "waiting_approval"} resolve={resolve} />
+            ))}</div>
+            {actionError ? <p role="alert">{actionError}</p> : null}
+          </section>
 
           {steps.filter((step) => step.status === "completed" && step.output?.feedback).map((step) => (
             <div className="run-output-ready" key={`feedback-${step.key}`}>
@@ -169,10 +192,22 @@ export function RunLive({ runId }: { runId: string }) {
             </div>
           ))}
 
+          {run?.publicationSummary ? <section className="run-output-ready" aria-label="وضعیت انتشار در مقصدها">
+            <div><strong>نتیجه انتشار در مقصدها</strong><p>پایان پردازش جریان به معنی انتشار موفق نیست. وضعیت هر مقصد را در این فهرست ببینید.</p>
+              {run.publicationSummary.items.length ? run.publicationSummary.items.map((item) => <article key={item.id}>
+                <strong>{({ eitaa: "ایتا", telegram: "تلگرام", instagram: "اینستاگرام", youtube: "یوتیوب", website: "وب‌سایت", bale: "بله", x: "ایکس" } as Record<string, string>)[item.channel] ?? "مقصد انتشار"}</strong>
+                <p>{item.deliveryUnknown ? "نتیجه ارسال نامعلوم؛ پیش از ارسال دوباره، مقصد را بررسی کنید." : statusLabel(item.status)}</p>
+                {item.error ? <p role="alert">{persianError(item.error, "انتشار ناموفق بود؛ وضعیت مقصد را بررسی کنید.")}</p> : null}
+                {item.status === "published" && item.externalUrl ? <a className="ghost-link" href={item.externalUrl} target="_blank" rel="noreferrer">مشاهده در مقصد</a> : null}
+              </article>) : <p>هنوز آیتمی در صف انتشار این اجرا ثبت نشده است.</p>}
+              <Link className="ghost-link" href="/calendar">بررسی صف و تقویم انتشار</Link>
+            </div>
+          </section> : null}
+
           {canOpenStudio ? (
             <div className="run-output-ready">
               <div>
-                <strong>✓ خروجی «تولید محتوا» آماده و قابل ویرایش است</strong>
+                <strong>✓ پیش‌نویس محتوا ساخته شده و قابل ویرایش است</strong>
                 <span>شناسه اجرا: {runId.slice(0, 8)} · استودیوی محتوا</span>
               </div>
               <Link
@@ -187,7 +222,7 @@ export function RunLive({ runId }: { runId: string }) {
           <div className="current-detail">
             <div>
               <span className="micro-label">وضعیت اجرا</span>
-              <strong>{statusLabel(run?.status ?? "queued")}</strong>
+              <strong>{statusLabel(run?.processingSummary?.status ?? run?.status ?? "queued")}</strong>
             </div>
             <div>
               <span className="micro-label">رویداد ثبت‌شده</span>
@@ -217,7 +252,7 @@ export function RunLive({ runId }: { runId: string }) {
                     <div className="event-title">
                       <strong>{labels[event.type] ?? event.type}</strong>
                       <time>
-                        {new Date(event.createdAt).toLocaleTimeString("fa-IR")}
+                        {new Date(event.createdAt).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran" })}
                       </time>
                     </div>
                     <p>{event.message ?? "بدون توضیح"}</p>

@@ -1,12 +1,16 @@
 import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql, inArray } from "drizzle-orm";
 import { Queue } from "bullmq";
-import { contentItems, contentVariants, getDb, schedules, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows, youtubeItems, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
+import { withExecutionLock, contentItems, contentVariants, getDb, schedules, publications, runEvents, runs, runSteps, socialAccounts, workflowSteps, workflows, youtubeItems, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
 import { connection, reservePublicationSlot } from "./queue";
 
 const publicationQueue = new Queue("publication-jobs", { connection });
 
 export async function enqueueAutoPublication(runId: string) {
+  return withExecutionLock(`run:${runId}`, () => enqueueClaimedAutoPublication(runId));
+}
+
+async function enqueueClaimedAutoPublication(runId: string) {
   const db = getDb();
   const [row] = await db.select({ run: runs, workspaceId: workflows.workspaceId })
     .from(runs).innerJoin(workflows, eq(runs.workflowId, workflows.id))
@@ -135,9 +139,20 @@ export async function enqueueAutoPublication(runId: string) {
           logs: [{ channel: youtubeAccount.displayName, time: new Date().toISOString(), result: "preparation_failed", error: message }],
         }).onConflictDoNothing();
       }
+      const summary = row.run.output?.processingSummary as Record<string, unknown> | undefined;
+      await db.update(runs).set({ status: row.run.status === "waiting_approval" ? "waiting_approval" : "failed",
+        output: sql`jsonb_set(COALESCE(${runs.output}, '{}'::jsonb), '{processingSummary}', ${JSON.stringify({ ...summary,
+          status: row.run.status === "waiting_approval" ? "waiting_approval" : "partial_success", publicationPreparationFailed: true })}::jsonb)` })
+        .where(and(eq(runs.id, runId), eq(runs.status, row.run.status), eq(runs.dispatchVersion, row.run.dispatchVersion)));
       console.error(`Publication branch ${publishStep.key} failed for run ${runId}`, error);
       await db.insert(runEvents).values({ runId, type: "step_failed", message: `انتشار ${publishStep.name}: ${error instanceof Error ? error.message : "خطا"}` });
     }
+  }
+  // Durable preparation completion closes the crash gap between executing the
+  // graph and building its publication rows. Pending approval paths run again.
+  {
+    await db.update(runs).set({ output: sql`jsonb_set(COALESCE(${runs.output}, '{}'::jsonb), '{publicationPrepared}', 'true'::jsonb)` })
+      .where(and(eq(runs.id, runId), inArray(runs.status, [row.run.status, "failed"]), eq(runs.dispatchVersion, row.run.dispatchVersion)));
   }
 }
 

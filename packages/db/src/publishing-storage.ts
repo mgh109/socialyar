@@ -11,7 +11,7 @@ export async function ensurePublishingStorage() {
     try {
       await client.query("SELECT pg_advisory_lock(72816401)");
       await client.query("BEGIN");
-      for (const name of ["0006_youtube.sql", "0007_publishing_proxies.sql", "0008_publication_calendar.sql", "0009_content_collections.sql", "0010_shared_collections.sql"]) {
+      for (const name of ["0006_youtube.sql", "0007_publishing_proxies.sql", "0008_publication_calendar.sql", "0009_content_collections.sql", "0010_shared_collections.sql", "0011_execution_recovery.sql"]) {
         await client.query((await readFile(new URL(`../migrations/${name}`, import.meta.url))).toString("utf8"));
       }
       await client.query("COMMIT");

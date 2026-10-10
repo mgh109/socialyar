@@ -6,7 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test:collections": "node --import tsx --test src/content-collections.test.ts"
+    "test:collections": "node --import tsx --test src/content-collections.test.ts",
+    "test:integrity": "node --import tsx --test src/run-integrity.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

@@ -1,8 +1,9 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { graphProblem } from "@socialyar/workflow/graph";
 import {
+  contentItems, contentVariants, publications, youtubeItems,
   getDb,
   runEvents,
   runSteps,
@@ -19,8 +20,9 @@ const createRunSchema = z.object({
   input: z.record(z.unknown()).default({}),
 });
 
-export async function runRoutes(app: FastifyInstance) {
-  const db = getDb();
+export async function runRoutes(app: FastifyInstance, options: { database?: ReturnType<typeof getDb>; queue?: Pick<typeof workflowQueue, "add"> } = {}) {
+  const db = options.database ?? getDb();
+  const queue = options.queue ?? workflowQueue;
   app.addHook("onRequest", app.authenticate);
 
   app.get("/workflow-approvals", async (request) => {
@@ -98,7 +100,7 @@ export async function runRoutes(app: FastifyInstance) {
     });
 
     try {
-      await workflowQueue.add(
+      await queue.add(
         "execute-workflow",
         {
           runId: run.id,
@@ -162,7 +164,29 @@ export async function runRoutes(app: FastifyInstance) {
       return reply.code(404).send({ error: "run_not_found" });
     }
 
-    return row.run;
+    const stepRows = await db.select({ type: workflowSteps.type, status: runSteps.status, output: runSteps.output }).from(runSteps)
+      .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id)).where(eq(runSteps.runId, runId));
+    const failedSteps = stepRows.filter((step) => step.status === "failed").length;
+    const completedSteps = stepRows.filter((step) => step.status === "completed").length;
+    const storedSummary = row.run.output?.processingSummary as Record<string, unknown> | undefined;
+    const processingSummary = { status: ["completed", "failed"].includes(row.run.status) ? storedSummary?.status ?? (failedSteps && completedSteps ? "partial_success" : row.run.status) : row.run.status,
+      completedSteps, failedSteps, hasDraft: stepRows.some((step) => step.type === "draft" && step.status === "completed" && typeof step.output?.text === "string" && step.output.text.trim().length > 0) };
+    const publicationRows = await db.select({ publication: publications, variant: contentVariants }).from(contentItems)
+      .innerJoin(contentVariants, eq(contentVariants.contentItemId, contentItems.id))
+      .leftJoin(publications, eq(publications.contentVariantId, contentVariants.id)).where(eq(contentItems.runId, runId));
+    const videos = await db.select().from(youtubeItems).where(eq(youtubeItems.runId, runId));
+    const items = publicationRows.map(({ publication, variant }) => ({ id: publication?.id ?? variant.id,
+      channel: variant.channel, status: variant.status === "waiting_approval" ? "waiting_approval" : publication?.status ?? variant.status,
+      externalUrl: publication?.externalUrl ?? null, error: typeof publication?.error?.message === "string" ? publication.error.message : null,
+      deliveryUnknown: publication?.error?.deliveryUnknown === true }))
+      .concat(videos.map((video) => ({ id: video.id, channel: "youtube" as typeof contentVariants.$inferSelect.channel,
+        status: video.status, externalUrl: video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : null,
+        error: video.error, deliveryUnknown: false })));
+    const count = (status: string) => items.filter((item) => item.status === status).length;
+    const publicationSummary = { published: count("published"), queued: count("queued"),
+      publishing: count("publishing") + count("uploading") + count("processing"), waitingApproval: count("waiting_approval"),
+      failed: count("failed"), unknown: items.filter((item) => item.deliveryUnknown).length, items };
+    return { ...row.run, processingSummary, publicationSummary };
   });
 
   app.get("/runs/:runId/steps", async (request, reply) => {
@@ -196,25 +220,32 @@ export async function runRoutes(app: FastifyInstance) {
     if (action === "approve" && pending.step.output?.decision === "reply" &&
       !(edit?.reply || pending.step.output.reply)) return reply.code(409).send({ error: "reply_text_required" });
     const next = "queued";
-    const [claimed] = await db.update(runs).set({ status: next, finishedAt: null })
-      .where(and(eq(runs.id, runId), eq(runs.status, "waiting_approval"))).returning();
-    if (!claimed) return reply.code(409).send({ error: "approval_already_resolved" });
-    await db.update(runSteps).set({ status: action === "approve" ? "completed" : "skipped",
-      output: { ...(pending.step.output ?? {}), ...(action === "approve" ? edit : {}),
-        approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
-      .where(eq(runSteps.id, pending.step.id));
-    await db.insert(runEvents).values({ runId, runStepId: pending.step.id, type: "approval_resolved",
-      payload: { action, resolvedBy: request.auth.userId } });
+    let dispatchVersion = 0;
+    const resolved = await db.transaction(async (tx) => {
+      const [claimed] = await tx.update(runs).set({ status: next, finishedAt: null, dispatchVersion: sql`${runs.dispatchVersion} + 1` })
+        .where(and(eq(runs.id, runId), eq(runs.status, "waiting_approval"))).returning();
+      if (!claimed) return false;
+      dispatchVersion = claimed.dispatchVersion;
+      const [step] = await tx.update(runSteps).set({ status: action === "approve" ? "completed" : "skipped",
+        output: { ...(pending.step.output ?? {}), ...(action === "approve" ? edit : {}),
+          approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
+        .where(and(eq(runSteps.id, pending.step.id), eq(runSteps.status, "waiting_approval"))).returning();
+      if (!step) throw new Error("مرحله تأیید تغییر کرده است؛ اطلاعات را تازه کنید.");
+      await tx.insert(runEvents).values({ runId, runStepId: pending.step.id, type: "approval_resolved",
+        payload: { action, resolvedBy: request.auth.userId } });
+      return true;
+    });
+    if (!resolved) return reply.code(409).send({ error: "approval_already_resolved" });
     {
       try {
-        await workflowQueue.add("execute-workflow", {
+        await queue.add("execute-workflow", {
           runId, workflowId: owned.run.workflowId, workflowVersionId: owned.run.workflowVersionId,
-        }, { jobId: `${runId}-resume-${pending.step.id}-${Date.now()}`, attempts: 3,
+        }, { jobId: `run-${runId}-dispatch-${dispatchVersion}`, attempts: 3,
           backoff: { type: "exponential", delay: 2000 } });
       } catch (error) {
-        await db.update(runs).set({ status: "failed", output: { error: { message: "Could not resume run" } }, finishedAt: new Date() })
-          .where(eq(runs.id, runId));
-        return reply.code(503).send({ error: "queue_unavailable" });
+        // The queued database row is a durable dispatch intent. The worker
+        // reconciler will enqueue it after Redis is available again.
+        return reply.code(503).send({ error: "تأیید ثبت شد؛ ادامه اجرا پس از اتصال صف انجام می‌شود.", runId, status: "queued" });
       }
     }
     return { runId, status: next };

@@ -1,5 +1,6 @@
-import { Worker } from "bullmq";
-import { closeDb, ensurePublishingStorage } from "@socialyar/db";
+import { reconcileDispatch } from "./dispatch-recovery";
+import { Queue, Worker } from "bullmq";
+import { closeDb, getDb, ensurePublishingStorage } from "@socialyar/db";
 import { executeRun } from "@socialyar/workflow";
 import { executePublication } from "./publisher";
 import { prepareCollectionVideo } from "./collection-prepare";
@@ -7,7 +8,7 @@ import { executeYoutube } from "./youtube";
 import { executeConnectionCheck } from "./connection-check";
 import { closeAutoPublisher, enqueueAutoPublication } from "./auto-publish";
 import { startNewsPoller } from "./news-poller";
-import { connection } from "./queue";
+import { connection, reservePublicationSlot } from "./queue";
 import { startCollectionSheetPoller } from "./collection-sheet-poller";
 await ensurePublishingStorage();
 
@@ -51,6 +52,23 @@ const publicationWorker = new Worker(
   },
 );
 
+// Database queued rows are durable dispatch intents; Redis may be unavailable
+// immediately after an approval transaction commits.
+const recoveryQueue = new Queue("workflow-runs", { connection });
+const publicationRecoveryQueue = new Queue("publication-jobs", { connection });
+let recovering = false;
+async function recoverDispatch() {
+  if (recovering) return;
+  recovering = true;
+  try {
+    await reconcileDispatch({ database: getDb(), workflowQueue: recoveryQueue, publicationQueue: publicationRecoveryQueue,
+      prepare: enqueueAutoPublication, recover: executePublication, reserveSlot: reservePublicationSlot });
+  } catch (error) { console.error("بازیابی صف اجرا ناموفق بود", error); }
+  finally { recovering = false; }
+}
+const recoveryTimer = setInterval(() => void recoverDispatch(), 30000);
+void recoverDispatch();
+
 const stopCollectionSheetPoller = startCollectionSheetPoller();
 const stopNewsPoller = startNewsPoller();
 const connectionCheckWorker = new Worker("connection-checks", (job) => executeConnectionCheck(job.data.checkId), { connection, concurrency: 2 });
@@ -75,8 +93,11 @@ publicationWorker.on("failed", (job, error) => {
 });
 
 const shutdown = async () => {
+  clearInterval(recoveryTimer);
   stopCollectionSheetPoller();
   await Promise.all([
+    recoveryQueue.close(),
+    publicationRecoveryQueue.close(),
     workflowWorker.close(),
     publicationWorker.close(),
     connectionCheckWorker.close(),
