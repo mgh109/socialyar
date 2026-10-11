@@ -43,3 +43,9 @@ test("unfinished publication preparation and interrupted sending use dedicated r
  const interrupted=await publication("publishing","approved");const q=queues();await reconcileDispatch(q.options,now);
  assert.deepEqual(q.prepared,[id]);assert.deepEqual(q.recovered,[{publicationId:interrupted.id,queueVersion:7,attempt:3,maxAttempts:3}]);assert.ok(!q.publicationJobs.some(job=>job[1].publicationId===interrupted.id));
 });
+
+test("daily-limited comment runs wait for Tehran next-day retry while other queued runs remain dispatchable",async()=>{
+ const id=randomUUID();await db.insert(tables.runs).values({id,workflowId,workflowVersionId:versionId,status:"queued",output:{retryAt:"2028-01-02T00:00:00.000Z"},createdAt:old});const q=queues();
+ await reconcileDispatch(q.options,now);assert.ok(!q.workflowJobs.some(job=>job[1].runId===id));
+ await reconcileDispatch(q.options,new Date("2028-01-02T00:00:01Z"));assert.ok(q.workflowJobs.some(job=>job[1].runId===id));
+});

@@ -521,3 +521,15 @@ export const collectionSheetSnapshots = pgTable("collection_sheet_snapshots", {
   sourceUrl:text("source_url").notNull(),sheetGid:text("sheet_gid").default("0").notNull(),data:jsonb("data").$type<import("@socialyar/shared").CollectionSheet|null>(),
   error:text("error"),checkedAt:timestamp("checked_at",{withTimezone:true}).defaultNow().notNull(),
 },(t)=>({once:uniqueIndex("collection_sheet_snapshot_once").on(t.workflowId,t.sourceStepKey)}));
+
+export const youtubeCommentReplies = pgTable("youtube_comment_replies", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  accountId: uuid("account_id").notNull().references(() => socialAccounts.id, { onDelete: "cascade" }),
+  workflowId: uuid("workflow_id").notNull().references(() => workflows.id, { onDelete: "cascade" }),
+  runId: uuid("run_id").references(() => runs.id, { onDelete: "set null" }),
+  commentId: text("comment_id").notNull(), videoId: text("video_id").notNull(), reply: text("reply").notNull(), status: text("status").notNull(),
+  externalId: text("external_id"), error: text("error"), day: text("day").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ once: uniqueIndex("youtube_comment_replies_once").on(t.accountId, t.commentId) }));

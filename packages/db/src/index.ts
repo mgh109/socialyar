@@ -14,3 +14,5 @@ export * from "./google-sheet";
 
 export * from "./execution-lock";
 export * from "./tenant-policy";
+
+export * from "./youtube-comments";

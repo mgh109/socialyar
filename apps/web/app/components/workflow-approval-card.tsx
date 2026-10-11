@@ -5,7 +5,7 @@ import { useState } from "react";
 
 export type WorkflowApproval = { runId: string; workflowName: string; stepKey: string; stepName: string;
   output: { title?: string | null; text?: string; imageUrl?: string | null; videoUrl?: string | null;
-    commentId?: string; reply?: string; decision?: string; reason?: string } | null; createdAt: string | null };
+    url?: string; sentiment?: string; commentId?: string; reply?: string; decision?: string; reason?: string } | null; createdAt: string | null };
 
 export function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowApproval; busy: boolean;
   resolve: (item: WorkflowApproval, action: "approve" | "reject", edit?: { title?: string; text?: string; reply?: string }) => Promise<void> }) {
@@ -23,6 +23,7 @@ export function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowAp
     {item.output?.imageUrl ? <img src={item.output.imageUrl} alt="تصویر محتوا برای بررسی" loading="lazy" style={{ objectFit: "contain" }} /> : null}
     {item.output?.videoUrl ? <video src={item.output.videoUrl} controls preload="metadata" aria-label="ویدئوی خبر برای بررسی" /> : null}
     {isComment ? <><p className="workflow-approval-comment" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>کامنت: {item.output?.text}</p>
+      {item.output?.url ? <a href={item.output.url} target="_blank" rel="noreferrer">دیدن کامنت در یوتیوب</a> : null}
       {item.output?.reason ? <small>دلیل پیشنهاد: {item.output.reason}</small> : null}
       {isReply ? <label className="workflow-approval-field"><span>متن پاسخی که بعد از تأیید ارسال می‌شود</span>
         <textarea value={reply} maxLength={3000} onChange={(event) => setReply(event.target.value)} rows={5} /></label> : null}</> :

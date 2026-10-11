@@ -212,7 +212,7 @@ export async function runRoutes(app: FastifyInstance, options: { database?: Retu
     if (!owned) return reply.code(404).send({ error: "run_not_found" });
     if (owned.run.status !== "waiting_approval") return reply.code(409).send({ error: "run_not_waiting_approval" });
 
-    const [pending] = await db.select({ step: runSteps }).from(runSteps)
+    const [pending] = await db.select({ step: runSteps, type: workflowSteps.type }).from(runSteps)
       .innerJoin(workflowSteps, eq(runSteps.workflowStepId, workflowSteps.id))
       .where(and(eq(runSteps.runId, runId), eq(runSteps.status, "waiting_approval"),
         ...(stepKey ? [eq(workflowSteps.key, stepKey)] : []))).limit(1);
@@ -226,7 +226,7 @@ export async function runRoutes(app: FastifyInstance, options: { database?: Retu
         .where(and(eq(runs.id, runId), eq(runs.status, "waiting_approval"))).returning();
       if (!claimed) return false;
       dispatchVersion = claimed.dispatchVersion;
-      const [step] = await tx.update(runSteps).set({ status: action === "approve" ? "completed" : "skipped",
+      const [step] = await tx.update(runSteps).set({ status: action === "approve" ? pending.type === "youtube_reply" ? "queued" : "completed" : "skipped",
         output: { ...(pending.step.output ?? {}), ...(action === "approve" ? edit : {}),
           approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
         .where(and(eq(runSteps.id, pending.step.id), eq(runSteps.status, "waiting_approval"))).returning();
@@ -251,6 +251,24 @@ export async function runRoutes(app: FastifyInstance, options: { database?: Retu
     return { runId, status: next };
   });
 
+  app.post("/runs/:runId/youtube-reply/retry", async (request, reply) => {
+    const {runId} = z.object({runId:z.string().uuid()}).parse(request.params);
+    const {stepKey} = z.object({stepKey:z.string().min(1)}).parse(request.body);
+    const [owned] = await db.select({run:runs,workflow:workflows}).from(runs).innerJoin(workflows,eq(runs.workflowId,workflows.id)).where(and(eq(runs.id,runId),eq(workflows.workspaceId,request.auth.workspaceId)));
+    if (!owned || owned.workflow.status !== "active") return reply.code(409).send({error:"برای تلاش دوباره، جریان باید فعال باشد."});
+    if (owned.run.status !== "failed") return reply.code(409).send({error:"این اجرا قابل تلاش دوباره نیست."});
+    const [pending] = await db.select({step:runSteps,config:workflowSteps.config}).from(runSteps).innerJoin(workflowSteps,eq(runSteps.workflowStepId,workflowSteps.id)).where(and(eq(runSteps.runId,runId),eq(workflowSteps.key,stepKey),eq(workflowSteps.type,"youtube_reply"),eq(runSteps.status,"failed")));
+    if (!pending) return reply.code(404).send({error:"مرحله پاسخ ناموفق پیدا نشد."});
+    if (request.auth.channelIds != null && !request.auth.channelIds.includes(String(pending.config.accountId))) return reply.code(403).send({error:"دسترسی به کانال ندارید."});
+    const accepted = await db.transaction(async tx => {
+      const [claim] = await tx.update(runs).set({status:"queued",finishedAt:null,dispatchVersion:sql`${runs.dispatchVersion} + 1`}).where(and(eq(runs.id,runId),eq(runs.status,"failed"))).returning();
+      if (!claim) return false;
+      await tx.update(runSteps).set({status:"queued",error:null}).where(eq(runSteps.id,pending.step.id));
+      await tx.insert(runEvents).values({runId,runStepId:pending.step.id,type:"retry",message:"بررسی دوباره پاسخ کامنت درخواست شد."});
+      return true;
+    });
+    return reply.code(accepted ? 202 : 409).send({status:accepted ? "queued" : "conflict"});
+  });
   app.get("/runs/:runId/events", async (request, reply) => {
     const { runId } = z
       .object({ runId: z.string().uuid() })

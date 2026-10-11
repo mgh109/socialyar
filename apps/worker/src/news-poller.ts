@@ -3,7 +3,7 @@ import { isIP } from "node:net";
 import { and, eq, inArray } from "drizzle-orm";
 import { Queue } from "bullmq";
 import { XMLParser } from "fast-xml-parser";
-import { assertWorkspaceOperational, apiConnections, decryptSecret, ensureCommentStorage, getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
+import { readYoutubeComments, youtubeToken, assertWorkspaceOperational, apiConnections, decryptSecret, ensureCommentStorage, getDb, newsItems, runEvents, runs, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
 import { readApiComments } from "@socialyar/workflow/api-client";
 import { connection } from "./queue";
 import { channelHandle, fetchEitaaPosts } from "./eitaa-source";
@@ -55,7 +55,7 @@ function publicFeedUrl(value: string) {
 async function queueItem(workflowId: string, versionId: string, title: string, summary: string,
   link: string, imageUrl: string | null, legacyId?: string, uniqueId?: string, sourceKey?: string,
   videoUrl?: string | null, videoUnavailable?: boolean, commentId?: string, context?: string,
-  comments?: Array<{ id: string; text: string }>): Promise<boolean> {
+  comments?: Array<{ id: string; text: string }>, youtube?: { accountId: string; videoId: string }): Promise<boolean> {
   const db = getDb();
   const itemKey = createHash("sha256").update(uniqueId ?? link).digest("hex");
   const legacyKey = createHash("sha256").update(legacyId || link).digest("hex");
@@ -67,10 +67,10 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
   const [claimed] = await db.insert(newsItems).values({ workflowId, itemKey }).onConflictDoNothing().returning();
   if (!claimed) return false;
   const [run] = await db.insert(runs).values({ workflowId, workflowVersionId: versionId,
-    trigger: comments ? "api_feedback" : commentId ? "api_comments" : "rss", input: { title, text: summary || title, url: link, imageUrl, videoUrl,
-      videoUnavailable: videoUnavailable === true, sourceKey, commentId, context, comments }, status: "queued" }).returning();
+    trigger: youtube ? "youtube_comments" : comments ? "api_feedback" : commentId ? "api_comments" : "rss", input: { title, text: summary || title, url: link, imageUrl, videoUrl,
+      videoUnavailable: videoUnavailable === true, sourceKey, commentId, context, comments, youtube }, status: "queued" }).returning();
   await db.update(newsItems).set({ runId: run.id }).where(eq(newsItems.id, claimed.id));
-  await db.insert(runEvents).values({ runId: run.id, type: "run_started", message: "Source item queued" });
+  await db.insert(runEvents).values({ runId: run.id, type: "run_started", message: youtube ? "کامنت یوتیوب وارد صف شد." : "Source item queued" });
   try {
     await queue.add("execute-workflow", { runId: run.id, workflowId,
       workflowVersionId: versionId }, { jobId: run.id, attempts: 2, removeOnComplete: 1000 });
@@ -85,11 +85,18 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
 
 type NewsCandidate = { title: string; text: string; url: string; imageUrl: string | null;
   videoUrl?: string | null; videoUnavailable?: boolean; legacyId?: string; uniqueId?: string;
-  commentId?: string; context?: string; comments?: Array<{ id: string; text: string }> };
+  youtube?: { accountId: string; videoId: string }; commentId?: string; context?: string; comments?: Array<{ id: string; text: string }> };
 
 type SourceStats = { rawCount: number; matchedCount: number; selectedCount: number; validCount: number;
   pagesFetched?: number; capped?: boolean };
 async function sourceCandidates(source: typeof workflowSteps.$inferSelect, workspaceId: string): Promise<{ items: NewsCandidate[]; stats?: SourceStats }> {
+  if (source.type === "youtube_comments") {
+    const { token, account } = await youtubeToken(String(source.config.accountId), workspaceId);
+    const inspected = await readYoutubeComments(token, account.externalAccountId, { videoId: String(source.config.videoId || ""), limit: Number(source.config.batchLimit ?? 50), after: typeof source.config.after === "string" && source.config.after ? source.config.after : undefined });
+    return { items: inspected.comments.map(item => ({ title: "کامنت یوتیوب", text: item.text, url: item.url, imageUrl: null,
+      uniqueId: `youtube-comment:${account.id}:${item.id}`, commentId: item.id, context: String(source.config.context || ""), youtube: { accountId: account.id, videoId: item.videoId } })),
+      stats: { rawCount: inspected.rawCount, matchedCount: inspected.comments.length, selectedCount: inspected.comments.length, validCount: inspected.comments.length, pagesFetched: inspected.pagesFetched, capped: inspected.capped } };
+  }
   if (source.type === "api_source") {
     await ensureCommentStorage();
     const db = getDb();
@@ -190,7 +197,7 @@ async function poll() {
           .where(and(eq(workflowVersions.workflowId, workflow.id), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
         if (!version) continue;
         const sources = await db.select().from(workflowSteps)
-          .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source"])));
+          .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source", "youtube_comments"])));
         if (!sources.length) continue;
         const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
         const intervalMinutes = Number.isInteger(configured) && configured >= 1 && configured <= 10080 ? configured : 5;
@@ -207,23 +214,23 @@ async function poll() {
           catch (error) {
             console.error(`Source poll failed for ${source.key}`, error);
             await connection.set(liveKey, JSON.stringify({ status: "error", at: new Date().toISOString() }), "EX", 12);
-            if (source.type === "api_source") await connection.set(`source-health:${workflow.id}:${version.id}:${source.key}`,
+            if (["api_source", "youtube_comments"].includes(source.type)) await connection.set(`source-health:${workflow.id}:${version.id}:${source.key}`,
               JSON.stringify({ checkedAt: new Date().toISOString(), status: "error",
                 error: error instanceof Error ? error.message : String(error) }), "EX", 604800);
             return { source, items: [] as NewsCandidate[], queued: 0, queueError: "", polled: false };
           }
         }));
         let queuedCount = 0;
-        const commentCap = 60;
+        const commentCap = 500;
         // Round robin keeps one busy source from starving the others.
-        for (let index = 0; index < 100 && queuedCount < commentCap + 15; index++) {
+        for (let index = 0; index < 1000 && queuedCount < commentCap + 15; index++) {
           for (const batch of batches) {
             const item = batch.items[index];
-            if (!item || batch.queued >= (batch.source.type === "api_source" ? commentCap : 15)) continue;
+            if (!item || batch.queued >= (["api_source", "youtube_comments"].includes(batch.source.type) ? (batch.source.type === "api_source" ? 60 : commentCap) : 15)) continue;
             try {
               if (await queueItem(workflow.id, version.id, item.title, item.text, item.url,
                 item.imageUrl, item.legacyId, item.uniqueId, batch.source.key,
-                item.videoUrl, item.videoUnavailable, item.commentId, item.context, item.comments)) {
+                item.videoUrl, item.videoUnavailable, item.commentId, item.context, item.comments, item.youtube)) {
                 queuedCount++; batch.queued++;
               }
             } catch (error) {
@@ -238,7 +245,7 @@ async function poll() {
               JSON.stringify({ status: batch.queueError ? "error" : batch.queued ? "queued" : "no_new",
                 at: new Date().toISOString(), count: batch.items.length, queuedCount: batch.queued }), "EX", 20);
           }
-          if (batch.source.type !== "api_source" || !("stats" in batch) || !batch.stats) continue;
+          if (!["api_source", "youtube_comments"].includes(batch.source.type) || !("stats" in batch) || !batch.stats) continue;
           await connection.set(`source-health:${workflow.id}:${version.id}:${batch.source.key}`,
             JSON.stringify({ checkedAt: new Date().toISOString(), status: batch.queueError ? "error" : "ok",
               ...batch.stats, queuedCount: batch.queued, ...(batch.queueError ? { error: `خطا در صف: ${batch.queueError}` } : {}) }), "EX", 604800);

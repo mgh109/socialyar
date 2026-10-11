@@ -1,8 +1,8 @@
 import { and, asc, eq, sql } from "drizzle-orm";
-import { analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIRequestUsage, type AIConnection } from "@socialyar/ai";
+import { generateYoutubeCommentReply, analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIRequestUsage, type AIConnection } from "@socialyar/ai";
 import { apiRequest } from "./api-client";
 import {
-  assertWorkspaceOperational, createTenantAIQuota, ExecutionOwnershipError, withExecutionLock, aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
+  sendYoutubeCommentReply, YoutubeDailyLimitError, nextYoutubeDay, assertWorkspaceOperational, createTenantAIQuota, ExecutionOwnershipError, withExecutionLock, aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
 } from "@socialyar/db";
 
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
@@ -11,7 +11,7 @@ type Edge = typeof workflowConnections.$inferSelect;
 type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
   videoUrl?: string | null; queuedForPublication?: boolean; commentId?: string; context?: string;
   decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string; approved?: boolean;
-  comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
+  youtube?: { accountId: string; videoId: string }; replyStatus?: string; externalUrl?: string; sentiment?: string; comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
 
 function transientAIError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -56,8 +56,7 @@ export async function executeRun(input: ExecuteRunInput) {
   return withExecutionLock(`run:${input.runId}`, (assertOwned) => executeClaimedRun(input, assertOwned));
 }
 
-async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Promise<void>) {
-  const db = getDb();
+export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Promise<void>, db = getDb(), sendReply = sendYoutubeCommentReply) {
   const [run] = await db.select().from(runs).where(eq(runs.id, input.runId)).limit(1);
   if (!run || run.workflowId !== input.workflowId || run.workflowVersionId !== input.workflowVersionId)
     throw new Error("Run does not match workflow version");
@@ -78,9 +77,10 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
     const previous = await db.select().from(runSteps).where(eq(runSteps.runId, run.id));
     const records = new Map(previous.map((record) => [record.workflowStepId, record]));
     const outputs: Record<string, unknown> = { ...(run.output ?? {}), publicationPrepared: false };
+    delete outputs.retryAt;
     const states = new Map<string, string>();
     const selectedSource = typeof run.input.sourceKey === "string" ? run.input.sourceKey :
-      ordered.find((step) => ["manual_input", "rss_source", "api_source", "source"].includes(step.type))?.key;
+      ordered.find((step) => ["manual_input", "rss_source", "api_source", "youtube_comments", "source"].includes(step.type))?.key;
     let waiting = false;
     let failed = false;
 
@@ -103,7 +103,7 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
         states.set(step.id, "waiting_approval"); waiting = true;
         continue;
       }
-      if (["rss_source", "api_source", "manual_input", "source"].includes(step.type) && step.key !== selectedSource) {
+      if (["rss_source", "api_source", "youtube_comments", "manual_input", "source"].includes(step.type) && step.key !== selectedSource) {
         states.set(step.id, "skipped");
         continue;
       }
@@ -121,7 +121,8 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
       }
       if (parents.length && !activeParent) { states.set(step.id, "skipped"); continue; }
       const parentStep = activeParent && steps.find((item) => item.id === activeParent.sourceStepId);
-      const upstream = parentStep ? outputs[parentStep.key] as News | undefined : undefined;
+      let upstream = parentStep ? outputs[parentStep.key] as News | undefined : undefined;
+      if (step.type === "youtube_reply" && prior?.output?.approved === true) upstream = prior.output as News;
       // A grouped source emits both a report run and individual comment runs.
       // Each run only enters the compatible branch of the graph.
       if ((step.type === "ai" && step.config.aiMode === "feedback" && !upstream?.comments?.length) ||
@@ -162,16 +163,17 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
           continue;
         }
         let output: News;
-        if (["source", "manual_input", "rss_source", "api_source"].includes(step.type)) {
+        if (["source", "manual_input", "rss_source", "api_source", "youtube_comments"].includes(step.type)) {
           if (run.input.videoUnavailable === true) {
             throw new Error("این پست ویدیو دارد، اما صفحهٔ عمومی ایتا فایل ویدیو را در اختیار نمی‌گذارد. انتشار بدون ویدیو متوقف شد.");
           }
           const text = run.input.text ?? run.input.prompt;
           if (typeof text !== "string" || !text.trim()) throw new Error("A text input is required");
+          if (step.type === "youtube_comments" && (!run.input.youtube || (run.input.youtube as News["youtube"])?.accountId !== step.config.accountId)) throw new Error("حساب کامنت با منبع جریان یکسان نیست.");
           output = { text: text.trim(), title: run.input.title as string ?? null,
             url: run.input.url as string ?? null, imageUrl: run.input.imageUrl as string ?? null,
             videoUrl: run.input.videoUrl as string ?? null,
-            commentId: run.input.commentId as string | undefined, context: run.input.context as string | undefined,
+            youtube: run.input.youtube as News["youtube"], commentId: run.input.commentId as string | undefined, context: run.input.context as string | undefined,
             comments: Array.isArray(run.input.comments) ? run.input.comments as Array<{ id: string; text: string }> : undefined };
         } else if (step.type === "filter") {
           if (!upstream?.text) throw new Error("Filter needs an incoming news item");
@@ -245,6 +247,39 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
             (edge.condition as { decision?: string } | null)?.decision === decision.decision))
             throw new Error(`برای تصمیم ${decision.decision} مسیر خروجی تعریف نشده است`);
           output = { ...upstream, ...decision };
+        } else if (step.type === "youtube_reply") {
+          if (!upstream?.commentId || !upstream.youtube || !upstream.text) throw new Error("کارت پاسخ به ورودی کامنت یوتیوب نیاز دارد.");
+          if (String(step.config.accountId) !== upstream.youtube.accountId) throw new Error("حساب پاسخ باید با حساب منبع یکسان باشد.");
+          const [workflow] = await db.select().from(workflows).where(eq(workflows.id, run.workflowId));
+          const assertAllowed = async () => {
+            await assertOwned(); await assertWorkspaceOperational(db, workflow.workspaceId);
+            const [current] = await db.select().from(workflows).where(eq(workflows.id, run.workflowId));
+            if (current?.status !== "active") throw new Error("جریان متوقف است؛ پاسخ ارسال نشد.");
+          };
+          await assertAllowed();
+          let proposed = upstream;
+          if (prior?.output?.reply !== undefined) proposed = prior.output as News;
+          else {
+            const profileId = step.config.profileId;
+            const [settings] = typeof profileId === "string" && profileId !== "default" ? await db.select().from(aiProfiles).where(and(eq(aiProfiles.id, profileId), eq(aiProfiles.workspaceId, workflow.workspaceId))) : await db.select().from(aiSettings).where(eq(aiSettings.workspaceId, workflow.workspaceId));
+            if (!settings) throw new Error("مدل هوش مصنوعی انتخاب‌شده در دسترس نیست.");
+            const quota = createTenantAIQuota(db, workflow.workspaceId);
+            const connection = { provider: settings.provider as AIConnection["provider"], model: settings.model, token: decryptSecret(settings.encryptedToken), beforeRequest: quota.beforeRequest,
+              onRequestRejected: quota.onRequestRejected, onUsage: async (usage: AIRequestUsage) => { await quota.onUsage(usage); await accountUsage(usage); } };
+            const answer = await retryAI(() => generateYoutubeCommentReply(connection, upstream!.text!, `${upstream!.context || ""}\n${String(step.config.context || "")}`,
+              String(step.config.instructions || ""), String(step.config.tone || "محترمانه و صمیمی")), async (attempt) => { await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "retry", message: `تلاش ${attempt} برای پاسخ کامنت` }); });
+            proposed = { ...upstream, ...answer, decision: "reply", approved: false };
+            await db.update(runSteps).set({ output: proposed }).where(eq(runSteps.id, record.id));
+          }
+          if (!proposed.reply) { output = { ...proposed, replyStatus: "skipped" }; }
+          else if (step.config.requireApproval !== false && proposed.approved !== true) {
+            await db.update(runSteps).set({ status: "waiting_approval", output: proposed }).where(eq(runSteps.id, record.id));
+            await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "approval_requested", message: "پاسخ کامنت یوتیوب منتظر تأیید است." });
+            states.set(step.id, "waiting_approval"); waiting = true; continue;
+          } else {
+            output = { ...proposed, ...await sendReply({ workspaceId: workflow.workspaceId, workflowId: workflow.id, runId: run.id,
+              accountId: upstream.youtube.accountId, commentId: upstream.commentId, reply: proposed.reply, dailyLimit: Number(step.config.dailyLimit ?? 20) }, assertAllowed) };
+          }
         } else if (step.type === "api_action") {
           if (!upstream?.commentId) throw new Error("شناسهٔ کامنت در ورودی اقدام نیست");
           const action = String(step.config.action);
@@ -296,6 +331,13 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
         await db.update(runSteps).set({ status: "completed", output, finishedAt: new Date() }).where(eq(runSteps.id, record.id));
         await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "step_completed", message: step.name, payload: output });
       } catch (error) {
+        if (error instanceof YoutubeDailyLimitError) {
+          const retryAt = nextYoutubeDay().toISOString();
+          await db.update(runSteps).set({ status: "retrying", error: { message: error.message } }).where(eq(runSteps.id, record.id));
+          await db.update(runs).set({ status: "queued", output: { ...outputs, retryAt }, finishedAt: null, dispatchVersion: sql`${runs.dispatchVersion} + 1` }).where(eq(runs.id, run.id));
+          await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "retry", message: error.message, payload: { retryAt } });
+          return { runId: run.id, status: "queued", retryAt, outputs };
+        }
         if (error instanceof ExecutionOwnershipError) throw error;
         const message = error instanceof Error ? error.message : "Unknown step error";
         failed = true;
@@ -304,7 +346,7 @@ async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () => Prom
         await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "step_failed", message });
       }
     }
-    const completed = ordered.some((step) => ["publish", "draft", "api_action"].includes(step.type) && states.get(step.id) === "completed");
+    const completed = ordered.some((step) => ["publish", "draft", "api_action", "youtube_reply"].includes(step.type) && states.get(step.id) === "completed");
     const status = waiting ? "waiting_approval" : failed ? "failed" : "completed";
     const processingSummary = { status: waiting ? "waiting_approval" : failed && completed ? "partial_success" : status,
       completedSteps: [...states.values()].filter((value) => value === "completed").length,

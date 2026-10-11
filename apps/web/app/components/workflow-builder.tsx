@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PersianDateTimeField } from "./persian-date-time-field";
+import { YoutubeCommentsPanel } from "./youtube-comments-panel";
 import { InstagramFields } from "./instagram-fields";
 import { BrandLogo } from "./brand-logo";
 import type { CalendarItem } from "@socialyar/shared";
@@ -44,8 +45,8 @@ type LiveState = {
 const faNumber = (value: number | string) => Number(value).toLocaleString("fa-IR");
 const dollarCost = (usage: UsageTotals) => (Number(usage.costMicros) / 1_000_000)
   .toLocaleString("fa-IR", { maximumFractionDigits: 4 });
-const isSource = (step: Step) => ["rss_source", "api_source", "manual_input", "collection_source"].includes(step.type);
-const isTerminal = (step: Step) => ["publish", "draft", "api_action"].includes(step.type);
+const isSource = (step: Step) => ["rss_source", "api_source", "manual_input", "collection_source", "youtube_comments"].includes(step.type);
+const isTerminal = (step: Step) => ["publish", "draft", "api_action", "youtube_reply"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "خبرخوان", eitaa: "ایتا", bale: "بله" };
 const publishNames: Record<string, string> = { youtube: "یوتیوب", eitaa: "ایتا", bale: "بله", instagram: "اینستاگرام", telegram: "تلگرام", website: "وب‌سایت" };
 const pollPresets = [1, 5, 15, 60, 1440];
@@ -56,6 +57,8 @@ function durationLabel(minutes: number) {
 }
 const types = [
   { type: "source", label: "منبع" },
+  { type: "youtube_comments", label: "کامنت‌های یوتیوب" },
+  { type: "youtube_reply", label: "پاسخ هوشمند یوتیوب" },
   { type: "collection_source", label: "مجموعه از اکسل / گوگل‌شیت" },
   { type: "filter", label: "شرط" },
   { type: "ai", label: "هوش مصنوعی" },
@@ -65,6 +68,7 @@ const types = [
   { type: "api_action", label: "اقدام سرویس" },
 ];
 const errors: Record<string, string> = {
+  youtube_comment_account_required:"حساب فعال یوتیوب را انتخاب کنید.",youtube_comment_settings_invalid:"تعداد، تاریخ یا تنظیمات پاسخ کامنت معتبر نیست.",youtube_reply_source_invalid:"کارت پاسخ باید از منبع کامنت یوتیوب با همان حساب ورودی بگیرد.",
   graph_invalid_step: "یک کارت نامعتبر است.", graph_invalid_connection: "اتصال نامعتبر یا تکراری است.",
   graph_cycle: "اتصال حلقه‌ای مجاز نیست.", graph_missing_input: "همهٔ کارت‌های پردازش باید از یک منبع ورودی بگیرند.",
   graph_unfinished_branch: "هر شاخه باید به انتشار یا پیش‌نویس برسد.", graph_invalid_filter: "برای شرط، واژه‌های کلیدی وارد کن.",
@@ -249,7 +253,7 @@ export function WorkflowBuilder() {
   };
   const selected = steps.find((step) => step.key === selectedKey);
   const selectedUsage = usage?.byStep.find((item) => item.stepKey === selectedKey);
-  const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => ["rss_source", "api_source"].includes(step.type));
+  const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => ["rss_source", "api_source", "youtube_comments"].includes(step.type));
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
   const stepActivity = (step: Step) => {
@@ -520,7 +524,7 @@ export function WorkflowBuilder() {
     const type = requestedType === "source" ? "rss_source" : requestedType;
     const key = freshKey();
     const count = steps.length;
-    const config = type === "rss_source" ? { sourceKind: "rss", feedUrl: "" } :
+    const config = type === "youtube_comments" ? {accountId:"",videoId:"",batchLimit:50,after:""} : type === "youtube_reply" ? {accountId:"",profileId:"default",requireApproval:true,dailyLimit:20,tone:"محترمانه و صمیمی",context:"",instructions:""} : type === "rss_source" ? { sourceKind: "rss", feedUrl: "" } :
       type === "publish" ? { accountId: "", publishIntervalSeconds: 30 } :
       type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
       { profileId: aiProfiles[0]?.id ?? "default", aiMode: "rewrite" } : type === "api_source" ?
@@ -673,7 +677,7 @@ export function WorkflowBuilder() {
     if (steps.length && !window.confirm("کارت‌های فعلی با پیشنهاد جدید جایگزین شوند؟ تغییرات ذخیره‌نشده از دست می‌روند.")) return;
     const keys = new Map(generated.steps.map((step) => [step.key, freshKey()]));
     setSteps(generated.steps.map((step) => ({ ...step, key: keys.get(step.key)!,
-      config: ["ai", "comment_decision"].includes(step.type) ? { ...step.config, profileId: generatorProfile } : step.config })));
+      config: ["ai", "comment_decision", "youtube_reply"].includes(step.type) ? { ...step.config, profileId: generatorProfile } : step.config })));
     setEdges(generated.connections.map((edge) => ({ ...edge,
       sourceKey: keys.get(edge.sourceKey)!, targetKey: keys.get(edge.targetKey)! })));
     setName(generated.name); setSelectedKey(""); setSelectedEdge(null); setAutoEnabled(false);
@@ -684,7 +688,7 @@ export function WorkflowBuilder() {
     setBusy(true); setMessage("در حال ذخیره...");
     try {
       if (!name.trim()) throw new Error("نام جریان را وارد کن.");
-      if (active && steps.some((step) => ["ai", "comment_decision"].includes(step.type) && !aiProfiles.some((profile) =>
+      if (active && steps.some((step) => ["ai", "comment_decision", "youtube_reply"].includes(step.type) && !aiProfiles.some((profile) =>
         profile.id === String(step.config.profileId ?? "default")))) throw new Error("برای هر کارت AI یک مدل معتبر انتخاب کن.");
       const body = { name: name.trim(), pollIntervalMinutes, description: `${steps.length} کارت · ${edges.length} اتصال`,
         status: active ? "active" : "draft", autonomyMode: manual ? "assisted" : "full_auto", prompt,
@@ -717,7 +721,7 @@ export function WorkflowBuilder() {
     finally { setBusy(false); }
   };
   const stroke = (from: Position, to: Position) => `M ${from.x} ${from.y} C ${from.x - 92} ${from.y}, ${to.x + 92} ${to.y}, ${to.x} ${to.y}`;
-  const cardDescription = (step: Step) => step.type === "rss_source" ?
+  const cardDescription = (step: Step) => step.type === "youtube_comments" ? "خواندن کامنت‌های کانال یوتیوب" : step.type === "youtube_reply" ? (step.config.requireApproval===false ? "تحلیل و پاسخ خودکار" : "تحلیل و پاسخ پس از تأیید") : step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
             step.type === "publish" ? publishAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "مقصد را انتخاب کن" :
@@ -874,6 +878,7 @@ export function WorkflowBuilder() {
           <small className="graph-node-description" title={cardDescription(step)}>{cardDescription(step)}</small>
           {step.type === "rss_source" ? <div className="graph-source-footer graph-source-schedule"><span>{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
+          {step.type === "youtube_comments" ? <div className="graph-source-footer graph-source-schedule"><span>کامنت یوتیوب</span><span>{live?.nextPollAt ? countdownLabel(live?.nextPollAt, clock, autoEnabled) : "پایش پس از فعال‌سازی"}</span></div> : null}
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
           {step.type === "publish" ? <div className="graph-source-footer graph-connection-label" title={cardConnection(step)}>{step.config.accountId ? cardConnection(step) : "○ مقصد انتخاب نشده است"}</div> : null}
@@ -881,7 +886,7 @@ export function WorkflowBuilder() {
             <div className={`graph-source-footer graph-filter-footer ${live.filters.find((item) => item.stepKey === step.key)?.passed ? "passed" : "rejected"}`}>
               {live.filters.find((item) => item.stepKey === step.key)?.passed ? "✓ عبور کرد" : "⊘ رد شد"} · آخرین خبر
             </div> : null}
-          {["ai", "comment_decision"].includes(step.type) && usage?.byStep.find((item) => item.stepKey === step.key) ?
+          {["ai", "comment_decision", "youtube_reply"].includes(step.type) && usage?.byStep.find((item) => item.stepKey === step.key) ?
             <div className="graph-source-footer graph-usage-footer">مصرف {usagePeriod === "7d" ? "۷ روز" : usagePeriod === "all" ? "کل" : "۳۰ روز"} ·
               {faNumber(usage.byStep.find((item) => item.stepKey === step.key)!.requests)} درخواست</div> : null}
           {!isTerminal(step) ? <button className={`graph-port output ${connecting === step.key ? "active" : ""}`}
@@ -920,11 +925,12 @@ export function WorkflowBuilder() {
             <span>هنوز برای این کارت مصرفی ثبت نشده است.</span>}
           <small>توکن، مقدار متن پردازش‌شده توسط مدل است؛ این عدد تعداد خبر نیست.</small>
         </section> : null}
-        {isSource(selected) && selected.type !== "collection_source" ? <label><span>نوع منبع</span><select value={selected.type === "api_source" ? "api" :
+        {isSource(selected) && !["collection_source","youtube_comments"].includes(selected.type) ? <label><span>نوع منبع</span><select value={selected.type === "api_source" ? "api" :
           selected.type === "manual_input" ? "manual" : String(selected.config.sourceKind ?? "rss")}
           onChange={(event) => switchSource(selected.key, event.target.value)}>
           <option value="rss">RSS</option><option value="eitaa">کانال ایتا</option><option value="bale">کانال بله</option>
           <option value="api">کامنت API</option><option value="manual">ورودی دستی</option></select></label> : null}
+        {["youtube_comments","youtube_reply"].includes(selected.type) ? <YoutubeCommentsPanel key={selected.key} type={selected.type} stepKey={selected.key} workflowId={workflowId ?? undefined} config={selected.config} update={(key,value)=>update(selected.key,key,value)} accounts={accounts} profiles={aiProfiles} /> : null}
         {selected.type === "collection_source" ? <CollectionPanel key={selected.key} workflowId={workflowId} stepKey={selected.key}
           targets={steps.filter((s) => s.type === "publish" && ["youtube", "telegram", "eitaa", "bale", "instagram", "website"].includes(accounts.find((a) => a.id === s.config.accountId)?.channel ?? "") && edges.some((e) => e.sourceKey === selected.key && e.targetKey === s.key)).map((s)=>({...s,config:{...s.config,collectionChannel:accounts.find((a)=>a.id===s.config.accountId)?.channel}}))}
           config={selected.config} update={(key,value) => update(selected.key,key,value)} refresh={refreshYoutube} items={youtubeItems} calendarOutputs={collectionOutputs} /> : null}

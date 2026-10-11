@@ -3,6 +3,7 @@ type GoalConnection = { sourceKey: string; targetKey: string };
 type WorkflowGoal = { name: string; description: string; hint: string; steps: GoalStep[]; connections: GoalConnection[] };
 
 export const workflowGoalOptions = [
+  {id:"youtube-comments",title:"پاسخگویی به کامنت یوتیوب",description:"کامنت‌های کانال را بخوان، احساسات را تحلیل کن و خودکار یا پس از تأیید پاسخ بده."},
   { id: "collection", title: "انتشار محتوای آماده", description: "محتوا را از اکسل یا گوگل‌شیت وارد کن، برای هر مقصد بررسی کن و زمان انتشار را تعیین کن." },
   { id: "news", title: "پایش و بازنویسی خبر", description: "خبر را از خوراک RSS بگیر، با هوش مصنوعی بازنویسی کن و پیش از ادامه بررسی کن." },
   { id: "comments", title: "تحلیل کامنت‌ها", description: "کامنت‌ها را از API سایت بخوان و گزارش بازخورد بگیر؛ این مسیر پاسخی ارسال نمی‌کند." },
@@ -12,15 +13,20 @@ export function getWorkflowGoal(goal: string | null): WorkflowGoal | null {
   const step = (key: string, type: string, name: string, config: Record<string, unknown>, index: number): GoalStep =>
     ({ key, type, name, config, position: { x: 800 - index * 250, y: 120 } });
   const connect = (keys: string[]): GoalConnection[] => keys.slice(1).map((key, index) => ({ sourceKey: keys[index], targetKey: key }));
+  if (goal === "youtube-comments") return {
+    name:"پاسخگویی کامنت‌های یوتیوب",description:workflowGoalOptions[0].description,
+    hint:"در هر دو کارت همان حساب یوتیوب را انتخاب کن؛ لحن، اطلاعات و حالت ارسال را تنظیم و جریان را فعال کن. نتیجه در گزارش کارت و پاسخ‌های نیازمند بررسی در تأییدها دیده می‌شوند.",
+    steps:[step("youtube-comments","youtube_comments","کامنت‌های یوتیوب",{accountId:"",videoId:"",batchLimit:50,after:""},0),step("youtube-reply","youtube_reply","پاسخ هوشمند یوتیوب",{accountId:"",profileId:"default",requireApproval:true,dailyLimit:20,tone:"محترمانه و صمیمی",context:"",instructions:""},1)],connections:connect(["youtube-comments","youtube-reply"])
+  };
   if (goal === "collection") return {
-    name: "انتشار محتوای آماده", description: workflowGoalOptions[0].description,
+    name: "انتشار محتوای آماده", description: workflowGoalOptions[1].description,
     hint: "اول حساب مقصد را در کارت انتشار انتخاب و جریان را ذخیره کن. سپس از کارت مجموعه، اکسل یا گوگل‌شیت را وارد و تغییرات را بررسی کن. تأیید ورود محتوا با تأیید انتشار جداست؛ خروجی‌ها را در تقویم بررسی کن.",
     steps: [step("collection", "collection_source", "مجموعه از اکسل / گوگل‌شیت", { collectionSource: "excel", sheetAutoRefresh: false }, 0),
       step("publish", "publish", "انتشار", { accountId: "", publishIntervalSeconds: 30 }, 1)],
     connections: connect(["collection", "publish"]),
   };
   if (goal === "news") return {
-    name: "پایش و بازنویسی خبر", description: workflowGoalOptions[1].description,
+    name: "پایش و بازنویسی خبر", description: workflowGoalOptions[2].description,
     hint: "آدرس خوراک RSS و سرویس هوش مصنوعی را تنظیم کن. خروجی پس از بررسی تو در پیش‌نویس می‌ماند؛ برای ارسال به حساب مقصد، کارت پیش‌نویس را با انتشار جایگزین کن. فعال‌کردن پایش به معنی انتشار موفق نیست.",
     steps: [step("source", "rss_source", "خوراک خبر", { sourceKind: "rss", feedUrl: "" }, 0),
       step("rewrite", "ai", "بازنویسی خبر", { profileId: "default", aiMode: "rewrite" }, 1),
@@ -28,7 +34,7 @@ export function getWorkflowGoal(goal: string | null): WorkflowGoal | null {
     connections: connect(["source", "rewrite", "review", "draft"]),
   };
   if (goal === "comments") return {
-    name: "تحلیل کامنت‌ها", description: workflowGoalOptions[2].description,
+    name: "تحلیل کامنت‌ها", description: workflowGoalOptions[3].description,
     hint: "در کارت منبع، اتصال API و مسیر و فیلدهای واقعی سایتت را وارد و خواندن را آزمایش کن؛ سپس سرویس هوش مصنوعی را انتخاب کن. نتیجه در پیش‌نویس و صفحه اجرای جریان دیده می‌شود. این الگو کامنتی را تأیید، رد یا پاسخ نمی‌دهد.",
     steps: [step("comments", "api_source", "کامنت‌های سایت", { connectionId: "", path: "", itemsPath: "", idField: "id", textField: "text", contextField: "context", readMode: "batch", batchLimit: 10, includeIndividual: false }, 0),
       step("feedback", "ai", "تحلیل بازخورد", { profileId: "default", aiMode: "feedback" }, 1),

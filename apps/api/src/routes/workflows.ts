@@ -6,7 +6,7 @@ import { calendarStatus } from "@socialyar/shared";
 import { generateWorkflowBlueprint, type AIConnection, type AIRequestUsage } from "@socialyar/ai";
 import { graphProblem } from "@socialyar/workflow/graph";
 import {
-  getDb,
+  getDb, readYoutubeComments, youtubeToken,
   assertWorkspaceOperational,
   reserveResourceQuota,
   createTenantAIQuota,
@@ -78,7 +78,7 @@ const updateWorkflowSchema = z.object({
 const blueprintSchema = z.object({
   name: z.string().trim().min(1).max(80),
   nodes: z.array(z.object({ id: z.string().min(1).max(40), type: z.enum([
-    "rss_source", "api_source", "manual_input", "collection_source", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action",
+    "rss_source", "api_source", "manual_input", "collection_source", "youtube_comments", "youtube_reply", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action",
   ]), name: z.string().trim().min(1).max(70), config: z.record(z.unknown()).default({}) })).min(2).max(12),
   edges: z.array(z.object({ from: z.string(), to: z.string(), decision: z.enum(["approve", "reject", "reply", "review"]).optional() })).min(1).max(24),
 });
@@ -163,10 +163,24 @@ async function insertGraph(
 
 async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connections: z.infer<typeof connectionSchema>[], workspaceId: string): Promise<string | null> {
   const sorted = [...steps].sort((a, b) => a.order - b.order);
-  const source = sorted.find((step) => ["rss_source", "api_source"].includes(step.type));
+  const source = sorted.find((step) => ["rss_source", "api_source", "youtube_comments"].includes(step.type));
   const graphError = graphProblem(steps, connections, true);
   if (graphError) return graphError;
   if (!source || steps.some((step) => step.type === "manual_input")) return "graph_missing_input";
+  for (const step of sorted.filter(item => ["youtube_comments", "youtube_reply"].includes(item.type))) {
+    const config = step.config;
+    if (!z.string().uuid().safeParse(config.accountId).success) return "youtube_comment_account_required";
+    const [account] = await getDb().select().from(socialAccounts).where(and(eq(socialAccounts.id, String(config.accountId)), eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true)));
+    if (!account) return "youtube_comment_account_required";
+    if (step.type === "youtube_comments" && (!Number.isInteger(config.batchLimit ?? 50) || Number(config.batchLimit ?? 50) < 1 || Number(config.batchLimit ?? 50) > 500 || config.videoId && !/^[A-Za-z0-9_-]{11}$/.test(String(config.videoId)) || config.after && !z.string().datetime().safeParse(config.after).success)) return "youtube_comment_settings_invalid";
+    if (step.type === "youtube_reply" && (!Number.isInteger(config.dailyLimit ?? 20) || Number(config.dailyLimit ?? 20) < 1 || Number(config.dailyLimit ?? 20) > 100 || config.requireApproval !== undefined && typeof config.requireApproval !== "boolean" || ["context","instructions","tone"].some(key => config[key] !== undefined && (typeof config[key] !== "string" || String(config[key]).length > (key === "tone" ? 200 : 4000))))) return "youtube_comment_settings_invalid";
+    if (step.type === "youtube_reply") {
+      const ancestors = new Set<string>(), queue = [step.key];
+      while (queue.length) { const key = queue.shift()!; if (ancestors.has(key)) continue; ancestors.add(key); queue.push(...connections.filter(edge => edge.targetKey === key).map(edge => edge.sourceKey)); }
+      const sources = sorted.filter(item => ancestors.has(item.key) && ["youtube_comments","rss_source","api_source","manual_input","collection_source"].includes(item.type));
+      if (!sources.length || sources.some(source => source.type !== "youtube_comments" || source.config.accountId !== config.accountId)) return "youtube_reply_source_invalid";
+    }
+  }
   for (const source of sorted.filter((step) => step.type === "rss_source")) {
   const feedUrls = Array.isArray(source.config.feedUrls) ? source.config.feedUrls : [source.config.feedUrl];
   const channels = source.config.eitaaChannels ?? (source.config.sourceKind === "eitaa" ? [source.config.channel] : []);
@@ -269,8 +283,8 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     if (typeof filter.config.keywords !== "string" || !filter.config.keywords.trim() ||
       !["include", "exclude"].includes(String(filter.config.mode ?? "include"))) return "graph_invalid_filter";
   }
-  for (const step of sorted.filter((item) => item.type === "ai")) {
-    if (!["rewrite", "feedback"].includes(String(step.config.aiMode ?? "rewrite"))) return "ai_output_invalid";
+  for (const step of sorted.filter((item) => ["ai", "youtube_reply"].includes(item.type))) {
+    if (step.type === "ai" && !["rewrite", "feedback"].includes(String(step.config.aiMode ?? "rewrite"))) return "ai_output_invalid";
     const titleMode = String(step.config.titleMode ?? "keep");
     const imageMode = String(step.config.imageMode ?? "keep");
     if (!["keep", "rewrite", "custom"].includes(titleMode) ||
@@ -321,7 +335,7 @@ export async function workflowRoutes(app: FastifyInstance) {
     const validAccounts = new Set(accounts.map((item) => item.id));
     const validConnections = new Set(connectionRows.map((item) => item.id));
     const usageReport: { value: AIRequestUsage | null } = { value: null };
-    const useCommentTemplate = /کامنت|دیدگاه/.test(input.request) && /تحلیل/.test(input.request) &&
+    const useCommentTemplate = !/یوتی?وب|youtube/i.test(input.request) && /کامنت|دیدگاه/.test(input.request) && /تحلیل/.test(input.request) &&
       /تأیید|تایید/.test(input.request) && /پاسخ/.test(input.request);
     let raw: string;
     try {
@@ -355,7 +369,7 @@ export async function workflowRoutes(app: FastifyInstance) {
     if (graphProblem(blueprint.nodes.map((node) => ({ key: node.id, type: node.type })), connections, true) ||
       blueprint.edges.some((edge) => edge.decision && blueprint.nodes.find((node) => node.id === edge.from)?.type !== "comment_decision"))
       return reply.code(502).send({ error: "ai_graph_invalid", usage: usageReport.value });
-    const depths = new Map(blueprint.nodes.filter((node) => ["rss_source", "api_source", "manual_input", "collection_source"].includes(node.type))
+    const depths = new Map(blueprint.nodes.filter((node) => ["rss_source", "api_source", "manual_input", "collection_source", "youtube_comments"].includes(node.type))
       .map((node) => [node.id, 0]));
     for (let i = 0; i < blueprint.nodes.length; i++) for (const edge of blueprint.edges) {
       const depth = depths.get(edge.from);
@@ -384,6 +398,8 @@ export async function workflowRoutes(app: FastifyInstance) {
       } : node.type === "rss_source" ?
         kind === "rss" ? { sourceKind: kind, feedUrl: input.request.includes(suppliedFeed) && suppliedFeed ? suppliedFeed : "" } :
           { sourceKind: kind, channel: input.request.includes(suppliedChannel) && suppliedChannel ? suppliedChannel : "" } :
+        node.type === "youtube_comments" ? { accountId, videoId: text("videoId",11) && input.request.includes(text("videoId",11)) ? text("videoId",11) : "", batchLimit: Math.max(1,Math.min(500,Number(config.batchLimit)||50)), context:text("context",4000), after: z.string().datetime().safeParse(config.after).success ? config.after : "" } :
+        node.type === "youtube_reply" ? { accountId, profileId:input.profileId ?? "default", dailyLimit:Math.max(1,Math.min(100,Number(config.dailyLimit)||20)), requireApproval:config.requireApproval !== false, tone:text("tone",200), instructions:text("instructions",4000), context:text("context",4000) } :
         node.type === "filter" ? { keywords: text("keywords", 500), mode: config.mode === "exclude" ? "exclude" : "include" } :
         node.type === "ai" ? { profileId: input.profileId ?? "default", aiMode: config.aiMode === "feedback" ? "feedback" : "rewrite",
           instructions: text("instructions", 3000) } :
@@ -401,6 +417,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         warnings.push(`ستون‌ها و زمان انتشار مجموعهٔ «${node.name}» را تطبیق بده و ورود محتوا را تأیید کن.`);
         if (mapped.collectionSource === "google_sheet" && !mapped.sheetUrl) warnings.push(`لینک گوگل‌شیت «${node.name}» را وارد کن.`);
       }
+      if (["youtube_comments","youtube_reply"].includes(node.type) && !accountId) warnings.push(`حساب یوتیوب کارت «${node.name}» را انتخاب کن.`);
       if (node.type === "publish" && !accountId) warnings.push(`مقصد انتشار کارت «${node.name}» را انتخاب کن.`);
       if (["api_source", "api_action"].includes(node.type) && !connectionId) warnings.push(`اتصال کارت «${node.name}» را انتخاب کن.`);
       if (node.type === "rss_source" && !(mapped.feedUrl || mapped.channel)) warnings.push(`نشانی کارت «${node.name}» را وارد کن.`);
@@ -423,7 +440,7 @@ export async function workflowRoutes(app: FastifyInstance) {
       .where(and(eq(workflowVersions.workflowId, workflowId), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
     if (!version) return { events: [], active: [], sources: [], publications: [], filters: [], nextPollAt: null };
     const sourceSteps = await db.select({ key: workflowSteps.key }).from(workflowSteps)
-      .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source"])));
+      .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source", "youtube_comments"])));
     const markerKeys = sourceSteps.map((step) => `source-live:${workflowId}:${version.id}:${step.key}`);
     const pollKey = `news-poll:${workflowId}:${version.id}`;
     const [markers, events, active, publicationRows, filterRows] = await Promise.all([
@@ -577,6 +594,29 @@ export async function workflowRoutes(app: FastifyInstance) {
     return reply.code(201).send(result);
   });
 
+  app.post("/workflows/:workflowId/youtube-comments/preview", async (request, reply) => {
+    const { workflowId } = z.object({ workflowId:z.string().uuid() }).parse(request.params);
+    const { stepKey } = z.object({ stepKey:z.string().min(1) }).parse(request.body);
+    const [workflow] = await db.select().from(workflows).where(and(eq(workflows.id,workflowId),eq(workflows.workspaceId,request.auth.workspaceId)));
+    if (!workflow) return reply.code(404).send({error:"جریان پیدا نشد."});
+    const [version] = await db.select().from(workflowVersions).where(and(eq(workflowVersions.workflowId,workflowId),eq(workflowVersions.version,workflow.currentVersion)));
+    const [source] = version ? await db.select().from(workflowSteps).where(and(eq(workflowSteps.workflowVersionId,version.id),eq(workflowSteps.key,stepKey),eq(workflowSteps.type,"youtube_comments"))) : [];
+    if (!source) return reply.code(404).send({error:"کارت منبع ذخیره‌شده پیدا نشد."});
+    if (request.auth.channelIds != null && !request.auth.channelIds.includes(String(source.config.accountId))) return reply.code(403).send({error:"دسترسی به این کانال ندارید."});
+    try {
+      const {token,account} = await youtubeToken(String(source.config.accountId),request.auth.workspaceId);
+      return await readYoutubeComments(token,account.externalAccountId,{videoId:String(source.config.videoId || ""),limit:Math.min(50,Math.max(1,Number(source.config.batchLimit)||50)),after:typeof source.config.after === "string" && source.config.after ? source.config.after : undefined});
+    } catch { return reply.code(502).send({error:"خواندن کامنت‌ها ناموفق بود؛ اتصال یوتیوب، مجوزها و شناسه ویدئو را بررسی کنید."}); }
+  });
+  app.get("/workflows/:workflowId/youtube-comments", async (request, reply) => {
+    const {workflowId} = z.object({workflowId:z.string().uuid()}).parse(request.params);
+    const [workflow] = await db.select().from(workflows).where(and(eq(workflows.id,workflowId),eq(workflows.workspaceId,request.auth.workspaceId)));
+    if (!workflow) return reply.code(404).send({error:"جریان پیدا نشد."});
+    const rows = await db.select({ runId:runs.id, runStatus:runs.status, stepKey:workflowSteps.key, status:runSteps.status, output:runSteps.output, error:runSteps.error, retryAt:runs.output, at:runSteps.startedAt })
+      .from(runSteps).innerJoin(runs,eq(runSteps.runId,runs.id)).innerJoin(workflowSteps,eq(runSteps.workflowStepId,workflowSteps.id))
+      .where(and(eq(runs.workflowId,workflowId),eq(workflowSteps.type,"youtube_reply"))).orderBy(desc(runSteps.startedAt)).limit(100);
+    return rows.filter(row => request.auth.channelIds == null || request.auth.channelIds.includes(String((row.output?.youtube as any)?.accountId))).map(row=>({...row,retryAt:row.retryAt?.retryAt ?? null}));
+  });
   app.get("/workflows", async (request) => {
     return db
       .select()

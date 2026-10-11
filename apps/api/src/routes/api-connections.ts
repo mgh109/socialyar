@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { apiConnections, decryptSecret, encryptSecret, ensureCommentStorage, getDb, secretConfigurationProblem, workflowSteps, workflowVersions, workflows } from "@socialyar/db";
@@ -88,7 +88,7 @@ export async function apiConnectionRoutes(app: FastifyInstance) {
       .where(and(eq(workflowVersions.workflowId, workflow.id), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
     if (!version) return reply.code(404).send({ error: "workflow_version_not_found" });
     const [source] = await db.select({ id: workflowSteps.id }).from(workflowSteps)
-      .where(and(eq(workflowSteps.workflowVersionId, version.id), eq(workflowSteps.key, key), eq(workflowSteps.type, "api_source"))).limit(1);
+      .where(and(eq(workflowSteps.workflowVersionId, version.id), eq(workflowSteps.key, key), inArray(workflowSteps.type, ["api_source","youtube_comments"]))).limit(1);
     if (!source) return reply.code(404).send({ error: "api_source_not_found" });
     const value = await redis.get(`source-health:${workflow.id}:${version.id}:${key}`);
     return value ? JSON.parse(value) : { status: "not_checked" };

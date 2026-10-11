@@ -14,8 +14,9 @@ export type DispatchRecoveryOptions = {
 /** Reconcile durable database intent with versioned Redis jobs. */
 export async function reconcileDispatch(options: DispatchRecoveryOptions, now = new Date()) {
   const { database: db, workflowQueue, publicationQueue, prepare, recover, reserveSlot } = options;
-    const queued = await db.select().from(runs).where(and(eq(runs.status, "queued"), lt(runs.createdAt, new Date(now.getTime() - 10000)))).orderBy(asc(runs.createdAt)).limit(100);
+    const queued = await db.select().from(runs).where(and(eq(runs.status, "queued"), lt(runs.createdAt, new Date(now.getTime() - 10000)), or(sql`${runs.output}->>'retryAt' IS NULL`, sql`${runs.output}->>'retryAt' <= ${now.toISOString()}`))).orderBy(asc(runs.createdAt)).limit(100);
     for (const run of queued) {
+      if (typeof run.output?.retryAt === "string" && new Date(run.output.retryAt).getTime() > now.getTime()) continue;
       const jobId = `run-${run.id}-dispatch-${run.dispatchVersion}`;
       const prior = await workflowQueue.getJob(jobId);
       if (prior) {

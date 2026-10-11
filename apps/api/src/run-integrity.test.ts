@@ -81,3 +81,11 @@ test("input prompt and empty draft never count as a generated draft",async()=>{
  const response=await app.inject({method:"POST",url:`/runs/${id}/content`});assert.equal(response.statusCode,409,response.body);assert.equal(response.json().error,"run_has_no_draft_output");assert.equal((await db.select().from(tables.contentItems).where(eq(tables.contentItems.runId,id))).length,0);
  const details=await app.inject({method:"GET",url:`/runs/${id}`});assert.equal(details.json().processingSummary.hasDraft,false);
 });
+
+test("YouTube reply approval requeues the sending card with edited reply instead of incorrectly completing it",async()=>{
+ const id=randomUUID(),replyId=randomUUID();await db.insert(tables.workflowSteps).values({id:replyId,workflowVersionId:versionId,key:"youtube-reply",type:"youtube_reply",name:"پاسخ"});
+ await db.insert(tables.runs).values({id,workflowId,workflowVersionId:versionId,status:"waiting_approval"});await db.insert(tables.runSteps).values({runId:id,workflowStepId:replyId,status:"waiting_approval",output:{commentId:"parent",decision:"reply",reply:"پاسخ اولیه"}});
+ const response=await app.inject({method:"POST",url:`/runs/${id}/approval`,payload:{action:"approve",stepKey:"youtube-reply",edit:{reply:"پاسخ ویرایش‌شده"}}});assert.equal(response.statusCode,200,response.body);
+ const [record]=await db.select().from(tables.runSteps).where(eq(tables.runSteps.runId,id));assert.equal(record.status,"queued");assert.equal(record.output?.reply,"پاسخ ویرایش‌شده");assert.equal(record.output?.approved,true);
+ const duplicate=await app.inject({method:"POST",url:`/runs/${id}/approval`,payload:{action:"approve",stepKey:"youtube-reply"}});assert.equal(duplicate.statusCode,409);
+});
