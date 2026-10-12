@@ -912,7 +912,7 @@ export function WorkflowBuilder() {
           {step.type === "youtube_comments" ? <div className="graph-source-footer graph-source-schedule"><span>کامنت یوتیوب</span><span>{live?.nextPollAt ? countdownLabel(live?.nextPollAt, clock, autoEnabled) : "پایش پس از فعال‌سازی"}</span></div> : null}
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
-          
+
           {step.type === "filter" && live?.filters?.some((item) => item.stepKey === step.key) ?
             <div className={`graph-source-footer graph-filter-footer ${live.filters.find((item) => item.stepKey === step.key)?.passed ? "passed" : "rejected"}`}>
               {live.filters.find((item) => item.stepKey === step.key)?.passed ? "✓ عبور کرد" : "⊘ رد شد"} · آخرین خبر
@@ -1167,3 +1167,4 @@ export function WorkflowBuilder() {
     </aside> : null}</div>
   </main>;
 }
+
