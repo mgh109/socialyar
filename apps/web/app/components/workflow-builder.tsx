@@ -898,10 +898,10 @@ export function WorkflowBuilder() {
             step.type === "filter" ? "شرط" : step.type === "publish" ?
               publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "خروجی" :
               step.type === "ai" ? "هوش" : "کارت"}</span>
-            <details className="graph-card-menu" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
+            <details className="graph-card-menu" onKeyDown={(event)=>{if(event.key==="Escape"){event.stopPropagation();event.currentTarget.open=false;}}} onBlur={(event)=>{if(!event.currentTarget.contains(event.relatedTarget))event.currentTarget.open=false;}} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
               <summary aria-label={`گزینه‌های کارت ${step.name}`}>⋮</summary><div>
-                <button className="ghost-button" onClick={() => { setSelectedKey(step.key); setSelectedEdge(null); }}>تنظیمات کارت</button>
-                <button className="danger-button" onClick={() => remove(step.key)}>حذف کارت و اتصال‌ها</button>
+                <button className="ghost-button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setSelectedKey(step.key); setSelectedEdge(null); }}>تنظیمات کارت</button>
+                <button className="danger-button" onClick={() => remove(step.key)}>حذف کارت</button>
               </div></details></div>
           <span className="graph-role-label">{stepActivity(step) ? <><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</> :
             isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>

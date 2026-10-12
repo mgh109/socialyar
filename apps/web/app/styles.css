@@ -1724,3 +1724,12 @@ body:has(.calendar-minimal) .account-dock { top:5px; right:12px; }
 .graph-card-picker-results > button > span { font-size:18px; color:var(--muted); }
 .graph-card-picker p { color:var(--muted); font-size:13px; }
 @media(max-width:480px) { .graph-card-picker { padding:16px; } .graph-card-picker-results { grid-template-columns:1fr; } }
+
+/* Compact card actions; override the drag heading's button typography. */
+.graph-card-menu > summary { display:grid; place-items:center; width:28px; height:28px; box-sizing:border-box; padding:0; border:0; border-radius:6px; font-size:18px; line-height:1; color:var(--muted); }
+.graph-card-menu > summary:hover,.graph-card-menu[open] > summary { background:var(--panel2); color:var(--text); }
+.graph-card-menu > summary:focus-visible { outline:2px solid var(--green); outline-offset:2px; }
+.graph-card-menu > div { top:calc(100% + 4px); width:160px; box-sizing:border-box; padding:5px; gap:2px; border-radius:9px; box-shadow:0 6px 18px rgba(0,0,0,.1); }
+.graph-node-head .graph-card-menu > div > button { display:flex; align-items:center; justify-content:flex-start; width:100%; min-height:32px; height:32px; padding:0 10px; margin:0; box-sizing:border-box; border:0; border-radius:5px; background:transparent; color:var(--text); font:inherit; font-size:12px; font-weight:400; line-height:1.4; white-space:nowrap; text-align:right; cursor:pointer; }
+.graph-node-head .graph-card-menu > div > button:hover { background:var(--panel2); }
+.graph-node-head .graph-card-menu > div > .danger-button { color:var(--red); border-top:1px solid var(--border); border-radius:0 0 5px 5px; }
