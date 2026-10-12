@@ -150,7 +150,7 @@ export function WorkflowBuilder() {
   useEffect(() => {
     if (!selectedKey && !selectedEdge) return;
     const dismiss = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented) { setSelectedKey(""); setSelectedEdge(null); }
+      if (event.key === "Escape" && !event.defaultPrevented && !document.querySelector("dialog[open]")) { setSelectedKey(""); setSelectedEdge(null); }
     };
     document.addEventListener("keydown", dismiss);
     return () => document.removeEventListener("keydown", dismiss);
@@ -167,6 +167,11 @@ export function WorkflowBuilder() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [aiReady, setAiReady] = useState(false);
   const [aiProfiles, setAiProfiles] = useState<AIProfile[]>([]);
+  const [cardPickerOpen,setCardPickerOpen]=useState(false);
+  const [cardSearch,setCardSearch]=useState("");
+  const cardPickerRef=useRef<HTMLDialogElement>(null);
+  const cardSearchRef=useRef<HTMLInputElement>(null);
+  useEffect(()=>{const dialog=cardPickerRef.current;if(!dialog)return;if(cardPickerOpen&&!dialog.open){dialog.showModal();cardSearchRef.current?.focus();}else if(!cardPickerOpen&&dialog.open)dialog.close();},[cardPickerOpen]);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [generatorRequest, setGeneratorRequest] = useState("");
   const [generatorProfile, setGeneratorProfile] = useState("default");
@@ -754,6 +759,12 @@ export function WorkflowBuilder() {
             step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
             step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "تأیید پیش از ادامه" : "به کارت‌های دیگر وصل کن";
   return <main className="workflow-page builder-page builder-minimal">
+    <dialog ref={cardPickerRef} className="graph-card-picker" aria-labelledby="graph-card-picker-title" onCancel={()=>setCardPickerOpen(false)} onClose={()=>setCardPickerOpen(false)} onClick={event=>{if(event.target===event.currentTarget){const box=event.currentTarget.getBoundingClientRect();if(event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)setCardPickerOpen(false);}}}>
+      <header><h2 id="graph-card-picker-title">افزودن کارت</h2><button type="button" className="ghost-button" aria-label="بستن انتخاب کارت" onClick={()=>setCardPickerOpen(false)}>×</button></header>
+      <input ref={cardSearchRef} type="search" aria-label="جست‌وجوی کارت‌ها" placeholder="نام کارت را جست‌وجو کن…" value={cardSearch} onChange={event=>setCardSearch(event.target.value)} />
+      <div className="graph-card-picker-results">{types.filter(item=>`${item.label} ${item.type}`.replace(/ي/g,"ی").replace(/ك/g,"ک").toLowerCase().includes(cardSearch.trim().replace(/ي/g,"ی").replace(/ك/g,"ک").toLowerCase())).map(item=><button type="button" className="ghost-button" key={item.type} onClick={()=>{setCardPickerOpen(false);add(item.type);}}><span aria-hidden="true">＋</span>{item.label}</button>)}</div>
+      {!types.some(item=>`${item.label} ${item.type}`.replace(/ي/g,"ی").replace(/ك/g,"ک").toLowerCase().includes(cardSearch.trim().replace(/ي/g,"ی").replace(/ك/g,"ک").toLowerCase()))?<p role="status">کارتی با این نام پیدا نشد.</p>:null}
+    </dialog>
     <header className="app-header"><div className="brand-lockup"><BrandLogo /><span>میز کار / {name}</span></div>
       <div className="header-actions"><span className="save-status" role="status">{dirty ? "تغییرات ذخیره نشده · " : ""}{removedCard && message === "کارت حذف شد؛ تغییرات را ذخیره کن." ? "" : message}</span>
         {removedCard ? <div className="builder-recovery-inline" role="status"><span title={`کارت «${removedCard.step.name}» حذف شد؛ تغییر هنوز ذخیره نشده است.`}>«{removedCard.step.name}» حذف شد</span>
@@ -787,10 +798,7 @@ export function WorkflowBuilder() {
     <div className={`builder-layout ${selected || selectedEdge ? "inspector-open" : ""}`}><section className="builder-workspace" aria-label="بوم جریان">
       <div className="graph-frame"><div className="graph-canvas-controls"><div className="graph-canvas-actions">
         {!workflowId ? <button type="button" className="graph-icon-action graph-ai-create" onClick={() => setGeneratorOpen(true)}>✦ ساخت با هوش مصنوعی</button> : null}
-        <div className="graph-palette"><details><summary>+ افزودن کارت</summary><div className="graph-palette-menu">
-        {types.map((item) => <button key={item.type} type="button" onClick={(event) => {
-          add(item.type); event.currentTarget.closest("details")?.removeAttribute("open");
-        }}>{item.label}</button>)}</div></details></div>
+        <button type="button" className="graph-icon-action" aria-haspopup="dialog" onClick={()=>{setCardSearch("");setCardPickerOpen(true);}}>+ افزودن کارت</button>
         <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
         </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ ${durationLabel(pollIntervalMinutes)}` : "پیش‌نویس"}>{autoEnabled ? `● ${durationLabel(pollIntervalMinutes)}` : "○ پیش‌نویس"}</span>
         {workflowId ? <details className="graph-activity graph-usage"><summary>مصرف AI {usage?.totals.requests ? `· ${faNumber(usage.totals.requests)}` : ""}</summary>

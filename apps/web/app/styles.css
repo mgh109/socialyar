@@ -1711,3 +1711,16 @@ body:has(.calendar-minimal) .account-dock { top:5px; right:12px; }
 .calendar-minimal .calendar-weekday { padding:8px 4px; font-size:11px; }
 .calendar-minimal .calendar-drawer input,.calendar-minimal .calendar-drawer select,.calendar-minimal .calendar-time-dialog input,.calendar-minimal .calendar-time-dialog select { height:auto; min-height:36px; padding:8px 10px; }
 @media(max-width:700px) { .calendar-minimal .publication-calendar-shell { padding:10px; } .calendar-minimal .calendar-filters { grid-template-columns:repeat(2,minmax(0,1fr)); } .calendar-minimal .calendar-counters { gap:10px; } .calendar-minimal .calendar-navigation { justify-content:flex-start; } }
+
+.graph-card-picker { width:min(560px,calc(100vw - 32px)); max-height:calc(100dvh - 48px); box-sizing:border-box; padding:22px; border:1px solid var(--border); border-radius:14px; background:var(--panel); color:var(--text); overflow:auto; }
+.graph-card-picker::backdrop { background:rgba(0,0,0,.45); }
+.graph-card-picker > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:18px; }
+.graph-card-picker h2 { font-size:18px; margin:0; }
+.graph-card-picker > header button { font-size:22px; min-width:34px; min-height:34px; }
+.graph-card-picker > input { width:100%; height:40px; box-sizing:border-box; border:1px solid var(--border); border-radius:8px; padding:0 12px; background:var(--canvas); color:var(--text); font:inherit; font-size:13px; }
+.graph-card-picker-results { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:16px; }
+.graph-card-picker-results > button { display:flex; align-items:center; gap:10px; min-height:52px; padding:12px; text-align:right; font-size:12px; white-space:normal; }
+.graph-card-picker-results > button:hover { border-color:var(--green); background:var(--accent-soft); }
+.graph-card-picker-results > button > span { font-size:18px; color:var(--muted); }
+.graph-card-picker p { color:var(--muted); font-size:13px; }
+@media(max-width:480px) { .graph-card-picker { padding:16px; } .graph-card-picker-results { grid-template-columns:1fr; } }
