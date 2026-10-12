@@ -1,4 +1,5 @@
 "use client";
+import { ImageUsageSummary } from "./image-usage-summary";
 import { apiFetch, getWorkspaceId } from "../lib/session";
 
 import { BrandLogo } from "./brand-logo";
@@ -228,7 +229,7 @@ export function AnalyticsDashboard() {
               <option value="90d">۹۰ روز اخیر</option><option value="all">همهٔ زمان‌ها</option>
             </select>
           </div>
-          {usageError && <p role="alert">{usageError}</p>}
+          <ImageUsageSummary period={usagePeriod}/>{usageError && <p role="alert">{usageError}</p>}
           {usage && <>
             <div className="metric-grid ai-usage-grid">
               <article className="metric-card"><span>درخواست‌های AI</span><strong>{usageNumber(usage.totals.requests)}</strong></article>

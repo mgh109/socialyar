@@ -11,7 +11,7 @@ const engine=new PGlite(),db=drizzle(engine,{schema:tables});
 const workspaceId=randomUUID(),workflowId=randomUUID(),versionId=randomUUID(),accountId=randomUUID();
 const now=new Date("2028-01-01T12:00:00Z"),old=new Date("2028-01-01T11:00:00Z");
 before(async()=>{
- for(const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0008_publication_calendar.sql","0011_execution_recovery.sql", "0012_tenant_access.sql"])await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),"utf8"));
+ for(const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0008_publication_calendar.sql","0011_execution_recovery.sql", "0012_tenant_access.sql", "0014_image_generation.sql"])await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),"utf8"));
  const userId=randomUUID();await db.insert(tables.users).values({id:userId,email:"dispatch-test@example.com"});
  await db.insert(tables.workspaces).values({id:workspaceId,name:"test",slug:"dispatch-test",ownerId:userId});
  await db.insert(tables.workspaceSubscriptions).values({workspaceId});

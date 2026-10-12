@@ -26,7 +26,7 @@ export async function previewCollectionDestination(db: Db, workspaceId: string, 
   return { revision:collection?.revision ?? 0,changes:collectionDiff(input.rows,collection?.records ?? [],itemStates(items)).filter((c) => input.detectRemovals || c.kind !== "removed").map((c) => ({ ...c,remoteEligible:false })) };
 }
 export async function applyCollectionDestination(db: Db, auth:{workspaceId:string;userId:string}, input:CollectionScope & { rows:CollectionRow[];detectRemovals:boolean;revision:number;selected:Array<{id:string;version:number|null;updatedAt:string|null}> },
-  target:{step:typeof workflowSteps.$inferSelect;source:typeof workflowSteps.$inferSelect;account:typeof socialAccounts.$inferSelect}) {
+  target:{step:typeof workflowSteps.$inferSelect;source:typeof workflowSteps.$inferSelect;account:typeof socialAccounts.$inferSelect;imageStep?:typeof workflowSteps.$inferSelect}) {
   return db.transaction(async(tx) => {
     await tx.insert(contentCollections).values({workspaceId:auth.workspaceId,...{ workflowId:input.workflowId,sourceStepKey:input.sourceStepKey,targetStepKey:input.targetStepKey }}).onConflictDoNothing();
     const [collection] = await tx.select().from(contentCollections).where(collectionWhere(auth.workspaceId,input)).for("update");
@@ -54,7 +54,7 @@ export async function applyCollectionDestination(db: Db, auth:{workspaceId:strin
         if(row.scheduledAt && Date.parse(row.scheduledAt)<=Date.now()) throw new Error(`«${row.title}»: زمان انتشار گذشته است.`);
         const settings:Record<string,unknown>={...old?.variant.settings,accountId:target.account.id,accountName:target.account.displayName ?? target.account.externalAccountId,
           connection:old?.variant.settings.connection ?? target.step.config.connection,mediaConnection:target.source.config.mediaConnection,
-          collectionId:collection.id,collectionSourceKey:input.sourceStepKey,collectionRowId:row.id,workflowId:input.workflowId,publishStepKey:input.targetStepKey,calendarHold:true,calendarPaused:false};
+          collectionId:collection.id,collectionSourceKey:input.sourceStepKey,collectionRowId:row.id,workflowId:input.workflowId,publishStepKey:input.targetStepKey,calendarHold:true,calendarPaused:false,imageStep:target.imageStep ? {key:target.imageStep.key,config:target.imageStep.config} : undefined,imagePrepared:!target.imageStep,imageStopped:false,imageRetryAt:null};
         delete settings.instagramContainerId; delete settings.instagramChildren;
         if(target.account.channel === "instagram") {
           if(!old || change.fields.includes("instagramType")) settings.instagramType=row.instagramType ?? target.step.config.instagramType;

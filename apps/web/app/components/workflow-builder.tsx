@@ -1,6 +1,9 @@
 "use client";
+import { ImageUsageSummary } from "./image-usage-summary";
 
 import Link from "next/link";
+import { ImageGenerationPanel } from "./image-generation-panel";
+import { collectionImagePath } from "@socialyar/shared";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PersianDateTimeField } from "./persian-date-time-field";
@@ -34,6 +37,7 @@ type UsageTotals = { requests: number; inputTokens: number | string; outputToken
   costMicros: number | string; unreportedTokens: number; unreportedCost: number };
 type WorkflowUsage = { totals: UsageTotals; byStep: Array<UsageTotals & { stepKey: string }> };
 type LiveState = {
+  imageJobs?:Array<{stepKey:string;status:string;error:string|null;createdAt:string}>;
   connections?: Array<{ stepKey: string; route: string; proxyName: string | null }>;
   nextPollAt: string | null;
   events: Array<{ id: string; type: string; stepKey: string | null; createdAt: string; decision: string | null }>;
@@ -60,6 +64,7 @@ const types = [
   { type: "youtube_comments", label: "کامنت‌های یوتیوب" },
   { type: "youtube_reply", label: "پاسخ هوشمند یوتیوب" },
   { type: "collection_source", label: "مجموعه از اکسل / گوگل‌شیت" },
+  { type: "image_generate", label: "تولید تصویر با AI" },
   { type: "filter", label: "شرط" },
   { type: "ai", label: "هوش مصنوعی" },
   { type: "human_approval", label: "تأیید انسانی" },
@@ -71,6 +76,7 @@ const errors: Record<string, string> = {
   youtube_comment_account_required:"حساب فعال یوتیوب را انتخاب کنید.",youtube_comment_settings_invalid:"تعداد، تاریخ یا تنظیمات پاسخ کامنت معتبر نیست.",youtube_reply_source_invalid:"کارت پاسخ باید از منبع کامنت یوتیوب با همان حساب ورودی بگیرد.",
   graph_invalid_step: "یک کارت نامعتبر است.", graph_invalid_connection: "اتصال نامعتبر یا تکراری است.",
   graph_cycle: "اتصال حلقه‌ای مجاز نیست.", graph_missing_input: "همهٔ کارت‌های پردازش باید از یک منبع ورودی بگیرند.",
+  image_config_invalid: "مدل تصویر، اندازه و محدودیت‌ها را کامل و معتبر تنظیم کن.",
   graph_unfinished_branch: "هر شاخه باید به انتشار یا پیش‌نویس برسد.", graph_invalid_filter: "برای شرط، واژه‌های کلیدی وارد کن.",
   ai_output_invalid: "تنظیم عنوان یا نشانی تصویر کارت هوش مصنوعی معتبر نیست.",
   invalid_rss_url: "آدرس خوراک خبری باید امن و عمومی باشد.", invalid_eitaa_source: "شناسهٔ کانال ایتا معتبر نیست.",
@@ -257,6 +263,14 @@ export function WorkflowBuilder() {
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
   const stepActivity = (step: Step) => {
+    if(step.type === "image_generate"){
+      const job=live?.imageJobs?.find(j=>j.stepKey===step.key);
+      const active=live?.active?.find(j=>j.stepKey===step.key);
+      if(active)return {label:"در حال تولید تصویر",state:"running"};
+      if(job?.status === "reserved")return {label:Date.now()-Date.parse(job.createdAt)<300000?"در حال تولید تصویر":"نتیجه تولید نامعلوم؛ بررسی لازم است",state:Date.now()-Date.parse(job.createdAt)<300000?"running":"failed"};
+      if(job)return {label:job.status === "completed"?"تصویر آماده است":"تولید تصویر ناموفق بود",state:job.status === "completed"?"completed":"failed"};
+    }
+
     if ((step.type === "collection_source" || step.type === "publish") && outputStale) return { label: "اطلاعات خروجی‌ها به‌روز نیست", state: "idle" };
     if (liveStale) return { label: "وضعیت زنده در دسترس نیست", state: "idle" };
     if (step.type === "collection_source") {
@@ -526,7 +540,7 @@ export function WorkflowBuilder() {
     const count = steps.length;
     const config = type === "youtube_comments" ? {accountId:"",videoId:"",batchLimit:50,after:""} : type === "youtube_reply" ? {accountId:"",profileId:"default",requireApproval:true,dailyLimit:20,tone:"محترمانه و صمیمی",context:"",instructions:""} : type === "rss_source" ? { sourceKind: "rss", feedUrl: "" } :
       type === "publish" ? { accountId: "", publishIntervalSeconds: 30 } :
-      type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
+      type === "image_generate" ? {profileId:aiProfiles[0]?.id??"default",model:"",preset:"news",behavior:"missing",dailyLimit:10,estimatedCostMicros:100000} : type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
       { profileId: aiProfiles[0]?.id ?? "default", aiMode: "rewrite" } : type === "api_source" ?
       { connectionId: apiConnections[0]?.id ?? "", path: "/comments", itemsPath: "data.comments", idField: "id", textField: "text", contextField: "context",
         readMode: "single", batchLimit: 10, includeIndividual: false, postIdField: "postId", postId: "" } :
@@ -617,7 +631,8 @@ export function WorkflowBuilder() {
   const connect = (sourceKey: string, targetKey: string) => {
     const source = steps.find((step) => step.key === sourceKey), target = steps.find((step) => step.key === targetKey);
     setConnecting(null); setPointer(null);
-    if (source?.type === "collection_source" && target?.type !== "publish") { setMessage("کارت مجموعه را مستقیم به کارت‌های انتشار وصل کن."); return; }
+    if (source?.type === "collection_source" && !["publish","image_generate"].includes(target?.type??"")) { setMessage("مجموعه را به انتشار یا تولید تصویر وصل کن."); return; }
+    if(source?.type === "image_generate" && edges.some(e=>e.targetKey===source.key&&steps.find(s=>s.key===e.sourceKey)?.type==="collection_source") && target?.type!=="publish"){setMessage("تصویرِ مجموعه را به کارت انتشار وصل کن.");return;}
     if (!source || !target || sourceKey === targetKey || isTerminal(source) || isSource(target)) {
       setMessage("این دو کارت نمی‌توانند در این جهت وصل شوند."); return;
     }
@@ -723,6 +738,7 @@ export function WorkflowBuilder() {
   const stroke = (from: Position, to: Position) => `M ${from.x} ${from.y} C ${from.x - 92} ${from.y}, ${to.x + 92} ${to.y}, ${to.x} ${to.y}`;
   const cardDescription = (step: Step) => step.type === "youtube_comments" ? "خواندن کامنت‌های کانال یوتیوب" : step.type === "youtube_reply" ? (step.config.requireApproval===false ? "تحلیل و پاسخ خودکار" : "تحلیل و پاسخ پس از تأیید") : step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
+            step.type === "image_generate" ? `تصویر ${step.config.preset ?? "خبر"} · ${step.config.model || "مدل را تنظیم کن"}` :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
             step.type === "publish" ? publishAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "مقصد را انتخاب کن" :
             step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال سرویس را انتخاب کن" :
@@ -770,7 +786,7 @@ export function WorkflowBuilder() {
         <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
         </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ ${durationLabel(pollIntervalMinutes)}` : "پیش‌نویس"}>{autoEnabled ? `● ${durationLabel(pollIntervalMinutes)}` : "○ پیش‌نویس"}</span>
         {workflowId ? <details className="graph-activity graph-usage"><summary>مصرف AI {usage?.totals.requests ? `· ${faNumber(usage.totals.requests)}` : ""}</summary>
-          <div><strong>مصرف هوش مصنوعی این جریان</strong>
+          <ImageUsageSummary workflowId={workflowId} period={usagePeriod}/><div><strong>مصرف هوش مصنوعی این جریان</strong>
             <select aria-label="بازهٔ مصرف این جریان" value={usagePeriod} onChange={(event) => setUsagePeriod(event.target.value as "7d" | "30d" | "all")}>
               <option value="7d">۷ روز اخیر</option><option value="30d">۳۰ روز اخیر</option><option value="all">همهٔ زمان‌ها</option>
             </select>
@@ -932,8 +948,9 @@ export function WorkflowBuilder() {
           <option value="api">کامنت API</option><option value="manual">ورودی دستی</option></select></label> : null}
         {["youtube_comments","youtube_reply"].includes(selected.type) ? <YoutubeCommentsPanel key={selected.key} type={selected.type} stepKey={selected.key} workflowId={workflowId ?? undefined} config={selected.config} update={(key,value)=>update(selected.key,key,value)} accounts={accounts} profiles={aiProfiles} /> : null}
         {selected.type === "collection_source" ? <CollectionPanel key={selected.key} workflowId={workflowId} stepKey={selected.key}
-          targets={steps.filter((s) => s.type === "publish" && ["youtube", "telegram", "eitaa", "bale", "instagram", "website"].includes(accounts.find((a) => a.id === s.config.accountId)?.channel ?? "") && edges.some((e) => e.sourceKey === selected.key && e.targetKey === s.key)).map((s)=>({...s,config:{...s.config,collectionChannel:accounts.find((a)=>a.id===s.config.accountId)?.channel}}))}
+          targets={steps.filter((s) => s.type === "publish" && ["youtube", "telegram", "eitaa", "bale", "instagram", "website"].includes(accounts.find((a) => a.id === s.config.accountId)?.channel ?? "") && collectionImagePath(steps,edges,selected.key,s.key)!==null).map((s)=>({...s,config:{...s.config,collectionChannel:accounts.find((a)=>a.id===s.config.accountId)?.channel}}))}
           config={selected.config} update={(key,value) => update(selected.key,key,value)} refresh={refreshYoutube} items={youtubeItems} calendarOutputs={collectionOutputs} /> : null}
+        {selected.type === "image_generate" ? <ImageGenerationPanel key={selected.key} config={selected.config} update={(key,value)=>update(selected.key,key,value)} profiles={aiProfiles} workflowId={workflowId} stepKey={selected.key}/> : null}
         {selected.type === "rss_source" ? <>
           {selected.config.sourceKind === "eitaa" || selected.config.sourceKind === "bale" ? <label><span>شناسه یا لینک کانال</span>
             <input dir="ltr" placeholder={selected.config.sourceKind === "bale" ? "https://ble.ir/channel" : "https://eitaa.com/channel"}
@@ -941,7 +958,7 @@ export function WorkflowBuilder() {
             <label><span>آدرس RSS</span><input dir="ltr" type="url" placeholder="https://example.com/feed.xml"
               value={String(selected.config.feedUrl ?? "")} onChange={(event) => update(selected.key, "feedUrl", event.target.value)} /></label>}
           <small className="builder-note">هر کارت یک منبع دارد. برای منبع بیشتر کارت دیگری اضافه کن.</small></> : null}
-        {selected.type === "filter" ? <><label><span>واژه‌های کلیدی (با ویرگول جدا کن)</span><textarea
+        {selected.type === "filter" ? <><label><span>نوع شرط</span><select value={String(selected.config.condition ?? "keywords")} onChange={e=>update(selected.key,"condition",e.target.value)}><option value="keywords">واژه‌های کلیدی</option><option value="has_image">تصویر دارد</option><option value="no_image">تصویر ندارد</option></select></label><label><span>واژه‌های کلیدی (با ویرگول جدا کن)</span><textarea
           value={String(selected.config.keywords ?? "")} onChange={(event) => update(selected.key, "keywords", event.target.value)}
           placeholder="فوتبال، لیگ، ورزش" /></label><label><span>شرط عبور خبر</span><select value={String(selected.config.mode ?? "include")}
             onChange={(event) => update(selected.key, "mode", event.target.value)}><option value="include">شامل یکی از واژه‌ها</option>

@@ -75,6 +75,7 @@ async function executeClaimedPublication(input: { publicationId: string; attempt
     throw new Error("Content variant not found");
   }
   if (!["approved", "scheduled"].includes(variant.status)) return;
+  if(variant.settings.imagePrepared===false)throw new Error("تصویر محتوا هنوز آماده نشده است.");
 
   const account = publication.socialAccountId
     ? (

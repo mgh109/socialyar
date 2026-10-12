@@ -1,3 +1,4 @@
+import { pollCollectionImages } from "./collection-images";
 import { reconcileDispatch } from "./dispatch-recovery";
 import { Queue, Worker } from "bullmq";
 import { closeDb, getDb, ensurePublishingStorage } from "@socialyar/db";
@@ -66,6 +67,8 @@ async function recoverDispatch() {
   } catch (error) { console.error("بازیابی صف اجرا ناموفق بود", error); }
   finally { recovering = false; }
 }
+const imageTimer=setInterval(()=>void pollCollectionImages(),30000);
+void pollCollectionImages();
 const recoveryTimer = setInterval(() => void recoverDispatch(), 30000);
 void recoverDispatch();
 
@@ -94,6 +97,7 @@ publicationWorker.on("failed", (job, error) => {
 
 const shutdown = async () => {
   clearInterval(recoveryTimer);
+  clearInterval(imageTimer);
   stopCollectionSheetPoller();
   await Promise.all([
     recoveryQueue.close(),

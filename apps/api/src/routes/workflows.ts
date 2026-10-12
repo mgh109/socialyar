@@ -1,3 +1,5 @@
+import { imageGenerationJobs } from "@socialyar/db";
+import { imageConfigSchema } from "@socialyar/shared";
 import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
@@ -78,7 +80,7 @@ const updateWorkflowSchema = z.object({
 const blueprintSchema = z.object({
   name: z.string().trim().min(1).max(80),
   nodes: z.array(z.object({ id: z.string().min(1).max(40), type: z.enum([
-    "rss_source", "api_source", "manual_input", "collection_source", "youtube_comments", "youtube_reply", "filter", "ai", "comment_decision", "human_approval", "draft", "publish", "api_action",
+    "rss_source", "api_source", "manual_input", "collection_source", "youtube_comments", "youtube_reply", "filter", "ai", "image_generate", "comment_decision", "human_approval", "draft", "publish", "api_action",
   ]), name: z.string().trim().min(1).max(70), config: z.record(z.unknown()).default({}) })).min(2).max(12),
   edges: z.array(z.object({ from: z.string(), to: z.string(), decision: z.enum(["approve", "reject", "reply", "review"]).optional() })).min(1).max(24),
 });
@@ -280,8 +282,8 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
   const accountIds = sorted.filter((step) => step.type === "publish").map((step) => step.config.accountId);
   if (new Set(accountIds).size !== accountIds.length) return "duplicate_publish_channel";
   for (const filter of sorted.filter((step) => step.type === "filter")) {
-    if (typeof filter.config.keywords !== "string" || !filter.config.keywords.trim() ||
-      !["include", "exclude"].includes(String(filter.config.mode ?? "include"))) return "graph_invalid_filter";
+    if (!["has_image","no_image"].includes(String(filter.config.condition)) && (typeof filter.config.keywords !== "string" || !filter.config.keywords.trim() ||
+      !["include", "exclude"].includes(String(filter.config.mode ?? "include")))) return "graph_invalid_filter";
   }
   for (const step of sorted.filter((item) => ["ai", "youtube_reply"].includes(item.type))) {
     if (step.type === "ai" && !["rewrite", "feedback"].includes(String(step.config.aiMode ?? "rewrite"))) return "ai_output_invalid";
@@ -308,6 +310,12 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
       await db.select({ id: aiSettings.workspaceId }).from(aiSettings)
         .where(eq(aiSettings.workspaceId, workspaceId)).limit(1);
     if (!settings) return profileId && profileId !== "default" ? "ai_profile_not_found" : "ai_token_not_configured";
+  }
+  for (const step of sorted.filter(s => s.type === "image_generate")) {
+    if (!imageConfigSchema.safeParse(step.config).success) return "image_config_invalid";
+    const id=step.config.profileId ?? "default";
+    const [profile]=id === "default" ? await db.select().from(aiSettings).where(eq(aiSettings.workspaceId,workspaceId)).limit(1) : await db.select().from(aiProfiles).where(and(eq(aiProfiles.id,String(id)),eq(aiProfiles.workspaceId,workspaceId))).limit(1);
+    if(!profile)return "ai_profile_not_found";
   }
   return null;
 }
@@ -400,7 +408,8 @@ export async function workflowRoutes(app: FastifyInstance) {
           { sourceKind: kind, channel: input.request.includes(suppliedChannel) && suppliedChannel ? suppliedChannel : "" } :
         node.type === "youtube_comments" ? { accountId, videoId: text("videoId",11) && input.request.includes(text("videoId",11)) ? text("videoId",11) : "", batchLimit: Math.max(1,Math.min(500,Number(config.batchLimit)||50)), context:text("context",4000), after: z.string().datetime().safeParse(config.after).success ? config.after : "" } :
         node.type === "youtube_reply" ? { accountId, profileId:input.profileId ?? "default", dailyLimit:Math.max(1,Math.min(100,Number(config.dailyLimit)||20)), requireApproval:config.requireApproval !== false, tone:text("tone",200), instructions:text("instructions",4000), context:text("context",4000) } :
-        node.type === "filter" ? { keywords: text("keywords", 500), mode: config.mode === "exclude" ? "exclude" : "include" } :
+        node.type === "image_generate" ? { ...config, profileId: input.profileId ?? "default", model:text("model",120), referenceUrl:text("referenceUrl",1000) && input.request.includes(text("referenceUrl",1000)) ? text("referenceUrl",1000) : "", logoUrl:text("logoUrl",1000) && input.request.includes(text("logoUrl",1000)) ? text("logoUrl",1000) : "" } :
+        node.type === "filter" ? { condition: config.condition, keywords: text("keywords", 500), mode: config.mode === "exclude" ? "exclude" : "include" } :
         node.type === "ai" ? { profileId: input.profileId ?? "default", aiMode: config.aiMode === "feedback" ? "feedback" : "rewrite",
           instructions: text("instructions", 3000) } :
         node.type === "comment_decision" ? { profileId: input.profileId ?? "default", rules: text("rules", 3000) } :
@@ -421,7 +430,8 @@ export async function workflowRoutes(app: FastifyInstance) {
       if (node.type === "publish" && !accountId) warnings.push(`مقصد انتشار کارت «${node.name}» را انتخاب کن.`);
       if (["api_source", "api_action"].includes(node.type) && !connectionId) warnings.push(`اتصال کارت «${node.name}» را انتخاب کن.`);
       if (node.type === "rss_source" && !(mapped.feedUrl || mapped.channel)) warnings.push(`نشانی کارت «${node.name}» را وارد کن.`);
-      if (node.type === "filter" && !mapped.keywords) warnings.push(`واژه‌های شرط «${node.name}» را وارد کن.`);
+      if (node.type === "image_generate" && !mapped.model) warnings.push(`مدل تولید تصویر و هزینه برآوردی کارت «${node.name}» را تنظیم کن.`);
+      if (node.type === "filter" && !mapped.condition && !mapped.keywords) warnings.push(`واژه‌های شرط «${node.name}» را وارد کن.`);
       const depth = depths.get(node.id) ?? 0;
       const row = rows.get(depth) ?? 0; rows.set(depth, row + 1);
       return { key: node.id, type: node.type, name: node.name, config: mapped,
@@ -489,6 +499,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         passed: row.status === "completed", title: typeof row.output?.title === "string" ? row.output.title : null,
         at: row.finishedAt });
     }
+    const imageJobs=await db.select({stepKey:imageGenerationJobs.stepKey,status:imageGenerationJobs.status,error:imageGenerationJobs.error,createdAt:imageGenerationJobs.createdAt}).from(imageGenerationJobs).where(and(eq(imageGenerationJobs.workspaceId,request.auth.workspaceId),eq(imageGenerationJobs.workflowId,workflowId))).orderBy(desc(imageGenerationJobs.createdAt)).limit(50);
     const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
     const intervalMinutes = Number.isInteger(configured) && configured >= 1 && configured <= 10080 ? configured : 5;
     const startedAt = Number(markers[sourceSteps.length]);
@@ -500,6 +511,7 @@ export async function workflowRoutes(app: FastifyInstance) {
         createdAt: event.createdAt, stepKey: event.stepKey,
         decision: typeof event.decision?.decision === "string" ? event.decision.decision : null })),
       active,
+      imageJobs,
       filters: [...latestFilters.values()],
       connections: connectionRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ? [{ stepKey: row.metadata.publishStepKey, route: row.route, proxyName: row.proxyName }] : []),
       publications: publicationRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ?

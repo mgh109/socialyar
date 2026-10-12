@@ -9,7 +9,7 @@ import * as tables from "@socialyar/db/schema";
 import { getDb, assertWorkspaceOperational, reserveResourceQuota, createTenantAIQuota, tenantScopeAllows, tenantRoleAllows } from "@socialyar/db";
 import { generateNewsDraft } from "../../../packages/ai/src/index";
 const engine = new PGlite(), db = drizzle(engine, { schema: tables }), database = db as unknown as ReturnType<typeof getDb>;
-before(async () => { for (const file of ["0000_initial.sql", "0001_auth.sql", "0002_eitaa_automation.sql", "0012_tenant_access.sql"]) await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${file}`, import.meta.url), "utf8")); });
+before(async () => { for (const file of ["0000_initial.sql", "0001_auth.sql", "0002_eitaa_automation.sql", "0012_tenant_access.sql", "0014_image_generation.sql"]) await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${file}`, import.meta.url), "utf8")); });
 after(async () => { await engine.close(); });
 async function workspace(extra: Partial<typeof tables.workspaceSubscriptions.$inferInsert> = {}) {
   const userId = randomUUID(), workspaceId = randomUUID();

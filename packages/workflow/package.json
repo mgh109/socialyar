@@ -6,12 +6,14 @@
   "exports": {
     ".": "./src/index.ts",
     "./graph": "./src/graph.ts",
-    "./api-client": "./src/api-client.ts"
+    "./api-client": "./src/api-client.ts",
+    "./image-generation": "./src/image-generation.ts"
   },
   "dependencies": {
     "@socialyar/ai": "workspace:*",
     "@socialyar/db": "workspace:*",
     "@socialyar/shared": "workspace:*",
-    "drizzle-orm": "^0.38.0"
+    "drizzle-orm": "^0.38.0",
+    "sharp": "0.34.5"
   }
 }

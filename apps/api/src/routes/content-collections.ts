@@ -1,3 +1,4 @@
+import { collectionImagePath, imageConfigSchema } from "@socialyar/shared";
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -126,13 +127,13 @@ export async function contentCollectionRoutes(app: FastifyInstance, options: { d
           } else {
             if (row.scheduledAt && Date.parse(row.scheduledAt) <= Date.now()) throw new ImportConflict(`زمان انتشار «${row.title}» گذشته است؛ زمان آینده تعیین کنید.`);
             const settings: Record<string, unknown> = { ...(old?.settings ?? {}), collectionId: collection.id, collectionRowId: row.id, collectionSourceKey: input.sourceStepKey,
-              timezone: "Asia/Tehran", mediaConnection: target.source.config.mediaConnection, connection: old?.settings.connection ?? target.step.config.connection };
+              timezone: "Asia/Tehran", mediaConnection: target.source.config.mediaConnection, connection: old?.settings.connection ?? target.step.config.connection, imageStep:target.imageStep ? {key:target.imageStep.key,config:target.imageStep.config} : undefined, imageRetryAt:null };
             // Only changed spreadsheet fields overwrite content edited in the calendar.
             for (const key of ["videoUrl", "coverUrl", "videoType", "playlist", "order", "tags", "privacy", "madeForKids"] as const)
               if (!old || change.fields.includes(key)) settings[key] = row[key];
             if (!old || change.fields.includes("videoUrl")) { delete settings.videoMediaId; settings.sourceVideoUrl = row.videoUrl; }
             if (!old || change.fields.includes("coverUrl")) { delete settings.coverMediaId; settings.sourceCoverUrl = row.coverUrl; }
-            const prepare = !settings.videoMediaId || Boolean(settings.coverUrl && !settings.coverMediaId) || change.fields.includes("videoType");
+            const prepare = Boolean(target.imageStep) || !settings.videoMediaId || Boolean(settings.coverUrl && !settings.coverMediaId) || change.fields.includes("videoType");
             const values = { settings, title: !old || change.fields.includes("title") ? row.title : old.title,
               description: !old || collectionTextChanged(change.fields,"youtube") ? collectionBody(row,"youtube") : old.description,
               scheduledAt: !old || change.fields.includes("scheduledAt") ? row.scheduledAt ? new Date(row.scheduledAt) : null : old.scheduledAt,
@@ -180,8 +181,12 @@ async function destination(db: ReturnType<typeof getDb>, workspaceId: string, in
   const source = steps.find((s) => s.key === input.sourceStepKey && s.type === "collection_source");
   const step = steps.find((s) => s.key === input.targetStepKey && s.type === "publish");
   if (!source || !step) throw new ImportConflict("کارت مجموعه و انتشار را ذخیره کنید.");
-  const [edge] = await db.select().from(workflowConnections).where(and(eq(workflowConnections.workflowVersionId, version.id), eq(workflowConnections.sourceStepId, source.id), eq(workflowConnections.targetStepId, step.id)));
-  if (!edge) throw new ImportConflict("کارت مجموعه را مستقیم به کارت انتشار وصل و جریان را ذخیره کنید.");
+  const edges = await db.select().from(workflowConnections).where(eq(workflowConnections.workflowVersionId,version.id));
+  const byId = new Map(steps.map(s=>[s.id,s.key]));
+  const path = collectionImagePath(steps,edges.map(e=>({sourceKey:byId.get(e.sourceStepId)!,targetKey:byId.get(e.targetStepId)!})),source.key,step.key);
+  if(path===null)throw new ImportConflict("مجموعه را مستقیم یا از طریق یک کارت تولید تصویر به انتشار وصل کنید.");
+  const imageStep = path[0] ? steps.find(s=>s.key===path[0]) : undefined;
+  if(imageStep)imageConfigSchema.parse(imageStep.config);
   if (!z.string().uuid().safeParse(step.config.accountId).success) throw new ImportConflict("حساب را در کارت مقصد انتخاب و جریان را ذخیره کنید.");
   const [account] = await db.select().from(socialAccounts).where(and(eq(socialAccounts.id, String(step.config.accountId)), eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.isActive, true)));
   if (!account || !collectionDestinations.includes(account.channel as typeof collectionDestinations[number])) throw new ImportConflict("در کارت مقصد، حساب فعال و پشتیبانی‌شده را انتخاب کنید.");
@@ -192,5 +197,5 @@ async function destination(db: ReturnType<typeof getDb>, workspaceId: string, in
     if(video && (account.channel!=="youtube" || video.accountId!==account.id))throw new ImportConflict("مقصد مجموعه ثبت‌شده را تغییر ندهید؛ کارت انتشار جدید متصل کنید.");
     if(!video && account.channel==="youtube")throw new ImportConflict("برای مقصد یوتیوب، کارت انتشار جدید متصل کنید.");
   }
-  return { step, account, source };
+  return { step, account, source, imageStep };
 }

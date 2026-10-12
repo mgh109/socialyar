@@ -1,3 +1,4 @@
+import { generatedMediaRoutes, imageUsageRoutes } from "./routes/image-generation";
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { ZodError } from "zod";
@@ -249,6 +250,8 @@ await app.register(authRoutes);
 await app.register(teamRoutes);
 await app.register(platformRoutes);
 await app.register(aiSettingsRoutes);
+await app.register(generatedMediaRoutes);
+await app.register(imageUsageRoutes);
 await app.register(apiConnectionRoutes);
 await app.register(workflowRoutes);
 await app.register(runRoutes);

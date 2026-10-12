@@ -1593,3 +1593,11 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .youtube-comments-panel article p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .youtube-comments-panel article > div { display: flex; flex-wrap: wrap; gap: 12px; }
 .youtube-comments-panel details > summary { cursor: pointer; margin-block: 8px; }
+
+
+.image-generation-panel { display:grid; gap:12px; min-width:0; }
+.image-generation-panel details { display:grid; padding:12px; border:1px solid var(--border-color, #ccc); border-radius:12px; }
+.image-generation-panel details label { display:grid; gap:6px; margin-block:10px; }
+.image-generation-previews { display:flex; gap:8px; flex-wrap:wrap; }
+.image-generation-previews img { width:100%; max-width:220px; max-height:220px; object-fit:contain; border-radius:10px; }
+.image-generation-panel article { padding:12px 0; overflow-wrap:anywhere; border-bottom:1px solid var(--border-color, #ccc); }

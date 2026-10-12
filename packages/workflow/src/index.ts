@@ -1,3 +1,6 @@
+import { generateContentImages } from "./image-generation";
+import { imageConfigSchema } from "@socialyar/shared";
+import { ImageLimitError } from "@socialyar/db";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { generateYoutubeCommentReply, analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIRequestUsage, type AIConnection } from "@socialyar/ai";
 import { apiRequest } from "./api-client";
@@ -175,8 +178,30 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
             videoUrl: run.input.videoUrl as string ?? null,
             youtube: run.input.youtube as News["youtube"], commentId: run.input.commentId as string | undefined, context: run.input.context as string | undefined,
             comments: Array.isArray(run.input.comments) ? run.input.comments as Array<{ id: string; text: string }> : undefined };
+        } else if (step.type === "image_generate") {
+          if (!upstream?.text) throw new Error("کارت تصویر به محتوای ورودی نیاز دارد.");
+          const config = imageConfigSchema.parse(step.config);
+          let review = config.requireApproval;
+          try {
+            output = await generateContentImages({workspaceId:tenant.workspaceId,workflowId:run.workflowId,stepKey:step.key,itemKey:run.id,config:step.config,item:upstream},db);
+          } catch (error) {
+            if (error instanceof ImageLimitError && config.onLimit === "wait") throw error;
+            if (error instanceof ImageLimitError ? config.onLimit !== "continue" : config.onError === "stop") throw error;
+            review ||= !(error instanceof ImageLimitError) && config.onError === "review";
+            output = {...upstream,imageGeneration:{status:"not_generated",error:error instanceof Error?error.message:"تولید تصویر انجام نشد."}} as News;
+          }
+          if (review) {
+            await db.update(runSteps).set({status:"waiting_approval",output}).where(eq(runSteps.id,record.id));
+            await db.insert(runEvents).values({runId:run.id,runStepId:record.id,type:"approval_requested",message:step.name});
+            states.set(step.id,"waiting_approval");waiting=true;continue;
+          }
         } else if (step.type === "filter") {
           if (!upstream?.text) throw new Error("Filter needs an incoming news item");
+          if (step.config.condition === "has_image" || step.config.condition === "no_image") {
+            const matched = Boolean(upstream.imageUrl) === (step.config.condition === "has_image");
+            if (!matched) {await db.update(runSteps).set({status:"skipped",output:{matched:false,title:upstream.title??null},finishedAt:new Date()}).where(eq(runSteps.id,record.id));states.set(step.id,"skipped");continue;}
+            output = upstream;
+          } else {
           const words = String(step.config.keywords ?? "").split(/[،,\n]/).map((word) => word.trim().toLocaleLowerCase()).filter(Boolean);
           const text = `${upstream.title ?? ""} ${upstream.text}`.toLocaleLowerCase();
           const matches = words.some((word) => text.includes(word));
@@ -186,6 +211,7 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
             continue;
           }
           output = upstream;
+          }
         } else if (step.type === "ai") {
           if (!upstream?.text) throw new Error("AI step needs text from a connected step");
           const sourceText = upstream.text;
@@ -331,8 +357,8 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
         await db.update(runSteps).set({ status: "completed", output, finishedAt: new Date() }).where(eq(runSteps.id, record.id));
         await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "step_completed", message: step.name, payload: output });
       } catch (error) {
-        if (error instanceof YoutubeDailyLimitError) {
-          const retryAt = nextYoutubeDay().toISOString();
+        if (error instanceof YoutubeDailyLimitError || error instanceof ImageLimitError && step.config.onLimit === "wait") {
+          const retryAt = error instanceof ImageLimitError ? error.retryAt : nextYoutubeDay().toISOString();
           await db.update(runSteps).set({ status: "retrying", error: { message: error.message } }).where(eq(runSteps.id, record.id));
           await db.update(runs).set({ status: "queued", output: { ...outputs, retryAt }, finishedAt: null, dispatchVersion: sql`${runs.dispatchVersion} + 1` }).where(eq(runs.id, run.id));
           await db.insert(runEvents).values({ runId: run.id, runStepId: record.id, type: "retry", message: error.message, payload: { retryAt } });

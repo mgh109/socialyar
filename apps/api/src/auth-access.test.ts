@@ -16,7 +16,7 @@ const userId=randomUUID(),ownerId=randomUUID(),workspaceId=randomUUID(),secondId
 const password='temporary test password';let loginToken='';
 before(async()=>{
  process.env.JWT_SECRET='auth-integration-test-secret-32-characters';
- for(const name of ['0000_initial.sql','0001_auth.sql','0002_eitaa_automation.sql','0012_tenant_access.sql'])await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),'utf8'));
+ for(const name of ['0000_initial.sql','0001_auth.sql','0002_eitaa_automation.sql','0012_tenant_access.sql','0014_image_generation.sql'])await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),'utf8'));
  await db.insert(tables.users).values([{id:ownerId,email:'owner@example.com'},{id:userId,phone:'+989121234567',passwordHash:await hashPassword(password),mustChangePassword:true}]);
  await db.insert(tables.workspaces).values([{id:workspaceId,ownerId,name:'one',slug:'auth-one'},{id:secondId,ownerId,name:'two',slug:'auth-two'},{id:outsiderId,ownerId,name:'private',slug:'auth-private'}]);
  await db.insert(tables.workspaceMembers).values([{workspaceId,userId,role:'editor'},{workspaceId:secondId,userId,role:'viewer'}]);

@@ -51,6 +51,8 @@ export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, 
       </> : null}
       {["youtube", "telegram", "instagram"].includes(item.channel) ? <ConnectionSelector target={item.channel as "youtube" | "telegram" | "instagram"} value={settings.connection} onChange={(value) => setSetting("connection", value)} /> : null}
       {dirty && stale ? <p className="calendar-warning">این آیتم در جای دیگری تغییر کرده است. پیش از ویرایش، نسخه تازه را دریافت کنید. <button type="button" onClick={reset}>بازخوانی</button></p> : null}
+      {settings.imageGeneration ? <p role="status">{String((settings.imageGeneration as {error?:string;status?:string}).error ?? (settings.imagePrepared === false ? "در انتظار آماده‌سازی تصویر" : "تصویر آماده است"))}</p> : settings.imagePrepared === false ? <p role="status">در انتظار آماده‌سازی تصویر؛ تأیید پس از تولید امکان‌پذیر است.</p> : null}
+      {Array.isArray(settings.images) ? <div className="image-generation-previews">{(settings.images as Array<{url:string}>).map(image=><img key={image.url} src={image.url} alt="تصویر تولیدشده برای بررسی" loading="lazy"/>)}</div> : null}
       <button type="button" className="primary-button" disabled={busy || !dirty || !title.trim() || stale || item.channel === "instagram" && instagramProblems(settings,body).length > 0} onClick={() => void save()}>ذخیره تغییرات و ارسال برای تأیید</button>
       {item.status === "draft" && !dirty && !item.approved ? <button type="button" disabled={busy} onClick={() => void mutate(item, "edit")}>ارسال برای تأیید</button> : null}
       {item.status === "draft" && item.approved ? <small>محتوا تأیید شده و آمادهٔ تعیین زمان انتشار است.</small> : null}

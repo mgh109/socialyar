@@ -17,7 +17,7 @@ const owned = async <T>(_key: string, operation: (assertOwned: () => Promise<voi
 const workspaceId = randomUUID(), workflowId = randomUUID(), versionId = randomUUID(), runId = randomUUID();
 before(async () => {
   connection.disconnect();
-  for (const name of ["0000_initial.sql", "0001_auth.sql", "0002_eitaa_automation.sql", "0006_youtube.sql", "0008_publication_calendar.sql", "0011_execution_recovery.sql", "0012_tenant_access.sql"])
+  for (const name of ["0000_initial.sql", "0001_auth.sql", "0002_eitaa_automation.sql", "0006_youtube.sql", "0008_publication_calendar.sql", "0011_execution_recovery.sql", "0012_tenant_access.sql", "0014_image_generation.sql"])
     await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`, import.meta.url), "utf8"));
   const userId = randomUUID();
   await db.insert(tables.users).values({ id: userId, email: "recovery@example.com" });

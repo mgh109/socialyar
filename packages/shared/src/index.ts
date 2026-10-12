@@ -10,3 +10,5 @@ export * from "./content-collection";
 export * from "./google-sheet";
 
 export * from "./instagram";
+
+export * from "./image-generation";

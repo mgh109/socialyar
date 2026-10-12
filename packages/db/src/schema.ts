@@ -73,6 +73,9 @@ export const workspaceSubscriptions = pgTable("workspace_subscriptions", {
   maxUsers: integer("max_users"),
   maxChannels: integer("max_channels"),
   maxWorkflows: integer("max_workflows"),
+  imageDailyLimit: integer("image_daily_limit"),
+  imageMonthlyLimit: integer("image_monthly_limit"),
+  imageMonthlyBudgetMicros: bigint("image_monthly_budget_micros", { mode: "number" }),
   aiTokenLimit: bigint("ai_token_limit", { mode: "number" }),
   aiTokensUsed: bigint("ai_tokens_used", { mode: "number" }).default(0).notNull(),
   aiTokensReserved: bigint("ai_tokens_reserved", { mode: "number" }).default(0).notNull(),
@@ -533,3 +536,13 @@ export const youtubeCommentReplies = pgTable("youtube_comment_replies", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ once: uniqueIndex("youtube_comment_replies_once").on(t.accountId, t.commentId) }));
+
+
+export const imageGenerationJobs = pgTable("image_generation_jobs", {
+  id: uuid("id").defaultRandom().primaryKey(), workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id,{onDelete:"cascade"}),
+  workflowId: uuid("workflow_id").notNull().references(() => workflows.id,{onDelete:"cascade"}), stepKey:text("step_key").notNull(),cacheKey:text("cache_key").notNull(),
+  provider:text("provider").notNull(),model:text("model").notNull(),status:text("status").default("reserved").notNull(),imageCount:integer("image_count").notNull(),
+  reservedMicros:bigint("reserved_micros",{mode:"number"}).notNull(),costMicros:bigint("cost_micros",{mode:"number"}),costEstimated:boolean("cost_estimated").default(true).notNull(),
+  inputTokens:integer("input_tokens"),outputTokens:integer("output_tokens"),images:jsonb("images").$type<Array<{mediaId:string;url:string;width:number;height:number}>>().default([]).notNull(),error:text("error"),
+  createdAt:timestamp("created_at",{withTimezone:true}).defaultNow().notNull(),updatedAt:timestamp("updated_at",{withTimezone:true}).defaultNow().notNull(),
+},t=>({cache:uniqueIndex("image_jobs_cache_idx").on(t.workspaceId,t.cacheKey)}));

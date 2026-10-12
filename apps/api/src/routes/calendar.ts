@@ -136,6 +136,7 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
           let [publication] = await tx.select().from(publications).where(and(eq(publications.contentVariantId, params.id), input.publicationId ? eq(publications.id, input.publicationId) : undefined)).orderBy(desc(publications.createdAt)).limit(1).for("update");
           if (input.publicationId && !publication) throw new CalendarConflict("آیتم صف پیدا نشد؛ اطلاعات تازه را دریافت کنید.");
           const [variant] = await tx.select().from(contentVariants).where(eq(contentVariants.id, params.id)).for("update");
+          if(input.action === "approve" && variant.settings.imagePrepared === false) throw new CalendarConflict(String((variant.settings.imageGeneration as {error?:string}|undefined)?.error ?? "تصویر این ردیف هنوز آماده نشده است؛ پس از آماده‌شدن آن تأیید کنید."));
           if (variant.calendarVersion !== input.version || input.updatedAt && input.updatedAt !== variant.updatedAt.toISOString()) throw new CalendarConflict("آیتم تغییر کرده است؛ اطلاعات تازه را دریافت کنید.");
           let [schedule] = publication?.scheduleId ? await tx.select().from(schedules).where(eq(schedules.id, publication.scheduleId)).for("update") : [];
           const dateBefore = variant.settings.calendarUnscheduled ? null : schedule?.scheduledAt ?? null;

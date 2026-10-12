@@ -18,7 +18,7 @@ const jobs: unknown[]=[];
 const row=(id="one",order=1): CollectionRow => ({ id,order,title:`قسمت ${order}`,description:"توضیحات",videoUrl:`https://files.example.com/${id}.mp4`,coverUrl:"",scheduledAt:"2028-01-01T14:30:00.000Z",videoType:"video",playlist:"مجموعه",tags:[],privacy:"private",madeForKids:false });
 before(async()=>{
   connection.disconnect();
-  for (const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0007_publishing_proxies.sql","0008_publication_calendar.sql","0009_content_collections.sql","0011_execution_recovery.sql", "0012_tenant_access.sql"])
+  for (const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0007_publishing_proxies.sql","0008_publication_calendar.sql","0009_content_collections.sql","0011_execution_recovery.sql", "0012_tenant_access.sql", "0014_image_generation.sql"])
     await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),"utf8"));
   // Additive publishing migrations must be safe on the next rollout too.
   await engine.exec(await readFile(new URL("../../../packages/db/migrations/0009_content_collections.sql",import.meta.url),"utf8"));
@@ -123,10 +123,11 @@ test("published destination is locked while another destination remains editable
 });
 test("generic updates revoke approval and invalidate jobs while preserving calendar edits",async()=>{
   const target=await genericScope("eitaa");const p=await genericPreview(target,[row("shared")]);const id=p.changes[0].itemId!;
-  await db.update(tables.contentVariants).set({status:"scheduled",title:"ویرایش در تقویم"}).where(eq(tables.contentVariants.id,id));
+  const [before]=await db.select().from(tables.contentVariants).where(eq(tables.contentVariants.id,id));
+  await db.update(tables.contentVariants).set({status:"scheduled",title:"ویرایش در تقویم",settings:{...before.settings,imageStopped:true,imageRetryAt:"2099-01-01T00:00:00Z"}}).where(eq(tables.contentVariants.id,id));
   await db.update(tables.publications).set({status:"queued",queueVersion:5}).where(eq(tables.publications.contentVariantId,id));
   const rows=[{...row("shared"),description:"متن جدید"}],next=await genericPreview(target,rows);assert.equal((await genericApply(target,rows,next,["shared"])).statusCode,200);
-  const [variant]=await db.select().from(tables.contentVariants).where(eq(tables.contentVariants.id,id));assert.equal(variant.status,"waiting_approval");assert.equal(variant.title,"ویرایش در تقویم");assert.equal(variant.body,"متن جدید");
+  const [variant]=await db.select().from(tables.contentVariants).where(eq(tables.contentVariants.id,id));assert.equal(variant.status,"waiting_approval");assert.equal(variant.title,"ویرایش در تقویم");assert.equal(variant.body,"متن جدید");assert.equal(variant.settings.imageStopped,false);assert.equal(variant.settings.imageRetryAt,null);
   const [publication]=await db.select().from(tables.publications).where(eq(tables.publications.contentVariantId,id));assert.equal(publication.status,"cancelled");assert.equal(publication.queueVersion,6);
   const stale=await genericApply(target,rows,next,["shared"]);assert.equal(stale.statusCode,409);
 });
@@ -173,4 +174,14 @@ test("a collection output flows through calendar approval and the real publisher
     await executePublication({publicationId:publication.id,queueVersion:publication.queueVersion,attempt:1,maxAttempts:1},db as any,async (_key,operation)=>operation(async () => {}));assert.equal(sends,1);
     const [sent]=await db.select().from(tables.publications).where(eq(tables.publications.id,publication.id));assert.equal(sent.externalId,"55");assert.equal(sent.status,"published");
   }finally{publicationQueue.add=add;publicationQueue.getJob=getJob;globalThis.fetch=originalFetch;}
+});
+
+
+test("sheet row routes through saved image card before YouTube approval",async()=>{
+  const imageId=randomUUID();await db.insert(tables.workflowSteps).values({id:imageId,workflowVersionId:versionId,key:"cover",type:"image_generate",name:"کاور",config:{model:"test-image",preset:"youtube",behavior:"missing"}});
+  const [edge]=await db.select().from(tables.workflowConnections).where(eq(tables.workflowConnections.sourceStepId,sourceId));await db.delete(tables.workflowConnections).where(eq(tables.workflowConnections.id,edge.id));
+  await db.insert(tables.workflowConnections).values([{workflowVersionId:versionId,sourceStepId:sourceId,targetStepId:imageId},{workflowVersionId:versionId,sourceStepId:imageId,targetStepId:targetId}]);
+  const rows=[row("generated-cover",20)];const p=await preview(rows,{detectRemovals:false});const applied=await apply(rows,p,["generated-cover"],{detectRemovals:false});assert.equal(applied.statusCode,200,applied.body);
+  const [collection]=await db.select().from(tables.contentCollections).where(eq(tables.contentCollections.targetStepKey,"youtube"));const record=collection.records.find(r=>r.row.id==="generated-cover")!;
+  const [item]=await db.select().from(tables.youtubeItems).where(eq(tables.youtubeItems.id,record.itemId));assert.equal(item.status,"waiting_video");assert.equal(item.approvedAt,null);assert.equal((item.settings.imageStep as any).key,"cover");assert.equal((item.settings.imageStep as any).config.preset,"youtube");
 });

@@ -6,7 +6,7 @@ import { normalizePhone, hashPassword } from "../password";
 
 const createSchema = z.object({ name: z.string().trim().min(1).max(160), slug: z.string().min(2).max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/), managerPhone: z.string().min(8).max(40), managerName: z.string().trim().min(1).max(120), managerPassword: z.string().min(10).max(200) });
 const quota = z.number().int().min(0).max(2147483647).nullable();
-const subscriptionSchema = z.object({ plan: z.string().trim().min(1).max(80), status: z.enum(["active", "suspended", "cancelled", "expired"]), expiresAt: z.string().datetime({ offset: true }).nullable(), maxUsers: z.number().int().min(1).max(2147483647).nullable(), maxChannels: quota, maxWorkflows: quota, aiTokenLimit: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable() }).partial().refine(value => Object.keys(value).length > 0);
+const subscriptionSchema = z.object({ plan: z.string().trim().min(1).max(80), status: z.enum(["active", "suspended", "cancelled", "expired"]), expiresAt: z.string().datetime({ offset: true }).nullable(), maxUsers: z.number().int().min(1).max(2147483647).nullable(), maxChannels: quota, maxWorkflows: quota, imageDailyLimit: quota, imageMonthlyLimit: quota, imageMonthlyBudgetMicros: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(), aiTokenLimit: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable() }).partial().refine(value => Object.keys(value).length > 0);
 const workspaceParams = z.object({ id: z.string().uuid() });
 
 export async function platformRoutes(app: FastifyInstance, options: { db?: ReturnType<typeof getDb> } = {}) {

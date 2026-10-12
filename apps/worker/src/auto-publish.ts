@@ -28,7 +28,7 @@ async function enqueueClaimedAutoPublication(runId: string) {
   }));
   for (const publishStep of publishSteps) {
     const generated = row.run.output?.[publishStep.key] as { text?: string; title?: string; url?: string;
-      imageUrl?: string; videoUrl?: string } | undefined;
+      imageUrl?: string; videoUrl?: string; images?:unknown;imageGeneration?:unknown } | undefined;
     const [youtubeAccount] = typeof publishStep.config.accountId === "string" ? await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, publishStep.config.accountId), eq(socialAccounts.workspaceId, row.workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true))).limit(1) : [];
     try {
@@ -41,7 +41,7 @@ async function enqueueClaimedAutoPublication(runId: string) {
         const video = await fetchYoutubeMedia(videoUrl, 250_000_000, "video");
         videoMediaId = (await storeYoutubeMedia(row.workspaceId, video.bytes)).mediaId;
       }
-      const coverUrl = publishStep.config.coverUrl ?? generated?.imageUrl;
+      const coverUrl = publishStep.config.coverUrl || generated?.imageUrl;
       if (typeof coverUrl === "string" && coverUrl) {
         const cover = await fetchYoutubeMedia(coverUrl, 2_000_000, "image");
         coverMediaId = (await storeYoutubeMedia(row.workspaceId, cover.bytes)).mediaId;
@@ -104,7 +104,7 @@ async function enqueueClaimedAutoPublication(runId: string) {
       [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: account.channel,
         title: content.title, body: account.channel === "instagram" ? String(publishStep.config.instagramCaption || generated.text) : generated.text,
         settings: { ...(account.channel === "instagram" ? {instagramType:publishStep.config.instagramType,instagramImages:publishStep.config.instagramImages} : {}), imageUrl: publishStep.config.imageUrl || generated.imageUrl || null, videoUrl: publishStep.config.videoUrl || generated.videoUrl || null, connection: publishStep.config.connection,
-          publishIntervalSeconds, ...(account.channel === "instagram" ? {calendarHold:needsInstagramApproval,instagramImmediate:!instagramDate,accountId:account.id,accountName:account.displayName ?? account.externalAccountId} : {}) }, status: needsInstagramApproval ? "waiting_approval" : "approved", generatedBy: "ai" }).returning();
+          images:generated.images,imageGeneration:generated.imageGeneration,publishIntervalSeconds, ...(account.channel === "instagram" ? {calendarHold:needsInstagramApproval,instagramImmediate:!instagramDate,accountId:account.id,accountName:account.displayName ?? account.externalAccountId} : {}) }, status: needsInstagramApproval ? "waiting_approval" : "approved", generatedBy: "ai" }).returning();
     } else if (variant.settings.publishIntervalSeconds !== publishIntervalSeconds) {
       [variant] = await db.update(contentVariants).set({ settings: { ...variant.settings, publishIntervalSeconds } })
         .where(eq(contentVariants.id, variant.id)).returning();
@@ -134,7 +134,7 @@ async function enqueueClaimedAutoPublication(runId: string) {
           title: String(publishStep.config.youtubeTitle || generated.title || "ویدئوی جدید"),
           description: String(publishStep.config.youtubeDescription || generated.text || ""), status: "failed", error: message,
           settings: { connection: publishStep.config.connection, sourceVideoUrl: generated.videoUrl ?? publishStep.config.videoUrl,
-            sourceCoverUrl: publishStep.config.coverUrl ?? generated.imageUrl,
+            sourceCoverUrl: publishStep.config.coverUrl || generated.imageUrl,
             privacy: publishStep.config.privacy ?? "private", tags: publishStep.config.tags ?? [], madeForKids: publishStep.config.madeForKids === true },
           scheduledAt: typeof publishStep.config.scheduledAt === "string" && publishStep.config.scheduledAt ? new Date(publishStep.config.scheduledAt) : null,
           logs: [{ channel: youtubeAccount.displayName, time: new Date().toISOString(), result: "preparation_failed", error: message }],

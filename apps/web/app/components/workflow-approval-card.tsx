@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 export type WorkflowApproval = { runId: string; workflowName: string; stepKey: string; stepName: string;
-  output: { title?: string | null; text?: string; imageUrl?: string | null; videoUrl?: string | null;
+  output: { images?: Array<{url:string}>; imageGeneration?:{error?:string}; title?: string | null; text?: string; imageUrl?: string | null; videoUrl?: string | null;
     url?: string; sentiment?: string; commentId?: string; reply?: string; decision?: string; reason?: string } | null; createdAt: string | null };
 
 export function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowApproval; busy: boolean;
@@ -20,6 +20,8 @@ export function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowAp
     {!isComment ? <label className="workflow-approval-field"><span>عنوان محتوا</span>
       <input value={title} maxLength={300} onChange={(event) => setTitle(event.target.value)} /></label>
       : null}
+    {item.output?.imageGeneration?.error ? <p role="status">{item.output.imageGeneration.error}</p> : null}
+    {item.output?.images?.slice(1).map(image=><img key={image.url} src={image.url} alt="خروجی دیگر تولید تصویر" loading="lazy" style={{objectFit:"contain"}}/>)}
     {item.output?.imageUrl ? <img src={item.output.imageUrl} alt="تصویر محتوا برای بررسی" loading="lazy" style={{ objectFit: "contain" }} /> : null}
     {item.output?.videoUrl ? <video src={item.output.videoUrl} controls preload="metadata" aria-label="ویدئوی خبر برای بررسی" /> : null}
     {isComment ? <><p className="workflow-approval-comment" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>کامنت: {item.output?.text}</p>
@@ -33,8 +35,9 @@ export function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowAp
       <button className="primary-button" disabled={busy || !item.output || (!isComment && !text.trim()) || (isReply && !reply.trim())}
         onClick={() => void resolve(item, "approve", isReply ? { reply: reply.trim() } : isComment ? undefined : { title: title.trim(), text: text.trim() })}>
         {isReply ? "تأیید و ارسال پاسخ" : isComment ? "تأیید کامنت" : "تأیید و ادامه"}</button>
-      {item.output?.imageUrl ? <a href={item.output.imageUrl} target="_blank" rel="noreferrer">دیدن تصویر کامل</a> : null}
+      {item.output?.imageGeneration?.error ? <p role="status">{item.output.imageGeneration.error}</p> : null}
+    {item.output?.images?.slice(1).map(image=><img key={image.url} src={image.url} alt="خروجی دیگر تولید تصویر" loading="lazy" style={{objectFit:"contain"}}/>)}
+    {item.output?.imageUrl ? <a href={item.output.imageUrl} target="_blank" rel="noreferrer">دیدن تصویر کامل</a> : null}
       <Link href={`/runs/${item.runId}`}>جزئیات اجرا</Link></div>
   </article>;
 }
-

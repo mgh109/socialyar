@@ -13,7 +13,8 @@
     "test:shared-collections": "node --import tsx --test src/shared-collections.test.ts",
     "test:reliability": "node --import tsx --test src/execution-lock.test.ts src/publication-recovery.test.ts src/dispatch-recovery.test.ts",
     "test:tenants": "node --import tsx --test src/tenant-policy.test.ts",
-    "test:youtube-comments": "node --import tsx --test src/youtube-comments.test.ts"
+    "test:youtube-comments": "node --import tsx --test src/youtube-comments.test.ts",
+    "test:images": "node --import tsx --test src/image-generation.test.ts"
   },
   "dependencies": {
     "@socialyar/channels": "workspace:*",
@@ -23,7 +24,8 @@
     "drizzle-orm": "^0.38.0",
     "fast-xml-parser": "^5.2.0",
     "ioredis": "^5.4.0",
-    "tsx": "^4.19.0"
+    "tsx": "^4.19.0",
+    "@socialyar/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -46,6 +46,7 @@ export function YoutubeReview({ item, refresh }: { item: YoutubeItem; refresh: (
   return <article className="youtube-review">
     <strong>{item.channelName} · {youtubeStatus(item)}</strong>
     <MediaPreview video mediaId={item.settings.videoMediaId} url={item.settings.videoUrl} />
+    {item.settings.imageGeneration && (item.settings.imageGeneration as {error?:string}).error ? <p role="status">{String((item.settings.imageGeneration as {error?:string}).error)}</p> : null}
     <MediaPreview mediaId={item.settings.coverMediaId} url={item.settings.coverUrl} />
     {item.status === "waiting_approval" ? <>
       <p>نوع محتوا: {item.settings.videoType === "shorts" ? "ویدئوی کوتاه / Shorts" : "ویدئوی معمولی"}{item.settings.playlist ? ` · پلی‌لیست: ${String(item.settings.playlist)}` : ""}</p>

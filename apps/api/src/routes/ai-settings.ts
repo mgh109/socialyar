@@ -129,7 +129,7 @@ export async function aiSettingsRoutes(app: FastifyInstance) {
       const used = await db.select({ config: workflowSteps.config }).from(workflowSteps)
         .innerJoin(workflowVersions, eq(workflowSteps.workflowVersionId, workflowVersions.id))
         .innerJoin(workflows, eq(workflowVersions.workflowId, workflows.id))
-        .where(and(eq(workflows.workspaceId, request.auth.workspaceId), eq(workflowSteps.type, "ai")));
+        .where(and(eq(workflows.workspaceId, request.auth.workspaceId), sql`${workflowSteps.type} IN ('ai','image_generate','comment_decision','youtube_reply')`));
       if (used.some((step) => step.config.profileId === profileId)) return reply.code(409).send({ error: "ai_profile_in_use" });
       const [row] = await db.delete(aiProfiles).where(and(eq(aiProfiles.id, profileId),
         eq(aiProfiles.workspaceId, request.auth.workspaceId))).returning({ id: aiProfiles.id });
