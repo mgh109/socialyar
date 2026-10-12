@@ -147,6 +147,14 @@ export function WorkflowBuilder() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [pointer, setPointer] = useState<Position | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedKey && !selectedEdge) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) { setSelectedKey(""); setSelectedEdge(null); }
+    };
+    document.addEventListener("keydown", dismiss);
+    return () => document.removeEventListener("keydown", dismiss);
+  }, [selectedKey, selectedEdge]);
   const [viewport, setViewport] = useState({ width: 800, height: 520 });
   const [name, setName] = useState("جریان جدید");
   const [pollIntervalMinutes, setPollIntervalMinutes] = useState(5);
@@ -472,7 +480,7 @@ export function WorkflowBuilder() {
     const id = params.get("id");
     if (!id) {
       const goal = getWorkflowGoal(params.get("goal"));
-      if (goal) { setName(goal.name); setSteps(goal.steps); setEdges(goal.connections); setGoalSteps(goal.hint); setSelectedKey(goal.steps[0]?.key ?? ""); }
+      if (goal) { setName(goal.name); setSteps(goal.steps); setEdges(goal.connections); setGoalSteps(goal.hint); setSelectedKey(""); }
       setLoaded(true); return;
     }
     let active = true;
@@ -509,7 +517,7 @@ export function WorkflowBuilder() {
       setSavedSnapshot(JSON.stringify({ name: data.workflow.name, pollIntervalMinutes: data.version?.snapshot?.pollIntervalMinutes ?? 5,
         prompt: data.version?.prompt ?? "", steps: migrated.steps, edges: migrated.connections, autoEnabled: data.workflow.status === "active" }));
       setLoaded(true);
-      setSteps(migrated.steps); setEdges(migrated.connections); setSelectedKey(migrated.steps.some((step) => step.key === params.get("step")) ? params.get("step")! : migrated.steps[0]?.key ?? "");
+      setSteps(migrated.steps); setEdges(migrated.connections); setSelectedKey(migrated.steps.some((step) => step.key === params.get("step")) ? params.get("step")! : "");
       setMessage("جریان بارگذاری شد");
     }).catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "بارگذاری ناموفق بود"); });
     return () => { active = false; window.clearInterval(timer); };
@@ -738,14 +746,14 @@ export function WorkflowBuilder() {
   const stroke = (from: Position, to: Position) => `M ${from.x} ${from.y} C ${from.x - 92} ${from.y}, ${to.x + 92} ${to.y}, ${to.x} ${to.y}`;
   const cardDescription = (step: Step) => step.type === "youtube_comments" ? "خواندن کامنت‌های کانال یوتیوب" : step.type === "youtube_reply" ? (step.config.requireApproval===false ? "تحلیل و پاسخ خودکار" : "تحلیل و پاسخ پس از تأیید") : step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
-            step.type === "image_generate" ? `تصویر ${step.config.preset ?? "خبر"} · ${step.config.model || "مدل را تنظیم کن"}` :
+            step.type === "image_generate" ? `تصویر ${step.config.preset ?? "خبر"} · ${aiProfiles.find(profile => profile.id === String(step.config.profileId ?? "default"))?.model || "اتصال را انتخاب کن"}` :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
             step.type === "publish" ? publishAccounts.find((account) => account.id === step.config.accountId)?.displayName ?? "مقصد را انتخاب کن" :
             step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال سرویس را انتخاب کن" :
             step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
             step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
             step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "تأیید پیش از ادامه" : "به کارت‌های دیگر وصل کن";
-  return <main className="workflow-page builder-page">
+  return <main className="workflow-page builder-page builder-minimal">
     <header className="app-header"><div className="brand-lockup"><BrandLogo /><span>میز کار / {name}</span></div>
       <div className="header-actions"><span className="save-status" role="status">{dirty ? "تغییرات ذخیره نشده · " : ""}{removedCard && message === "کارت حذف شد؛ تغییرات را ذخیره کن." ? "" : message}</span>
         {removedCard ? <div className="builder-recovery-inline" role="status"><span title={`کارت «${removedCard.step.name}» حذف شد؛ تغییر هنوز ذخیره نشده است.`}>«{removedCard.step.name}» حذف شد</span>
@@ -776,7 +784,7 @@ export function WorkflowBuilder() {
             {autoEnabled ? "توقف پایش" : "فعال‌سازی خودکار"}</button>}
       </div></header>
     {goalSteps ? <section className="builder-goal-help"><strong>برای اولین نتیجه</strong><p>{goalSteps}</p><Link href="/connections">مدیریت کانال‌ها</Link> · <Link href="/settings/ai">تنظیم مدل هوش مصنوعی</Link></section> : null}
-    <div className="builder-layout"><section className="builder-workspace" aria-label="بوم جریان">
+    <div className={`builder-layout ${selected || selectedEdge ? "inspector-open" : ""}`}><section className="builder-workspace" aria-label="بوم جریان">
       <div className="graph-frame"><div className="graph-canvas-controls"><div className="graph-canvas-actions">
         {!workflowId ? <button type="button" className="graph-icon-action graph-ai-create" onClick={() => setGeneratorOpen(true)}>✦ ساخت با هوش مصنوعی</button> : null}
         <div className="graph-palette"><details><summary>+ افزودن کارت</summary><div className="graph-palette-menu">
@@ -839,7 +847,7 @@ export function WorkflowBuilder() {
       </section></div> : null}
       <div className="graph-scroll" ref={canvasRef} onPointerUp={(event) => {
         if (connecting && event.target === event.currentTarget) { setConnecting(null); setPointer(null); }
-      }}><div className="graph-surface" style={{ width: surfaceWidth, height: surfaceHeight }}>
+      }}><div className="graph-surface" style={{ width: surfaceWidth, height: surfaceHeight }} onClick={(event) => { if (event.target === event.currentTarget) { setSelectedKey(""); setSelectedEdge(null); } }}>
         <svg className="graph-lines" width={surfaceWidth} height={surfaceHeight} role="group" aria-label="اتصال‌های جریان">
           {edges.map((edge) => {
             const from = steps.find((step) => step.key === edge.sourceKey), to = steps.find((step) => step.key === edge.targetKey);
@@ -876,7 +884,7 @@ export function WorkflowBuilder() {
           <div className="graph-node-head" onPointerDown={(event) => {
             if (event.button !== 0) return;
             dragRef.current = { key: step.key, startX: event.clientX, startY: event.clientY,
-              x: step.position.x, y: step.position.y }; setSelectedKey(step.key);
+              x: step.position.x, y: step.position.y }; setSelectedKey(step.key); setSelectedEdge(null);
           }}><span className="graph-kind">{step.type === "rss_source" ? sourceNames[String(step.config.sourceKind ?? "rss")] :
             step.type === "api_source" || step.type === "api_action" ? "سرویس" : step.type === "comment_decision" ? "هوش" :
             step.type === "filter" ? "شرط" : step.type === "publish" ?
@@ -911,7 +919,9 @@ export function WorkflowBuilder() {
             onClick={(event) => { event.stopPropagation(); setConnecting(step.key); }}>●</button> : null}
         </article>)}
       </div></div></div>
-    </section><aside className="builder-settings"><h2>{selected ? "تنظیمات کارت" : selectedEdge ? "تنظیمات اتصال" : "کارت‌ها"}</h2>
+    </section>{selected || selectedEdge ? <aside className="builder-settings builder-inspector" aria-label={selected ? `تنظیمات ${selected.name}` : "تنظیمات اتصال"}>
+      <div className="builder-inspector-heading"><div><small>{selected ? "تنظیمات کارت" : "تنظیمات اتصال"}</small><h2>{selected?.name ?? "اتصال"}</h2></div>
+        <button type="button" className="ghost-button" aria-label="بستن تنظیمات" title="بستن تنظیمات (Esc)" onClick={() => { setSelectedKey(""); setSelectedEdge(null); }}>×</button></div>
       {selectedEdge ? <div className="graph-edge-settings"><strong>اتصال انتخاب‌شده</strong>
         <p>{edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.sourceKey ?? "")} ← {edgeName(edges.find((edge) => edgeId(edge) === selectedEdge)?.targetKey ?? "")}</p>
         {steps.find((step) => step.key === edges.find((edge) => edgeId(edge) === selectedEdge)?.sourceKey)?.type === "comment_decision" ?
@@ -920,7 +930,7 @@ export function WorkflowBuilder() {
               { ...edge, condition: { decision: event.target.value } } : edge))}>
             <option value="approve">تأیید</option><option value="reject">رد</option><option value="reply">پاسخ</option>
             <option value="review">بررسی انسانی</option></select></label> : null}
-        <button type="button" onClick={() => { const edge = edges.find((item) => edgeId(item) === selectedEdge); if (edge) removeEdge(edge); }}>حذف اتصال</button></div> : null}
+        <button type="button" className="danger-button" onClick={() => { const edge = edges.find((item) => edgeId(item) === selectedEdge); if (edge) removeEdge(edge); }}>حذف اتصال</button></div> : null}
       {selected ? <><div className="builder-selected-title"><small>کارت انتخاب‌شده</small><strong>{selected.name}</strong></div>
         {selected.type === "filter" && live?.filters?.find((item) => item.stepKey === selected.key) ? (() => {
           const result = live.filters.find((item) => item.stepKey === selected.key)!;
@@ -1147,6 +1157,6 @@ export function WorkflowBuilder() {
           .map((edge) => <button key={edgeId(edge)} onClick={() => removeEdge(edge)}>
             {edgeName(edge.sourceKey)} ← {edgeName(edge.targetKey)} · حذف ×</button>)}</div>
       </> : !selectedEdge ? <div className="builder-help">یک کارت یا خط اتصال را انتخاب کن تا تنظیماتش نمایش داده شود.</div> : null}
-    </aside></div>
+    </aside> : null}</div>
   </main>;
 }

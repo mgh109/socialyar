@@ -1601,3 +1601,31 @@ html[data-theme="light"] .auth-features span { background: var(--panel); color: 
 .image-generation-previews { display:flex; gap:8px; flex-wrap:wrap; }
 .image-generation-previews img { width:100%; max-width:220px; max-height:220px; object-fit:contain; border-radius:10px; }
 .image-generation-panel article { padding:12px 0; overflow-wrap:anywhere; border-bottom:1px solid var(--border-color, #ccc); }
+
+/* Spacious canvas with an on-demand card inspector. */
+.builder-minimal .builder-layout { display:block; position:relative; min-height:calc(100dvh - 68px); }
+.builder-minimal .builder-workspace { padding:8px; }
+.builder-minimal .graph-scroll { height:calc(100dvh - 88px); min-height:500px; border-radius:12px; }
+.builder-minimal .graph-canvas-controls { top:16px; right:16px; left:16px; }
+.builder-minimal .graph-node { box-shadow:none; border-radius:12px; padding:12px 14px; cursor:pointer; }
+.builder-minimal .graph-node.selected { border-color:var(--green); box-shadow:0 0 0 1px var(--green); }
+.builder-minimal .graph-node > strong { margin-top:12px; }
+.builder-minimal .graph-kind { background:transparent; border:0; padding:0; color:var(--muted); }
+.builder-minimal .graph-role-label { font-size:10px; }
+.builder-minimal .graph-node-description { max-height:34px; margin-top:8px; font-size:11px; }
+.builder-minimal .graph-usage-footer { display:none; }
+.builder-minimal .graph-lines .edge-visible { stroke-width:1.5; stroke-dasharray:4 5; }
+.builder-minimal .builder-inspector { position:absolute; z-index:40; top:8px; right:8px; bottom:8px; width:min(460px,calc(100% - 16px)); overflow:auto; overscroll-behavior:contain; padding:0 22px 24px; gap:18px; border:1px solid var(--border); border-radius:12px; background:var(--panel); box-shadow:-12px 0 40px rgba(0,0,0,.12); }
+.builder-inspector-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; position:sticky; top:0; z-index:3; background:var(--panel); padding:22px 0 16px; border-bottom:1px solid var(--border); }
+.builder-inspector-heading small { color:var(--muted); font-size:11px; }
+.builder-inspector-heading h2 { margin-top:5px; font-size:18px; }
+.builder-inspector-heading button { font-size:24px; line-height:1; min-width:36px; min-height:36px; }
+.builder-minimal .builder-selected-title { display:none; }
+.builder-minimal .save-status { max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media(max-width:700px) {
+ .builder-minimal .builder-workspace { padding:4px; }
+ .builder-minimal .graph-scroll { height:calc(100dvh - 100px); min-height:420px; }
+ .builder-minimal .builder-inspector { position:fixed; top:70px; bottom:8px; right:8px; width:calc(100% - 16px); box-sizing:border-box; }
+ .builder-minimal .graph-canvas-controls { flex-wrap:wrap; gap:8px; top:10px; right:10px; left:10px; }
+ .builder-minimal .save-status { max-width:140px; }
+}
