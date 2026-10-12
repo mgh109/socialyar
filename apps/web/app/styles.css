@@ -1687,3 +1687,27 @@ body:has(.home-minimal) { height:100dvh; overflow:hidden; }
 .home-minimal { height:calc(100dvh - 44px); min-height:0; display:flex; flex-direction:column; overflow:hidden; }
 .home-minimal .topbar { flex-shrink:0; }
 .home-minimal .workflow-library { flex:1; width:100%; min-height:0; box-sizing:border-box; overflow:auto; overscroll-behavior:contain; }
+
+/* Calendar controls share the compact workspace styling. */
+body:has(.calendar-minimal) .app-navigation { height:44px; min-height:44px; box-sizing:border-box; padding:4px 68px 4px 12px; }
+body:has(.calendar-minimal) .app-navigation a,body:has(.calendar-minimal) .app-navigation summary { height:32px; box-sizing:border-box; display:flex; align-items:center; padding:0 10px; font-size:12px; }
+body:has(.calendar-minimal) .account-dock { top:5px; right:12px; }
+.calendar-minimal .app-header { height:48px; min-height:48px; box-sizing:border-box; padding:6px 16px; }
+.calendar-minimal .app-header h1 { font-size:14px; font-weight:500; margin:0; }
+.calendar-minimal .brand-lockup img { max-height:30px; width:auto; }
+.calendar-minimal .publication-calendar-shell { padding:14px 20px; }
+.calendar-minimal .publication-calendar-title { gap:8px; margin-bottom:12px; }
+.calendar-minimal .publication-calendar-title > label { flex-direction:row; align-items:center; font-size:11px; white-space:nowrap; }
+.calendar-minimal .publication-calendar-title select { width:110px; }
+.calendar-minimal .calendar-counters { margin:0; gap:16px; }
+.calendar-minimal .calendar-counters > span { border:0; background:transparent; padding:0; gap:6px; font-size:11px; color:var(--muted); }
+.calendar-minimal .calendar-counters strong { font-size:13px; color:var(--text); }
+.calendar-minimal .calendar-filters { margin:0 0 10px; gap:8px; }
+.calendar-minimal .calendar-filters label { gap:4px; font-size:10px; color:var(--muted); }
+.calendar-minimal input,.calendar-minimal select,.calendar-minimal button:not(.publication-tile) { height:32px; min-height:32px; box-sizing:border-box; padding:0 10px; font-size:12px; border-radius:7px; }
+.calendar-minimal .calendar-navigation { padding:0; margin-bottom:10px; gap:8px; }
+.calendar-minimal .calendar-navigation > div { gap:6px; }
+.calendar-minimal .calendar-navigation strong { font-size:13px; min-width:100px; }
+.calendar-minimal .calendar-weekday { padding:8px 4px; font-size:11px; }
+.calendar-minimal .calendar-drawer input,.calendar-minimal .calendar-drawer select,.calendar-minimal .calendar-time-dialog input,.calendar-minimal .calendar-time-dialog select { height:auto; min-height:36px; padding:8px 10px; }
+@media(max-width:700px) { .calendar-minimal .publication-calendar-shell { padding:10px; } .calendar-minimal .calendar-filters { grid-template-columns:repeat(2,minmax(0,1fr)); } .calendar-minimal .calendar-counters { gap:10px; } .calendar-minimal .calendar-navigation { justify-content:flex-start; } }

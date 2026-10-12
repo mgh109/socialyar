@@ -83,11 +83,11 @@ export function CalendarPublish() {
   };
   const navigate = (direction: number) => { setOnlyDay(null); setFocus(view === "week" ? addDays(focus, direction * 7) : nextMonth(focus, direction)); };
   const renderTile = (item: CalendarItem) => <PublicationTile key={item.id} item={item} timezone={timezone} open={() => open(item)} busy={busy} />;
-  return <main className="workflow-page publication-calendar" dir="rtl"><header className="app-header"><div className="brand-lockup"><BrandLogo /><span>تقویم انتشار</span></div>
+  return <main className="workflow-page publication-calendar calendar-minimal" dir="rtl"><header className="app-header"><div className="brand-lockup"><BrandLogo /><h1>تقویم انتشار</h1></div>
     <div className="header-actions"><button type="button" disabled={loading} onClick={() => void refresh().catch((e) => setError(persianError(e)))}>به‌روزرسانی</button></div></header>
-    <section className="publication-calendar-shell"><div className="publication-calendar-title"><div><h1>تقویم انتشار</h1><p>خروجی‌های تولیدشده، تأییدها و برنامهٔ واقعی انتشار در یک نگاه</p></div>
+    <section className="publication-calendar-shell"><div className="publication-calendar-title"><div className="calendar-counters"><span>برنامه‌ریزی‌شده <strong>{faDigits(filtered.filter((item) => item.status === "scheduled").length)}</strong></span><span>منتظر تأیید <strong>{faDigits(filtered.filter((item) => item.status === "waiting_approval").length)}</strong></span><span>ناموفق <strong>{faDigits(filtered.filter((item) => item.status === "failed").length)}</strong></span></div>
       <label>منطقه زمانی<select value={timezone} onChange={(e) => { setTimezone(e.target.value); setOnlyDay(null); }}>{zones.map((zone) => <option key={zone.id} value={zone.id}>{zone.name}</option>)}</select></label></div>
-      <div className="calendar-counters"><span>برنامه‌ریزی‌شده <strong>{faDigits(filtered.filter((item) => item.status === "scheduled").length)}</strong></span><span>منتظر تأیید <strong>{faDigits(filtered.filter((item) => item.status === "waiting_approval").length)}</strong></span><span>ناموفق <strong>{faDigits(filtered.filter((item) => item.status === "failed").length)}</strong></span></div>
+
       <div className="calendar-filters"><label>جست‌وجو<input type="search" placeholder="عنوان یا متن خروجی" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
         <label>شبکه<select value={network} onChange={(e) => setNetwork(e.target.value)}><option value="">همهٔ شبکه‌ها</option>{Object.entries(networkLabels).map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></label>
         <label>جریان<select value={workflow} onChange={(e) => setWorkflow(e.target.value)}><option value="">همهٔ جریان‌ها</option>{workflows.map(([id,label]) => <option key={id} value={id}>{label}</option>)}</select></label>
