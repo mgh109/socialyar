@@ -757,7 +757,7 @@ export function WorkflowBuilder() {
             step.type === "api_source" || step.type === "api_action" ? apiConnections.find((item) => item.id === step.config.connectionId)?.name ?? "اتصال سرویس را انتخاب کن" :
             step.type === "comment_decision" ? "تأیید، رد، پاسخ یا بررسی" :
             step.type === "ai" && step.config.aiMode === "feedback" ? "تحلیل بازخورد گروهی" :
-            step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "تأیید پیش از ادامه" : "به کارت‌های دیگر وصل کن";
+            step.type === "collection_source" ? "اکسل، گوگل‌شیت و برنامه انتشار" : step.type === "human_approval" ? "تأیید پیش از ادامه" : "";
   return <main className="workflow-page builder-page builder-minimal">
     <dialog ref={cardPickerRef} className="graph-card-picker" aria-labelledby="graph-card-picker-title" onCancel={()=>setCardPickerOpen(false)} onClose={()=>setCardPickerOpen(false)} onClick={event=>{if(event.target===event.currentTarget){const box=event.currentTarget.getBoundingClientRect();if(event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)setCardPickerOpen(false);}}}>
       <header><h2 id="graph-card-picker-title">افزودن کارت</h2><button type="button" className="ghost-button" aria-label="بستن انتخاب کارت" onClick={()=>setCardPickerOpen(false)}>×</button></header>
@@ -896,24 +896,23 @@ export function WorkflowBuilder() {
           }}><span className="graph-kind">{step.type === "rss_source" ? sourceNames[String(step.config.sourceKind ?? "rss")] :
             step.type === "api_source" || step.type === "api_action" ? "سرویس" : step.type === "comment_decision" ? "هوش" :
             step.type === "filter" ? "شرط" : step.type === "publish" ?
-              publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "خروجی" :
-              step.type === "ai" ? "هوش" : "کارت"}</span>
+              publishNames[accounts.find((account) => account.id === step.config.accountId)?.channel ?? ""] ?? "" :
+              step.type === "ai" ? "هوش" : ""}</span>
             <details className="graph-card-menu" onKeyDown={(event)=>{if(event.key==="Escape"){event.stopPropagation();event.currentTarget.open=false;}}} onBlur={(event)=>{if(!event.currentTarget.contains(event.relatedTarget))event.currentTarget.open=false;}} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
               <summary aria-label={`گزینه‌های کارت ${step.name}`}>⋮</summary><div>
                 <button className="ghost-button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setSelectedKey(step.key); setSelectedEdge(null); }}>تنظیمات کارت</button>
                 <button className="danger-button" onClick={() => remove(step.key)}>حذف کارت</button>
               </div></details></div>
-          <span className="graph-role-label">{stepActivity(step) ? <><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</> :
-            isSource(step) ? "ورودی" : isTerminal(step) ? "خروجی" : "پردازش"}</span>
+          {stepActivity(step) ? <span className="graph-role-label"><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</span> : null}
           <strong title={step.name}>{step.type === "publish" && accounts.find((a) => a.id === step.config.accountId)?.channel === "youtube" ? <><YoutubeIcon /> یوتیوب</> : step.type === "publish" ? "انتشار شبکه‌ها" : step.name}</strong>
           {youtubeItems.find((i) => i.stepKey === step.key)?.status === "published" ? <a onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer" href={`https://www.youtube.com/watch?v=${youtubeItems.find((i) => i.stepKey === step.key)?.videoId}`}>مشاهده در یوتیوب</a> : null}
-          <small className="graph-node-description" title={cardDescription(step)}>{cardDescription(step)}</small>
+          {cardDescription(step) ? <small className="graph-node-description" title={cardDescription(step)}>{cardDescription(step)}</small> : null}
           {step.type === "rss_source" ? <div className="graph-source-footer graph-source-schedule"><span>{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
           {step.type === "youtube_comments" ? <div className="graph-source-footer graph-source-schedule"><span>کامنت یوتیوب</span><span>{live?.nextPollAt ? countdownLabel(live?.nextPollAt, clock, autoEnabled) : "پایش پس از فعال‌سازی"}</span></div> : null}
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
-          {step.type === "publish" ? <div className="graph-source-footer graph-connection-label" title={cardConnection(step)}>{step.config.accountId ? cardConnection(step) : "○ مقصد انتخاب نشده است"}</div> : null}
+          
           {step.type === "filter" && live?.filters?.some((item) => item.stepKey === step.key) ?
             <div className={`graph-source-footer graph-filter-footer ${live.filters.find((item) => item.stepKey === step.key)?.passed ? "passed" : "rejected"}`}>
               {live.filters.find((item) => item.stepKey === step.key)?.passed ? "✓ عبور کرد" : "⊘ رد شد"} · آخرین خبر
