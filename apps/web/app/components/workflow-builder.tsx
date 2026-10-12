@@ -802,7 +802,7 @@ export function WorkflowBuilder() {
         <button type="button" className="graph-icon-action" title="مرتب‌سازی کارت‌ها" aria-label="مرتب‌سازی کارت‌ها" onClick={arrange} disabled={!steps.length}>⤢</button>
         </div><div className="graph-canvas-meta"><span className={`graph-canvas-status ${autoEnabled ? "active" : ""}`} title={autoEnabled ? `پایش فعال؛ ${durationLabel(pollIntervalMinutes)}` : "پیش‌نویس"}>{autoEnabled ? `● ${durationLabel(pollIntervalMinutes)}` : "○ پیش‌نویس"}</span>
         {workflowId ? <details className="graph-activity graph-usage"><summary>مصرف AI {usage?.totals.requests ? `· ${faNumber(usage.totals.requests)}` : ""}</summary>
-          <ImageUsageSummary workflowId={workflowId} period={usagePeriod}/><div><strong>مصرف هوش مصنوعی این جریان</strong>
+          <div><strong>مصرف هوش مصنوعی این جریان</strong>
             <select aria-label="بازهٔ مصرف این جریان" value={usagePeriod} onChange={(event) => setUsagePeriod(event.target.value as "7d" | "30d" | "all")}>
               <option value="7d">۷ روز اخیر</option><option value="30d">۳۰ روز اخیر</option><option value="all">همهٔ زمان‌ها</option>
             </select>
@@ -813,6 +813,7 @@ export function WorkflowBuilder() {
               {usage.totals.unreportedCost > 0 ? <small>هزینهٔ {faNumber(usage.totals.unreportedCost)} درخواست گزارش نشده؛ مبلغ بالا کامل نیست.</small> : null}
               {usage.totals.unreportedTokens > 0 ? <small>آمار توکن {faNumber(usage.totals.unreportedTokens)} درخواست کامل نیست.</small> : null}
             </> : <span>هنوز مصرفی برای این جریان ثبت نشده است.</span>}
+            <ImageUsageSummary workflowId={workflowId} period={usagePeriod}/>
             <Link href="/analytics">آمار همهٔ جریان‌ها ←</Link>
           </div></details> : null}
         {workflowId ? <span className={`graph-sync-status ${outputStale || liveStale ? "stale" : ""}`} role="status"
