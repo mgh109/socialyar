@@ -50,7 +50,9 @@ export async function generateContentImages(input:{workspaceId:string;workflowId
  generatedImageUrl(input.workspaceId,"0".repeat(64));
  const [profile]=config.profileId==="default"?await db.select().from(aiSettings).where(eq(aiSettings.workspaceId,input.workspaceId)).limit(1):await db.select().from(aiProfiles).where(and(eq(aiProfiles.id,config.profileId),eq(aiProfiles.workspaceId,input.workspaceId))).limit(1);
  if(!profile)throw new Error("اتصال هوش مصنوعی تصویر در این فضای کاری پیدا نشد.");
- const prompt=imagePrompt(config,input.item);const cacheKey=createHash("sha256").update(JSON.stringify([input.workflowId,input.stepKey,input.itemKey,config,prompt,input.item.imageUrl])).digest("hex");
+ config.model=profile.model.trim();
+ if(!config.model)throw new Error("مدل اتصال انتخاب‌شده تنظیم نشده است.");
+ const prompt=imagePrompt(config,input.item);const cacheKey=createHash("sha256").update(JSON.stringify([input.workflowId,input.stepKey,input.itemKey,config,prompt,input.item.imageUrl,profile.provider])).digest("hex");
  let reference:Buffer|undefined,logo:Buffer|undefined;const referenceUrl=config.behavior==="edit"?input.item.imageUrl:config.referenceUrl;
  if(referenceUrl)reference=await sharp((await fetchCollectionMedia(input.workspaceId,referenceUrl,"image")).bytes).png().toBuffer();
  if(config.logoUrl)logo=(await fetchCollectionMedia(input.workspaceId,config.logoUrl,"image")).bytes;

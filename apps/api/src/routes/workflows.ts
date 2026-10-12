@@ -408,7 +408,7 @@ export async function workflowRoutes(app: FastifyInstance) {
           { sourceKind: kind, channel: input.request.includes(suppliedChannel) && suppliedChannel ? suppliedChannel : "" } :
         node.type === "youtube_comments" ? { accountId, videoId: text("videoId",11) && input.request.includes(text("videoId",11)) ? text("videoId",11) : "", batchLimit: Math.max(1,Math.min(500,Number(config.batchLimit)||50)), context:text("context",4000), after: z.string().datetime().safeParse(config.after).success ? config.after : "" } :
         node.type === "youtube_reply" ? { accountId, profileId:input.profileId ?? "default", dailyLimit:Math.max(1,Math.min(100,Number(config.dailyLimit)||20)), requireApproval:config.requireApproval !== false, tone:text("tone",200), instructions:text("instructions",4000), context:text("context",4000) } :
-        node.type === "image_generate" ? { ...config, profileId: input.profileId ?? "default", model:text("model",120), referenceUrl:text("referenceUrl",1000) && input.request.includes(text("referenceUrl",1000)) ? text("referenceUrl",1000) : "", logoUrl:text("logoUrl",1000) && input.request.includes(text("logoUrl",1000)) ? text("logoUrl",1000) : "" } :
+        node.type === "image_generate" ? { ...config, profileId: input.profileId ?? "default", model:"", referenceUrl:text("referenceUrl",1000) && input.request.includes(text("referenceUrl",1000)) ? text("referenceUrl",1000) : "", logoUrl:text("logoUrl",1000) && input.request.includes(text("logoUrl",1000)) ? text("logoUrl",1000) : "" } :
         node.type === "filter" ? { condition: config.condition, keywords: text("keywords", 500), mode: config.mode === "exclude" ? "exclude" : "include" } :
         node.type === "ai" ? { profileId: input.profileId ?? "default", aiMode: config.aiMode === "feedback" ? "feedback" : "rewrite",
           instructions: text("instructions", 3000) } :
@@ -430,7 +430,7 @@ export async function workflowRoutes(app: FastifyInstance) {
       if (node.type === "publish" && !accountId) warnings.push(`مقصد انتشار کارت «${node.name}» را انتخاب کن.`);
       if (["api_source", "api_action"].includes(node.type) && !connectionId) warnings.push(`اتصال کارت «${node.name}» را انتخاب کن.`);
       if (node.type === "rss_source" && !(mapped.feedUrl || mapped.channel)) warnings.push(`نشانی کارت «${node.name}» را وارد کن.`);
-      if (node.type === "image_generate" && !mapped.model) warnings.push(`مدل تولید تصویر و هزینه برآوردی کارت «${node.name}» را تنظیم کن.`);
+      if (node.type === "image_generate") warnings.push(`اتصال دارای مدل تصویری و هزینه برآوردی کارت «${node.name}» را بررسی کن.`);
       if (node.type === "filter" && !mapped.condition && !mapped.keywords) warnings.push(`واژه‌های شرط «${node.name}» را وارد کن.`);
       const depth = depths.get(node.id) ?? 0;
       const row = rows.get(depth) ?? 0; rows.set(depth, row + 1);

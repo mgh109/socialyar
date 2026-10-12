@@ -1,7 +1,7 @@
 import { z } from "zod";
 export const imagePresets = { youtube: [1280,720], reel: [1080,1920], story: [1080,1920], news: [1200,800], square: [1080,1080], custom: [1024,1024] } as const;
 export const imageConfigSchema = z.object({
-  profileId: z.string().min(1).max(100).default("default"), model: z.string().trim().min(1).max(120),
+  profileId: z.string().min(1).max(100).default("default"), model: z.string().trim().max(120).default(""),
   preset: z.enum(["youtube","reel","story","news","square","custom"]).default("news"),
   width: z.number().int().min(256).max(4096).default(1024), height: z.number().int().min(256).max(4096).default(1024),
   quality: z.enum(["low","medium","high"]).default("medium"),
