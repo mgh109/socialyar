@@ -3,7 +3,7 @@ import { WorkflowList } from "./components/workflow-list";
 
 export default function HomePage() {
   return (
-    <main className="shell">
+    <main className="shell home-minimal">
       <header className="topbar">
         <BrandLogo />
 
