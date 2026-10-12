@@ -659,7 +659,7 @@ export function WorkflowBuilder() {
       return next.filter((edge) => edge.sourceKey === key).some((edge) => visit(edge.targetKey, seen));
     };
     if (visit(targetKey)) { setMessage("اتصال حلقه‌ای مجاز نیست."); return; }
-    setEdges(next); setSelectedEdge(edgeId({ sourceKey, targetKey })); setMessage("اتصال اضافه شد؛ تغییرات را ذخیره کن.");
+    setEdges(next); setSelectedEdge(null); setSelectedKey(""); setMessage("اتصال اضافه شد؛ تغییرات را ذخیره کن.");
   };
   const removeEdge = (edge: Edge) => {
     if (!window.confirm(`اتصال «${edgeName(edge.sourceKey)}» به «${edgeName(edge.targetKey)}» حذف شود؟`)) return;
@@ -888,7 +888,8 @@ export function WorkflowBuilder() {
           }} style={{ left: step.position.x, top: step.position.y }} onClick={() => { setSelectedKey(step.key); setSelectedEdge(null); }}>
           {!isSource(step) ? <button className="graph-port input" title="ورودی؛ خروجی یک کارت را اینجا رها کن"
             aria-label={`ورودی ${step.name}`} onPointerUp={(event) => { event.stopPropagation(); if (connecting) connect(connecting, step.key); }}
-            onClick={() => { if (connecting) connect(connecting, step.key); }}>●</button> : null}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => { event.stopPropagation(); if (connecting) connect(connecting, step.key); }}>●</button> : null}
           <div className="graph-node-head" onPointerDown={(event) => {
             if (event.button !== 0) return;
             dragRef.current = { key: step.key, startX: event.clientX, startY: event.clientY,
@@ -922,8 +923,8 @@ export function WorkflowBuilder() {
               {faNumber(usage.byStep.find((item) => item.stepKey === step.key)!.requests)} درخواست</div> : null}
           {!isTerminal(step) ? <button className={`graph-port output ${connecting === step.key ? "active" : ""}`}
             title="خروجی؛ به ورودی کارت بعدی بکش یا کلیک کن" aria-label={`خروجی ${step.name}`}
-            onPointerDown={(event) => { event.stopPropagation(); setConnecting(step.key); setPointer(null); }}
-            onClick={(event) => { event.stopPropagation(); setConnecting(step.key); }}>●</button> : null}
+            onPointerDown={(event) => { event.stopPropagation(); setSelectedKey(""); setSelectedEdge(null); setConnecting(step.key); setPointer(null); }}
+            onClick={(event) => { event.stopPropagation(); setSelectedKey(""); setSelectedEdge(null); setConnecting(step.key); }}>●</button> : null}
         </article>)}
       </div></div></div>
     </section>{selected || selectedEdge ? <aside className="builder-settings builder-inspector" aria-label={selected ? `تنظیمات ${selected.name}` : "تنظیمات اتصال"}>
@@ -1167,4 +1168,3 @@ export function WorkflowBuilder() {
     </aside> : null}</div>
   </main>;
 }
-
