@@ -1743,3 +1743,39 @@ body:has(.calendar-minimal) .account-dock { top:5px; right:12px; }
 .field-help .field-help-trigger { display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; padding: 0; border: 1px solid var(--border, #cbd5e1); border-radius: 50%; background: transparent; color: inherit; font: inherit; font-size: .8rem; cursor: pointer; opacity: .7; }
 .field-help .field-help-trigger:hover, .field-help .field-help-trigger:focus-visible { opacity: 1; outline: 2px solid var(--accent, #16a34a); outline-offset: 2px; }
 .field-help-content { position: fixed; z-index: 10000; width: min(280px, calc(100vw - 16px)); max-height: 192px; overflow: auto; padding: .75rem; border: 1px solid var(--border, #cbd5e1); border-radius: .75rem; background: var(--panel); color: var(--text, #17212b); box-shadow: 0 8px 24px #0002; font-size: .8rem; line-height: 1.9; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+
+/* Spacious inspectors for multi-stage content cards. */
+.builder-minimal .builder-inspector.builder-inspector-wide { width:min(880px,calc(100% - 16px)); padding-inline:28px; }
+.collection-steps { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; list-style:none; padding:0; margin:0; }
+.collection-steps li { display:flex; align-items:center; gap:8px; padding:12px 10px; background:var(--panel2); border:1px solid var(--border); border-radius:10px; font-size:12px; color:var(--muted); }
+.collection-steps b { display:grid; place-items:center; width:26px; height:26px; flex-shrink:0; border-radius:50%; background:var(--panel3); }
+.collection-steps li[aria-current=step] { border-color:var(--green); color:var(--text); background:var(--accent-soft); }
+.collection-steps li.done b { background:var(--accent); color:var(--on-accent); }
+.collection-stage { display:grid; gap:16px; padding:20px; background:var(--panel); border:1px solid var(--border); border-radius:14px; min-width:0; }
+.collection-stage > header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.collection-stage h3,.youtube-output-list h3 { margin:0; font-size:15px; }
+.collection-stage > header > span { color:var(--muted); font-size:12px; }
+.collection-feedback { display:flex; flex-direction:column; gap:5px; padding:12px 14px; border-radius:10px; background:var(--panel2); border:1px solid var(--border); font-size:13px; line-height:1.9; overflow-wrap:anywhere; margin:0; }
+.collection-feedback.success { border-color:var(--green); background:var(--accent-soft); }
+.collection-feedback.error { border-color:var(--red); }
+.collection-feedback small { color:var(--muted); }
+.collection-stage .collection-actions { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:center; }
+.collection-stage .collection-file { padding:12px; border:1px dashed var(--line); border-radius:10px; }
+.youtube-settings-group,.youtube-output { border:1px solid var(--border); border-radius:10px; padding:14px; min-width:0; }
+.youtube-settings-group[open] { display:grid; gap:14px; }
+.youtube-settings-group summary,.youtube-output summary { cursor:pointer; line-height:1.8; }
+.youtube-output-list { display:grid; gap:12px; }
+.youtube-output summary { display:flex; justify-content:space-between; gap:12px; overflow-wrap:anywhere; }
+.youtube-output summary span { color:var(--muted); font-size:12px; flex-shrink:0; }
+.youtube-output.has-error { border-color:var(--red); }
+.youtube-output.has-error summary span { color:var(--red); }
+@media(max-width:700px) {
+ .builder-minimal .builder-inspector.builder-inspector-wide { width:calc(100% - 16px); padding-inline:12px; }
+ .collection-stage { padding:14px; }
+ .collection-steps li { flex-direction:column; padding:8px 4px; text-align:center; font-size:11px; }
+ .collection-stage .collection-actions { grid-template-columns:1fr; }
+ .youtube-output summary { flex-wrap:wrap; }
+}
+.youtube-panel label:has(input[type=checkbox]),.youtube-review label:has(input[type=checkbox]) { flex-direction:row; align-items:center; }
+.youtube-panel input[type=checkbox],.youtube-review input[type=checkbox] { width:auto; }
+.collection-panel > .collection-feedback { position:sticky; bottom:0; z-index:2; box-shadow:0 -4px 16px #0001; }

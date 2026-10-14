@@ -929,7 +929,7 @@ export function WorkflowBuilder() {
             onClick={(event) => { event.stopPropagation(); setSelectedKey(""); setSelectedEdge(null); setConnecting(step.key); }}>●</button> : null}
         </article>)}
       </div></div></div>
-    </section>{selected || selectedEdge ? <aside className="builder-settings builder-inspector" aria-label={selected ? `تنظیمات ${selected.name}` : "تنظیمات اتصال"}>
+    </section>{selected || selectedEdge ? <aside className={`builder-settings builder-inspector ${selected && (["collection_source","image_generate","youtube_comments","youtube_reply"].includes(selected.type) || selected.type === "publish" && accounts.find(account=>account.id===selected.config.accountId)?.channel === "youtube") ? "builder-inspector-wide" : ""}`} aria-label={selected ? `تنظیمات ${selected.name}` : "تنظیمات اتصال"}>
       <div className="builder-inspector-heading"><div><small>{selected ? "تنظیمات کارت" : "تنظیمات اتصال"}</small><h2>{selected?.name ?? "اتصال"}</h2></div>
         <button type="button" className="ghost-button" aria-label="بستن تنظیمات" title="بستن تنظیمات (Esc)" onClick={() => { setSelectedKey(""); setSelectedEdge(null); }}>×</button></div>
       {selectedEdge ? <div className="graph-edge-settings"><strong>اتصال انتخاب‌شده</strong>

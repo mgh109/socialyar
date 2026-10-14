@@ -26,6 +26,7 @@ export function persianError(value: unknown, fallback = "عملیات ناموف
   if (/403|permission|forbidden/.test(lower)) return "مجوز لازم برای این عملیات وجود ندارد؛ دسترسی‌های رسمی حساب را بررسی کنید.";
   if (/oauth.*not configured|youtube_client/.test(lower)) return "اتصال رسمی گوگل هنوز در سرور تنظیم نشده است.";
   if (/expired.*session|upload session.*404/.test(lower)) return "نشست بارگذاری پایان یافته است؛ پیش از ساخت آیتم جدید، کانال مقصد را بررسی کنید تا ویدئو تکراری نشود.";
+  if (/enoent|stored_media_unavailable/.test(lower)) return "فایل ذخیره‌شده در این سرویس در دسترس نیست؛ فضای فایل مشترک API و پردازشگر باید بررسی شود.";
   if (/unsupported.media|supported.file/.test(lower)) return "نوع فایل پشتیبانی نمی‌شود؛ یک ویدئو یا تصویر معتبر انتخاب کنید.";
   if (/exceeds.*limit|too large/.test(lower)) return "حجم فایل بیش از حد مجاز است.";
   if (/invalid proxy host|public ipv4/.test(lower)) return "آدرس پروکسی باید یک نام دامنه یا آی‌پی عمومی معتبر باشد.";

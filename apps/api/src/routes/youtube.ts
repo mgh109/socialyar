@@ -144,7 +144,7 @@ export async function youtubeRoutes(app: FastifyInstance) {
       const [duplicate] = await db.select().from(youtubeItems).where(and(eq(youtubeItems.workflowId, current.workflowId), eq(youtubeItems.stepKey, current.stepKey), eq(youtubeItems.itemKey, input.videoMediaId)));
       if (duplicate) return reply.code(409).send({ error: "duplicate_video" });
       const [item] = await db.update(youtubeItems).set({ settings: { ...current.settings, ...input }, itemKey: input.videoMediaId,
-        status: "waiting_approval", updatedAt: new Date() }).where(and(eq(youtubeItems.id, id), eq(youtubeItems.status, "waiting_video"))).returning();
+        status: "waiting_approval", error: null, updatedAt: new Date() }).where(and(eq(youtubeItems.id, id), eq(youtubeItems.status, "waiting_video"))).returning();
       return item ? { ok: true } : reply.code(409).send({ error: "item_state_conflict" });
     });
     secured.post("/youtube/items/:id/resolve", async (request, reply) => {

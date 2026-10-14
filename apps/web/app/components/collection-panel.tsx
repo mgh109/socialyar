@@ -19,6 +19,8 @@ export function CollectionPanel({ workflowId, stepKey, targets, config, update, 
 }) {
   const [sheet,setSheet] = useState<SheetData | null>(null); const [mapping,setMapping] = useState<ColumnMapping>((config.sheetMapping as ColumnMapping) ?? {});
   const [rows,setRows] = useState<CollectionRow[]>([]); const [errors,setErrors] = useState<string[]>([]);
+  const [reading,setReading] = useState(false);
+  const [readError,setReadError] = useState(""); const [loadError,setLoadError] = useState("");
   const [preview,setPreview] = useState<{ revision: number; changes: CollectionChange[] } | null>(null);
   const [selected,setSelected] = useState<string[]>([]); const [busy,setBusy] = useState(false); const [message,setMessage] = useState("");
   const [saved,setSaved] = useState<Array<{ targetStepKey: string; records: CollectionRecord[]; updatedAt: string }>>([]);
@@ -31,9 +33,9 @@ export function CollectionPanel({ workflowId, stepKey, targets, config, update, 
   const isYoutube = items.some((i)=>i.stepKey===targetKey) || target?.config.collectionChannel === "youtube";
   const load = async () => {
     if (!workflowId) return;
-    try { const r = await apiFetch(`/content-collections?workflowId=${workflowId}&sourceStepKey=${encodeURIComponent(stepKey)}`); if (!r.ok) throw new Error("دریافت مجموعه ناموفق بود."); setSaved(await r.json());
+    try { const r = await apiFetch(`/content-collections?workflowId=${workflowId}&sourceStepKey=${encodeURIComponent(stepKey)}`); if (!r.ok) throw new Error("دریافت مجموعه ناموفق بود."); setSaved(await r.json()); setLoadError("");
       const response=await apiFetch("/calendar/items");if(response.ok)setCalendarItems(await response.json()); }
-    catch (e) { setMessage(persianError(e,"خطا")); }
+    catch (e) { setLoadError(persianError(e,"دریافت وضعیت مجموعه ناموفق بود.")); }
   };
   useEffect(() => { void load(); }, [workflowId,stepKey]);
   useEffect(() => { void apiFetch("/youtube/config").then((r) => r.ok ? r.json() : null).then((data) => { if (data) setPrivateOnly(data.privateOnly); }).catch(()=>{}); },[]);
@@ -45,9 +47,9 @@ export function CollectionPanel({ workflowId, stepKey, targets, config, update, 
   },[workflowId,stepKey,config.collectionSource]);
   const readGoogleSheet = async()=>{
     if(!workflowId){setMessage("ابتدا جریان را ذخیره کنید؛ برای خواندن شیت نیازی به مقصد انتشار نیست.");return;}
-    setBusy(true);setPreview(null);setRows([]);setErrors([]);
+    setBusy(true);setReading(true);setPreview(null);setRows([]);setErrors([]);setReadError("");setMessage("");
     try{const r=await apiFetch("/content-collections/google-sheet",{method:"POST",body:JSON.stringify({workflowId,sourceStepKey:stepKey,targetStepKey:targetKey,url:config.sheetUrl,gid:String(config.sheetGid??"0")})});const data=await r.json();if(!r.ok)throw new Error(data.error);setSheet(data);setMapping((config.sheetMapping as ColumnMapping) ?? inferMapping(data.headers));setMessage("برگه خوانده شد؛ پیش‌نمایش را بسازید و تغییرات را بررسی کنید.");}
-    catch(e){setSheet(null);setMessage(persianError(e,"خواندن گوگل‌شیت ناموفق بود."));}finally{setBusy(false);}
+    catch(e){setSheet(null);setReadError(persianError(e,"خواندن گوگل‌شیت ناموفق بود."));}finally{setBusy(false);setReading(false);}
   };
   const current = saved.find((c) => c.targetStepKey === targetKey);
   const itemMap = new Map(items.map((i) => [i.id,i]));
@@ -64,9 +66,9 @@ export function CollectionPanel({ workflowId, stepKey, targets, config, update, 
     setApprovalIds([]);setMessage(`${faDigits(count)} ویدئو تأیید شد.${failures.length ? ` ${failures.join("؛ ")}` : ""}`);refresh();setBusy(false);
   };
   const read = async (file?: File) => {
-    if (!file) return; setBusy(true); setPreview(null); setRows([]); setErrors([]); setMessage("");
-    try { const data = await readCollectionSheet(file); setSheet(data); setMapping((config.sheetMapping as ColumnMapping) ?? inferMapping(data.headers)); }
-    catch (e) { setSheet(null); setMessage(persianError(e,"خواندن اکسل ناموفق بود.")); } finally { setBusy(false); }
+    if (!file) return; setBusy(true); setReading(true); setPreview(null); setRows([]); setErrors([]); setMessage(""); setReadError("");
+    try { const data = await readCollectionSheet(file); setSheet(data); setMapping((config.sheetMapping as ColumnMapping) ?? inferMapping(data.headers)); setMessage("فایل اکسل خوانده شد؛ ستون‌ها را بررسی کن."); }
+    catch (e) { setSheet(null); setReadError(persianError(e,"خواندن اکسل ناموفق بود.")); } finally { setBusy(false); setReading(false); }
   };
   const prepare = () => {
     if (!sheet) return;
@@ -111,39 +113,43 @@ export function CollectionPanel({ workflowId, stepKey, targets, config, update, 
   };
   return <section className="collection-panel" aria-label="ورود و به‌روزرسانی مجموعه محتوا" aria-busy={busy}>
     <fieldset disabled={busy} className="collection-fields"><legend className="sr-only">تنظیمات مجموعه محتوا</legend>
-    <h3>منبع مجموعه محتوا<FieldHelp>هر ردیف یک محتوا با شناسه ثابت است. برای هر مقصد، تغییرات را جداگانه مقایسه و ثبت کن.</FieldHelp></h3>
-    <label>نوع منبع<select value={String(config.collectionSource??"excel")} onChange={(e)=>{update("collectionSource",e.target.value);setSheet(null);setRows([]);setPreview(null);setErrors([]);}}><option value="excel">فایل اکسل</option><option value="google_sheet">گوگل‌شیت</option></select></label>
+    <ol className="collection-steps" aria-label="مراحل ورود مجموعه">
+      {["خواندن منبع", "بررسی محتوا", "ثبت برای مقصد"].map((label,index)=><li key={label} aria-current={(preview ? 2 : sheet ? 1 : 0)===index ? "step" : undefined} className={(preview ? 2 : sheet ? 1 : 0)>index ? "done" : ""}><b>{faDigits(index+1)}</b><span>{label}</span></li>)}
+    </ol>
+    <section className="collection-stage"><header><h3>۱. خواندن منبع<FieldHelp>هر ردیف یک محتوا با شناسه ثابت است. برای هر مقصد، تغییرات را جداگانه مقایسه و ثبت کن.</FieldHelp></h3></header>
+    <label>نوع منبع<select value={String(config.collectionSource??"excel")} onChange={(e)=>{update("collectionSource",e.target.value);setSheet(null);setRows([]);setPreview(null);setErrors([]);setReadError("");setMessage("");}}><option value="excel">فایل اکسل</option><option value="google_sheet">گوگل‌شیت</option></select></label>
     {config.collectionSource==="google_sheet" ? <div className="collection-fields">
       <label><span>لینک گوگل‌شیت<FieldHelp>شیت باید با لینک قابل خواندن باشد؛ اتصال حساب برای شیت خصوصی هنوز فعال نیست. لینک فایل ویدئو یا تصویر می‌تواند روی هر هاست عمومی HTTPS باشد.</FieldHelp></span><input type="url" dir="ltr" value={String(config.sheetUrl??"")} onChange={(e)=>{update("sheetUrl",e.target.value);
         try { const url = new URL(e.target.value); const gid = url.searchParams.get("gid") ?? new URLSearchParams(url.hash.slice(1)).get("gid"); if (gid && /^\d{1,15}$/.test(gid)) update("sheetGid",gid); } catch { /* Wait for a complete URL. */ }
         setPreview(null);setSheet(null);setRows([]);}} /></label>
-      <label>شناسه برگه (gid)<input dir="ltr" inputMode="numeric" value={String(config.sheetGid??"0")} onChange={(e)=>{update("sheetGid",e.target.value);setPreview(null);setSheet(null);setRows([]);}} /></label>
+      <details><summary>انتخاب برگه و بررسی خودکار</summary><label>شناسه برگه (gid)<input dir="ltr" inputMode="numeric" value={String(config.sheetGid??"0")} onChange={(e)=>{update("sheetGid",e.target.value);setPreview(null);setSheet(null);setRows([]);}} /></label>
 
-      <button type="button" disabled={busy || !workflowId || !String(config.sheetUrl ?? "").trim()} onClick={()=>void readGoogleSheet()}>خواندن / تازه‌سازی گوگل‌شیت</button>
+
       <label><input type="checkbox" checked={config.sheetAutoRefresh===true} onChange={(e)=>update("sheetAutoRefresh",e.target.checked)} />بررسی دوره‌ای روی سرور؛ تغییرات با تأیید من اعمال شوند</label>
       <label><span>فاصله بررسی (دقیقه)<FieldHelp>پس از ذخیره و فعال‌کردن جریان، بررسی با بسته‌بودن مرورگر ادامه دارد.</FieldHelp></span><input type="number" min={5} max={1440} value={Number(config.sheetRefreshMinutes??5)} onChange={(e)=>update("sheetRefreshMinutes",Number(e.target.value))} /></label>
 
+      </details>
+      <button type="button" className="primary-button" disabled={busy || !workflowId || !String(config.sheetUrl ?? "").trim()} onClick={()=>void readGoogleSheet()}>{reading ? "در حال خواندن…" : sheet ? "خواندن دوباره شیت" : "خواندن شیت"}</button>
       {snapshot && snapshot.sourceUrl===config.sheetUrl && snapshot.sheetGid===String(config.sheetGid??"0") ? <div><p>آخرین بررسی سرور: {new Date(snapshot.checkedAt).toLocaleString("fa-IR",{timeZone:"Asia/Tehran"})}</p>{snapshot.error ? <p role="alert">{snapshot.error}</p> : snapshot.data ? <button type="button" onClick={()=>{setSheet(snapshot.data);setMapping((config.sheetMapping as ColumnMapping)??inferMapping(snapshot.data!.headers));setRows([]);setPreview(null);setErrors([]);}}>بررسی نسخه دریافت‌شده توسط سرور</button> : null}</div> : null}
     </div> : null}
-    {isYoutube && privateOnly ? <p role="status">پروژه یوتیوب هنوز برای انتشار عمومی تأیید نشده است؛ خروجی‌ها به‌صورت خصوصی آپلود می‌شوند.</p> : null}
-    <p><Link href="/calendar">مدیریت در تقویم انتشار</Link></p>
-    {!workflowId ? <p role="alert">ابتدا جریان را ذخیره کنید.</p> : null}
-    {!targets.length ? <p role="alert">برای ثبت و انتشار، این کارت را مستقیم یا از طریق کارت تولید تصویر به مقصد فعال وصل کن؛ خواندن اکسل و پیش‌نمایش به مقصد نیاز ندارد.</p> : <label><span>کارت مقصد<FieldHelp>لینک فایل روی کوبیت، هاست شخصی یا سرویس ذخیره‌سازی باید HTTPS و قابل دانلود توسط سرور باشد. مسیر دریافت فایل مستقل از اتصال مقصد است؛ پس از ذخیره جریان و ساخت پیش‌نمایش، اتصال اولین فایل را تست کنید.</FieldHelp></span><select value={targetKey} disabled={busy} onChange={(e) => { update("collectionTargetKey",e.target.value); setPreview(null); }}>
-      {targets.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></label>}
-    {current ? <p>مجموعه ثبت‌شده: {faDigits(current.records.filter((r) => r.active).length)} محتوا · آخرین تغییر: {new Date(current.updatedAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })}</p> : null}
-    <ConnectionSelector target="media" testRequest={workflowId && target && rows[0]?.videoUrl ? { path:"/content-collections/test-media",body:{ workflowId,sourceStepKey:stepKey,targetStepKey:targetKey,videoUrl:rows[0].videoUrl } } : undefined} value={config.mediaConnection} onChange={(value) => update("mediaConnection",value)} />
-
-    <div className="collection-actions"><button type="button" disabled={busy} onClick={() => { setBusy(true); void downloadCollectionTemplate().catch((e) => setMessage(persianError(e,"دانلود نمونه ناموفق بود."))).finally(() => setBusy(false)); }}>دانلود اکسل نمونه</button>
+    <div className="collection-actions"><button type="button" className="ghost-button" disabled={busy} onClick={() => { setBusy(true); void downloadCollectionTemplate().catch((e) => setMessage(persianError(e,"دانلود نمونه ناموفق بود."))).finally(() => setBusy(false)); }}>دانلود اکسل نمونه</button>
       {config.collectionSource!=="google_sheet" ? <label className="collection-file">انتخاب اکسل جدید یا نسخه به‌روزشده<input type="file" accept=".xlsx" disabled={busy} onChange={(e) => { void read(e.target.files?.[0]); e.target.value = ""; }} /></label> : null}</div>
-    {sheet ? <details open><summary>تطبیق ستون‌های منبع</summary><div className="collection-mapping">{collectionColumns.map(([key,label]) => <label key={key}>{label}{["id","title"].includes(key) ? " *" : ""}<select disabled={busy} value={mapping[key] ?? -1} onChange={(e) => { const next={...mapping,[key]:Number(e.target.value)}; setMapping(next); update("sheetMapping",next); setPreview(null); setRows([]); }}>
+    {reading && config.collectionSource!=="google_sheet" ? <p role="status">در حال خواندن فایل اکسل…</p> : null}
+    {readError ? <p className="collection-feedback error" role="alert">{readError}</p> : null}
+    {sheet ? <div className="collection-feedback success" role="status"><strong>منبع خوانده شد</strong><span>{faDigits(sheet.rows.length)} ردیف · {faDigits(sheet.headers.length)} ستون</span><small>هنوز چیزی برای انتشار ثبت نشده است.</small></div> : null}
+    {!workflowId && config.collectionSource==="google_sheet" ? <p role="status">ابتدا دکمهٔ ذخیرهٔ جریان را بزن تا خواندن شیت فعال شود.</p> : null}
+    </section>
+    {isYoutube && privateOnly ? <p role="status">پروژه یوتیوب هنوز برای انتشار عمومی تأیید نشده است؛ خروجی‌ها به‌صورت خصوصی آپلود می‌شوند.</p> : null}
+    {sheet ? <section className="collection-stage"><header><h3>۲. بررسی محتوا</h3><span>ستون شناسه و عنوان را مشخص کن.</span></header><details open><summary>تطبیق ستون‌ها</summary><div className="collection-mapping">{collectionColumns.filter(([key]) => ["id","title","videoUrl","description","date","time"].includes(key)).map(([key,label]) => <label key={key}>{label}{["id","title"].includes(key) ? " *" : ""}<select disabled={busy} value={mapping[key] ?? -1} onChange={(e) => { const next={...mapping,[key]:Number(e.target.value)}; setMapping(next); update("sheetMapping",next); setPreview(null); setRows([]); }}>
       <option value={-1}>بدون ستون / مقدار پیش‌فرض</option>{sheet.headers.map((h,i) => <option key={i} value={i}>{h || `ستون ${faDigits(i+1)}`}</option>)}</select></label>)}</div>
-      <button type="button" disabled={busy} onClick={()=>{update("sheetMapping",mapping);prepare();}}>ساخت پیش‌نمایش محتوا و حفظ نگاشت</button></details> : null}
+      <details><summary>ستون‌های بیشتر؛ کاور، شبکه‌ها و تنظیمات ویدئو</summary><div className="collection-mapping">{collectionColumns.filter(([key])=>!["id","title","videoUrl","description","date","time"].includes(key)).map(([key,label])=><label key={key}>{label}<select value={mapping[key] ?? -1} onChange={e=>{const next={...mapping,[key]:Number(e.target.value)};setMapping(next);update("sheetMapping",next);setPreview(null);setRows([]);}}><option value={-1}>بدون ستون / پیش‌فرض</option>{sheet.headers.map((header,index)=><option key={index} value={index}>{header || `ستون ${faDigits(index+1)}`}</option>)}</select></label>)}</div></details>
+      </details><button type="button" className="primary-button" disabled={busy || (mapping.id ?? -1)<0 || (mapping.title ?? -1)<0} onClick={()=>{update("sheetMapping",mapping);prepare();}}>نمایش محتوا</button></section> : null}
     {errors.length ? <div role="alert"><strong>{faDigits(errors.length)} ردیف نیازمند اصلاح است؛ ردیف‌های سالم قابل ورودند.</strong>{errors.map((e,i) => <p key={i}>{e}</p>)}<p>برای جلوگیری از حذف اشتباه، در این نوبت ردیف‌های غایب حذف نمی‌شوند.</p></div> : null}
     {rows.length ? <><details><summary>زمان‌بندی ردیف‌های بدون تاریخ</summary><PersianDateTimeField value={start} onChange={setStart} />
       <label>فاصله انتشار (روز)<input type="number" min={1} max={365} value={interval} onChange={(e) => setIntervalDays(Number(e.target.value))} /></label>
       <fieldset><legend>روزهای مجاز انتشار</legend>{weekNames.map((name,i) => <label key={name}><input type="checkbox" checked={weekdays.includes(i)} onChange={(e) => setWeekdays((days) => e.target.checked ? [...days,i] : days.filter((d) => d!==i))} />{name}</label>)}</fieldset>
       <button type="button" disabled={busy} onClick={() => { try { setRows(scheduleCollectionRows(rows,start,interval,weekdays)); setPreview(null); } catch (e) { setMessage(persianError(e,"خطا")); } }}>اعمال برنامه پیشنهادی</button></details>
-      <h4>پیش‌نمایش {faDigits(rows.length)} محتوا</h4><div className="collection-rows">{rows.map((row) => <details key={row.id}><summary>{faDigits(row.order)} · {row.title} · {row.videoUrl ? row.videoType === "shorts" ? "ویدئوی کوتاه" : "ویدئو" : row.coverUrl ? "تصویر" : "متن"}<small>{row.scheduledAt ? new Date(row.scheduledAt).toLocaleString("fa-IR",{ timeZone:"Asia/Tehran" }) : "بدون زمان‌بندی"}</small></summary>
+      <div className="collection-feedback success" role="status"><strong>{faDigits(rows.length)} محتوا آماده بررسی است</strong><span>برای ویرایش، روی عنوان هر محتوا بزن.</span></div><div className="collection-rows">{rows.map((row) => <details key={row.id}><summary>{faDigits(row.order)} · {row.title} · {row.videoUrl ? row.videoType === "shorts" ? "ویدئوی کوتاه" : "ویدئو" : row.coverUrl ? "تصویر" : "متن"}<small>{row.scheduledAt ? new Date(row.scheduledAt).toLocaleString("fa-IR",{ timeZone:"Asia/Tehran" }) : "بدون زمان‌بندی"}</small></summary>
         <label>شناسه ثابت<input value={row.id} readOnly dir="ltr" /></label><label>ترتیب قسمت<input type="number" min={1} value={row.order} onChange={(e) => change(row.id,{ order:Number(e.target.value) })} /></label>
         <label>عنوان<input maxLength={100} value={row.title} onChange={(e) => change(row.id,{ title:e.target.value })} /></label>
         <label>توضیحات<textarea maxLength={5000} value={row.description} onChange={(e) => change(row.id,{ description:e.target.value })} /></label>
@@ -158,12 +164,22 @@ export function CollectionPanel({ workflowId, stepKey, targets, config, update, 
         <label><input type="checkbox" checked={row.madeForKids} onChange={(e) => change(row.id,{ madeForKids:e.target.checked })} />مخصوص کودکان</label></> : target?.config.collectionChannel==="instagram" ? <p>ویدئو به‌صورت Reels و تصویر به‌صورت پست ارسال می‌شود؛ فایل خودکار برش نمی‌خورد.</p> : null}
         <PersianDateTimeField value={row.scheduledAt} onChange={(v) => change(row.id,{ scheduledAt:v || null })} />
       </details>)}</div></> : null}
-    {sheet && (rows.length > 0 || sheet.rows.length === 0) ? <button type="button" disabled={busy || !target} onClick={() => void compare()}>مقایسه با مجموعه قبلی</button> : null}
+    {rows.length > 0 || sheet?.rows.length === 0 || current ? <section className="collection-stage"><header><h3>۳. ثبت برای مقصد</h3><span>پس از ثبت، فایل‌ها آماده و برای تأیید نمایش داده می‌شوند.</span></header>
+    <p><Link href="/calendar">مدیریت در تقویم انتشار</Link></p>
+    {!workflowId ? <p className="collection-feedback" role="status">برای خواندن گوگل‌شیت، ابتدا جریان را ذخیره کن. اکسل را می‌توان همین حالا انتخاب کرد.</p> : null}
+    {!targets.length ? <p role="alert">برای ثبت و انتشار، این کارت را مستقیم یا از طریق کارت تولید تصویر به مقصد فعال وصل کن؛ خواندن اکسل و پیش‌نمایش به مقصد نیاز ندارد.</p> : <label><span>کارت مقصد<FieldHelp>لینک فایل روی کوبیت، هاست شخصی یا سرویس ذخیره‌سازی باید HTTPS و قابل دانلود توسط سرور باشد. مسیر دریافت فایل مستقل از اتصال مقصد است؛ پس از ذخیره جریان و ساخت پیش‌نمایش، اتصال اولین فایل را تست کنید.</FieldHelp></span><select value={targetKey} disabled={busy} onChange={(e) => { update("collectionTargetKey",e.target.value); setPreview(null); }}>
+      {targets.map((t) => <option key={t.key} value={t.key}>{t.name}</option>)}</select></label>}
+    {current ? <p>مجموعه ثبت‌شده: {faDigits(current.records.filter((r) => r.active).length)} محتوا · آخرین تغییر: {new Date(current.updatedAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })}</p> : null}
+    <details><summary>تنظیمات دریافت فایل و تست اتصال</summary><ConnectionSelector target="media" testRequest={workflowId && target && rows[0]?.videoUrl ? { path:"/content-collections/test-media",body:{ workflowId,sourceStepKey:stepKey,targetStepKey:targetKey,videoUrl:rows[0].videoUrl } } : undefined} value={config.mediaConnection} onChange={(value) => update("mediaConnection",value)} /></details>
+
+    {sheet && (rows.length > 0 || sheet.rows.length === 0) ? <button type="button" disabled={busy || !target} onClick={() => void compare()}>بررسی تغییرات پیش از ثبت</button> : null}
     {preview ? <section className="collection-diff"><h4>تغییرات پیش از ثبت</h4><p>{Object.entries(labels).map(([kind,label]) => `${label}: ${faDigits(preview.changes.filter((c) => c.kind===kind).length)}`).join(" · ")}</p>
       {preview.changes.filter((c) => c.kind!=="unchanged").map((c) => <details key={c.id}><summary><label><input type="checkbox" disabled={busy || Boolean(c.blocked)} checked={selected.includes(c.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSelected((ids) => e.target.checked ? [...ids,c.id] : ids.filter((id) => id!==c.id))} />{labels[c.kind]} · {c.row.title}</label></summary>
         {c.blocked ? <p role="alert">{c.blocked}</p> : null}{c.remoteEligible ? <button type="button" disabled={busy} onClick={() => void updatePublished(c)}>به‌روزرسانی اطلاعات در یوتیوب، بدون آپلود مجدد</button> : null}{c.status === "published" && c.fields.includes("videoUrl") ? <p>برای انتشار نسخه جدید فایل، ردیفی با شناسه محتوای جدید اضافه کنید.</p> : null}{c.kind === "removed" ? <p>فقط برنامه انتشار متوقف می‌شود؛ محتوای منتشرشده در مقصد حذف نخواهد شد.</p> : null}
         {c.fields.map((key) => <p key={key}><b>{collectionColumns.find(([field]) => field===key)?.[1] ?? (key==="scheduledAt" ? "زمان انتشار" : key)}</b>: {String(c.before?.[key as keyof CollectionRow] ?? "—")} ← {String(c.row[key as keyof CollectionRow] ?? "—")}</p>)}
       </details>)}<button type="button" disabled={busy || !selected.length} onClick={() => void apply()}>تأیید و ثبت {faDigits(selected.length)} تغییر انتخاب‌شده</button><p>ثبت مجموعه مجوز انتشار نیست؛ هر مقصد پیش از ارسال نیازمند تأیید انسانی است.</p></section> : null}
+    </section> : null}
+    {loadError ? <p role="status" className="collection-feedback error">{loadError} <button type="button" className="ghost-button" onClick={()=>void load()}>تازه‌سازی وضعیت</button></p> : null}
     {genericOutputs.length ? <section className="collection-outputs"><h4>خروجی‌های این مقصد · {faDigits(genericOutputs.length)} محتوا</h4>{genericOutputs.slice(0,visible).map((item)=><p key={item.id}>{item.title} · {networkLabels[item.channel]} · {calendarLabels[item.status]}{item.error ? ` · ${item.error}` : ""}</p>)}<Link href="/calendar">پیش‌نمایش، ویرایش، تأیید و زمان‌بندی در تقویم انتشار</Link></section> : null}
     {outputs.length ? <section className="collection-outputs"><h4>خروجی‌های مجموعه · {faDigits(outputs.length)} ویدئو</h4>
       <button type="button" onClick={() => setApprovalIds(outputs.filter((i) => i.status === "waiting_approval").map((i) => i.id))}>انتخاب همه ویدئوهای آماده تأیید</button>
@@ -173,6 +189,6 @@ export function CollectionPanel({ workflowId, stepKey, targets, config, update, 
       </details>)}{outputs.length>visible ? <button type="button" onClick={() => setVisible((v) => v+20)}>نمایش ۲۰ مورد بعدی</button> : null}
       <button type="button" disabled={!ready.length} onClick={() => void approveSelected()}>تأیید انتشار {faDigits(ready.length)} ویدئوی انتخاب‌شده</button>
     </section> : null}
-    </fieldset><p role="status">{message}</p>
+    </fieldset>{message ? <p className="collection-feedback" role="status">{message}</p> : null}
   </section>;
 }
