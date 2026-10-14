@@ -32,7 +32,7 @@ before(async()=>{
   await db.insert(tables.workflowConnections).values({ workflowVersionId:versionId,sourceStepId:sourceId,targetStepId:targetId });
   app.decorate("authenticate",async(request: any)=>{ request.auth={ userId,email:"test@example.com",workspaceId:request.headers["x-other"] ? otherWorkspaceId : workspaceId }; });
   app.setErrorHandler((error,_request,reply)=>reply.code(400).send({ error:error instanceof Error ? error.message : "خطا" }));
-  await app.register(contentCollectionRoutes,{ database:db as unknown as ReturnType<typeof getDb>,queue:{ add:async (...args:unknown[])=>{ jobs.push(args);return {} as any; } } });
+  await app.register(contentCollectionRoutes,{ database:db as unknown as ReturnType<typeof getDb>,sheetFetcher:async () => ({headers:["شناسه","عنوان"],rows:[["one","نمونه"]]}),queue:{ add:async (...args:unknown[])=>{ jobs.push(args);return {} as any; } } });
 });
 after(async()=>{await app.close();await engine.close();});
 const preview=async(rows:CollectionRow[],extra={})=>{
@@ -184,4 +184,18 @@ test("sheet row routes through saved image card before YouTube approval",async()
   const rows=[row("generated-cover",20)];const p=await preview(rows,{detectRemovals:false});const applied=await apply(rows,p,["generated-cover"],{detectRemovals:false});assert.equal(applied.statusCode,200,applied.body);
   const [collection]=await db.select().from(tables.contentCollections).where(eq(tables.contentCollections.targetStepKey,"youtube"));const record=collection.records.find(r=>r.row.id==="generated-cover")!;
   const [item]=await db.select().from(tables.youtubeItems).where(eq(tables.youtubeItems.id,record.itemId));assert.equal(item.status,"waiting_video");assert.equal(item.approvedAt,null);assert.equal((item.settings.imageStep as any).key,"cover");assert.equal((item.settings.imageStep as any).config.preset,"youtube");
+});
+
+
+test("reading Google Sheets needs only an owned saved source, not a publication destination",async()=>{
+  const isolatedId=randomUUID();
+  await db.insert(tables.workflowSteps).values({id:isolatedId,workflowVersionId:versionId,key:"unconnected-sheet",type:"collection_source",name:"شیت"});
+  const body={workflowId,sourceStepKey:"unconnected-sheet",url:"https://docs.google.com/spreadsheets/d/test/edit",gid:"734105"};
+  const ok=await app.inject({method:"POST",url:"/content-collections/google-sheet",payload:body});
+  assert.equal(ok.statusCode,200,ok.body);
+  assert.deepEqual(ok.json(),{headers:["شناسه","عنوان"],rows:[["one","نمونه"]]});
+  const denied=await app.inject({method:"POST",url:"/content-collections/google-sheet",headers:{"x-other":"1"},payload:body});
+  assert.equal(denied.statusCode,422);
+  const missing=await app.inject({method:"POST",url:"/content-collections/google-sheet",payload:{...body,sourceStepKey:"not-saved"}});
+  assert.equal(missing.statusCode,422);
 });

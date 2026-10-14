@@ -1,4 +1,5 @@
 "use client";
+import { FieldHelp } from "./field-help";
 import { ImageUsageSummary } from "./image-usage-summary";
 
 import Link from "next/link";
@@ -960,7 +961,7 @@ export function WorkflowBuilder() {
             <span>هنوز برای این کارت مصرفی ثبت نشده است.</span>}
           <small>توکن، مقدار متن پردازش‌شده توسط مدل است؛ این عدد تعداد خبر نیست.</small>
         </section> : null}
-        {isSource(selected) && !["collection_source","youtube_comments"].includes(selected.type) ? <label><span>نوع منبع</span><select value={selected.type === "api_source" ? "api" :
+        {isSource(selected) && !["collection_source","youtube_comments"].includes(selected.type) ? <label><span>نوع منبع<FieldHelp>هر کارت یک منبع دارد. برای منبع بیشتر کارت دیگری اضافه کن.</FieldHelp></span><select value={selected.type === "api_source" ? "api" :
           selected.type === "manual_input" ? "manual" : String(selected.config.sourceKind ?? "rss")}
           onChange={(event) => switchSource(selected.key, event.target.value)}>
           <option value="rss">RSS</option><option value="eitaa">کانال ایتا</option><option value="bale">کانال بله</option>
@@ -976,13 +977,13 @@ export function WorkflowBuilder() {
               value={String(selected.config.channel ?? "")} onChange={(event) => update(selected.key, "channel", event.target.value)} /></label> :
             <label><span>آدرس RSS</span><input dir="ltr" type="url" placeholder="https://example.com/feed.xml"
               value={String(selected.config.feedUrl ?? "")} onChange={(event) => update(selected.key, "feedUrl", event.target.value)} /></label>}
-          <small className="builder-note">هر کارت یک منبع دارد. برای منبع بیشتر کارت دیگری اضافه کن.</small></> : null}
+          <></></> : null}
         {selected.type === "filter" ? <><label><span>نوع شرط</span><select value={String(selected.config.condition ?? "keywords")} onChange={e=>update(selected.key,"condition",e.target.value)}><option value="keywords">واژه‌های کلیدی</option><option value="has_image">تصویر دارد</option><option value="no_image">تصویر ندارد</option></select></label><label><span>واژه‌های کلیدی (با ویرگول جدا کن)</span><textarea
           value={String(selected.config.keywords ?? "")} onChange={(event) => update(selected.key, "keywords", event.target.value)}
-          placeholder="فوتبال، لیگ، ورزش" /></label><label><span>شرط عبور خبر</span><select value={String(selected.config.mode ?? "include")}
+          placeholder="فوتبال، لیگ، ورزش" /></label><label><span>شرط عبور خبر<FieldHelp>برای شاخه‌های ورزشی و عمومی، دو کارت شرط جدا وصل کن.</FieldHelp></span><select value={String(selected.config.mode ?? "include")}
             onChange={(event) => update(selected.key, "mode", event.target.value)}><option value="include">شامل یکی از واژه‌ها</option>
             <option value="exclude">بدون این واژه‌ها</option></select></label>
-          <small className="builder-note">برای شاخه‌های ورزشی و عمومی، دو کارت شرط جدا وصل کن.</small></> : null}
+          <></></> : null}
         {selected.type === "api_source" || selected.type === "api_action" ? <>
           <label><span>اتصال API</span><select value={String(selected.config.connectionId ?? "")}
             onChange={(event) => { update(selected.key, "connectionId", event.target.value); setConnectionFormOpen(false); setConnectionToken(""); }}><option value="">انتخاب اتصال</option>
@@ -1013,7 +1014,7 @@ export function WorkflowBuilder() {
           <label><span>مسیر نسبی روی همان میزبان</span><input dir="ltr" value={String(selected.config.path ?? "")}
             onChange={(event) => update(selected.key, "path", event.target.value)} placeholder="/comments" /></label>
           {selected.type === "api_source" ? <>
-            <label><span>روش خواندن کامنت‌ها</span><select value={String(selected.config.readMode ?? "single")}
+            <label><span>روش خواندن کامنت‌ها<FieldHelp>پایش طبق فاصلهٔ جریان انجام می‌شود؛ گروهی با شناسه‌های یکسان دوباره تحلیل نمی‌شود.</FieldHelp></span><select value={String(selected.config.readMode ?? "single")}
               onChange={(event) => update(selected.key, "readMode", event.target.value)}>
               <option value="single">تکی؛ برای تصمیم و اقدام هر کامنت</option>
               <option value="batch">گروهی؛ آخرین کامنت‌ها</option>
@@ -1022,7 +1023,7 @@ export function WorkflowBuilder() {
               <label className="builder-check"><input type="checkbox" checked={selected.config.includeIndividual === true}
                 onChange={(event) => update(selected.key, "includeIndividual", event.target.checked)} />
                 <span>در کنار تحلیل گروهی، هر کامنت تازه را جداگانه برای تصمیم و اقدام هم بفرست</span></label>
-              <label><span>تعداد کامنت برای تحلیل</span><select value={selected.config.readAll === true ? "all" :
+              <label><span>تعداد کامنت برای تحلیل<FieldHelp>صفحه‌های API با PageNumber/PageSize خوانده می‌شوند؛ هر تحلیل حداکثر ۵۰ کامنت دارد. حالت «همه» در هر پایش تا ۵۰۰۰ مورد یا ۱۰۰ صفحه را می‌خواند.</FieldHelp></span><select value={selected.config.readAll === true ? "all" :
                 [10, 25, 50].includes(Number(selected.config.batchLimit ?? 10)) ? String(selected.config.batchLimit ?? 10) : "custom"}
                 onChange={(event) => { const value = event.target.value;
                   update(selected.key, "readAll", value === "all");
@@ -1039,7 +1040,7 @@ export function WorkflowBuilder() {
                 <label><span>شناسهٔ نوشته</span><input dir="ltr" value={String(selected.config.postId ?? "")}
                   onChange={(event) => update(selected.key, "postId", event.target.value)} placeholder="123" /></label>
               </> : null}
-              <small className="builder-note">صفحه‌های API با PageNumber/PageSize خوانده می‌شوند؛ هر تحلیل حداکثر ۵۰ کامنت دارد. حالت «همه» در هر پایش تا ۵۰۰۰ مورد یا ۱۰۰ صفحه را می‌خواند.</small>
+
             </> : null}
             {([ ["itemsPath", "مسیر آرایهٔ کامنت‌ها", "data.comments"], ["idField", "فیلد شناسه", "id"],
               ["textField", "فیلد متن", "text"], ["contextField", "فیلد زمینه (اختیاری)", "context"] ] as const)
@@ -1066,7 +1067,7 @@ export function WorkflowBuilder() {
               {sourceHealth?.checkedAt ? <small>زمان بررسی: {new Date(sourceHealth.checkedAt).toLocaleString("fa-IR")}</small> : null}
               {activity?.run ? <Link href={`/runs/${activity.run.id}`}>دیدن آخرین اجرای جریان ←</Link> : null}
             </div> : null}
-            <small className="builder-note">پایش طبق فاصلهٔ جریان انجام می‌شود؛ گروهی با شناسه‌های یکسان دوباره تحلیل نمی‌شود.</small>
+
           </> : <>
             <label><span>اقدام</span><select value={String(selected.config.action ?? "approve")}
               onChange={(event) => { const action = event.target.value; update(selected.key, "action", action);
@@ -1075,7 +1076,7 @@ export function WorkflowBuilder() {
                   { ...edge, condition: { decision: action } } : edge));
               }}><option value="approve">تأیید</option>
               <option value="reject">رد</option><option value="reply">پاسخ</option></select></label>
-            <label><span>روش درخواست</span><select value={String(selected.config.method ?? "POST")}
+            <label><span>روش درخواست<FieldHelp>اگر نتیجهٔ درخواست نامشخص باشد، ارسال خودکار دوباره انجام نمی‌شود.</FieldHelp></span><select value={String(selected.config.method ?? "POST")}
               onChange={(event) => update(selected.key, "method", event.target.value)}><option>POST</option><option>PATCH</option></select></label>
             {([ ["idField", "کلید شناسهٔ کامنت", "commentId"],
               [selected.config.action === "reply" ? "replyField" : "statusField", selected.config.action === "reply" ? "کلید متن پاسخ" : "کلید وضعیت", selected.config.action === "reply" ? "reply" : "status"] ] as const)
@@ -1085,7 +1086,7 @@ export function WorkflowBuilder() {
               onChange={(event) => update(selected.key, "approveValue", event.target.value)} /></label>
               <label><span>مقدار رد</span><input dir="ltr" value={String(selected.config.rejectValue ?? "rejected")}
                 onChange={(event) => update(selected.key, "rejectValue", event.target.value)} /></label></> : null}
-            <small className="builder-note">اگر نتیجهٔ درخواست نامشخص باشد، ارسال خودکار دوباره انجام نمی‌شود.</small>
+
           </>}
         </> : null}
         {["ai", "comment_decision"].includes(selected.type) ? <label><span>کار هوش مصنوعی</span><select
@@ -1097,12 +1098,12 @@ export function WorkflowBuilder() {
           <label><span>مدل تصمیم</span><select value={String(selected.config.profileId ?? "default")}
             onChange={(event) => update(selected.key, "profileId", event.target.value)}><option value="default">مدل پیش‌فرض</option>
             {aiProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.model}</option>)}</select></label>
-          <label><span>قواعد و محدودیت‌های تصمیم</span><textarea value={String(selected.config.rules ?? "")}
+          <label><span>قواعد و محدودیت‌های تصمیم<FieldHelp>برای هر اتصال خروجی، تصمیم تأیید، رد، پاسخ یا بررسی انسانی را انتخاب کن.</FieldHelp></span><textarea value={String(selected.config.rules ?? "")}
             onChange={(event) => update(selected.key, "rules", event.target.value)}
             placeholder="کامنت‌های محترمانه را تأیید کن؛ توهین را رد کن؛ سؤال مرتبط را پاسخ بده؛ مورد مبهم را برای بررسی بفرست." /></label>
-          <small className="builder-note">برای هر اتصال خروجی، تصمیم تأیید، رد، پاسخ یا بررسی انسانی را انتخاب کن.</small>
+
         </> : null}
-        {selected.type === "publish" ? <><label><span>مقصد انتشار</span><select value={String(selected.config.accountId ?? "")}
+        {selected.type === "publish" ? <><label><span>مقصد انتشار<FieldHelp>مجوز انتشار حساب انتخاب‌شده را با «تست اتصال» در صفحه کانال‌ها بررسی کن.</FieldHelp></span><select value={String(selected.config.accountId ?? "")}
           onChange={(event) => update(selected.key, "accountId", event.target.value)}><option value="">انتخاب مقصد</option>
           {publishAccounts.map((account) => <option key={account.id} value={account.id}>{publishNames[account.channel]} · {account.displayName ?? account.externalAccountId}</option>)}</select></label>
           {["youtube", "telegram", "instagram"].includes(accounts.find((a) => a.id === selected.config.accountId)?.channel ?? "") ?
@@ -1110,16 +1111,16 @@ export function WorkflowBuilder() {
               value={selected.config.connection} onChange={(value) => update(selected.key, "connection", value)} /> : null}
           <Link href="/connections">مدیریت اتصال کانال‌ها</Link>
           {accounts.find((a) => a.id === selected.config.accountId)?.channel === "instagram" ? <>
-            <small className="builder-note">حساب مقصد فعال است؛ مجوز انتشار را با «تست اتصال» در صفحه کانال‌ها بررسی کنید.</small>
+
             <InstagramFields settings={selected.config} caption={String(selected.config.instagramCaption ?? "")} setSetting={(key,value) => update(selected.key,key,value)} setCaption={(value) => update(selected.key,"instagramCaption",value)} inherited />
-            <label><span>تأیید انتشار</span><select value={selected.config.instagramRequireApproval === false ? "auto" : "review"} onChange={(e)=>update(selected.key,"instagramRequireApproval",e.target.value === "review")}><option value="review">پس از تأیید من</option><option value="auto">انتشار خودکار</option></select></label>
+            <label><span>تأیید انتشار<FieldHelp>برای مجموعه، زمان هر ردیف شیت استفاده می‌شود و ورود محتوا به تأیید نیاز دارد.</FieldHelp></span><select value={selected.config.instagramRequireApproval === false ? "auto" : "review"} onChange={(e)=>update(selected.key,"instagramRequireApproval",e.target.value === "review")}><option value="review">پس از تأیید من</option><option value="auto">انتشار خودکار</option></select></label>
             <div>زمان انتشار پیش‌فرض<PersianDateTimeField value={selected.config.scheduledAt} onChange={(value)=>update(selected.key,"scheduledAt",value)} /></div>
-            <small className="builder-note">برای مجموعه، زمان هر ردیف شیت استفاده می‌شود و ورود محتوا به تأیید نیاز دارد.</small>
+
             <Link href="/calendar">پیش‌نمایش خروجی‌ها، تأیید و زمان‌بندی در تقویم</Link>
           </> : null}
           {accounts.find((a) => a.id === selected.config.accountId)?.channel === "youtube" ? <YoutubePanel key={`${selected.key}-${selected.config.accountId}`} workflowId={workflowId} stepKey={selected.key}
             accountId={String(selected.config.accountId)} config={selected.config} update={(key, value) => update(selected.key, key, value)} items={youtubeItems} refresh={refreshYoutube} /> : null}
-          {accounts.find((a) => a.id === selected.config.accountId)?.channel !== "youtube" ? <><label><span>فاصلهٔ انتشار در همین کانال</span><select
+          {accounts.find((a) => a.id === selected.config.accountId)?.channel !== "youtube" ? <><label><span>فاصلهٔ انتشار در همین کانال<FieldHelp>این فاصله بین دو پیام همان مقصد اعمال می‌شود؛ تنظیم روزانه یعنی هر ۲۴ ساعت حداکثر یک ارسال.</FieldHelp></span><select
             value={publishPresets.includes(Number(selected.config.publishIntervalSeconds ?? 30)) ?
               String(selected.config.publishIntervalSeconds ?? 30) : "custom"}
             onChange={(event) => update(selected.key, "publishIntervalSeconds", event.target.value === "custom" ? 600 : Number(event.target.value))}>
@@ -1129,18 +1130,18 @@ export function WorkflowBuilder() {
             <label><span>فاصلهٔ دلخواه (ثانیه، ۳۰ تا ۶۰۴۸۰۰)</span><input type="number" min={30} max={604800}
               value={Number(selected.config.publishIntervalSeconds ?? 600)}
               onChange={(event) => update(selected.key, "publishIntervalSeconds", Number(event.target.value))} /></label> : null}
-          <small className="builder-note">این فاصله بین دو پیام همان مقصد اعمال می‌شود؛ تنظیم روزانه یعنی هر ۲۴ ساعت حداکثر یک ارسال.</small>
+
           {!publishAccounts.length ? <Link href="/connections">+ اتصال مقصد انتشار</Link> : null}
-          <small className="builder-note">ایتا، تلگرام و وب‌سایت آمادهٔ انتشارند. اینستاگرام و بله پس از پیاده‌سازی و آزمایش ناشرشان اضافه می‌شوند.</small></> : null}</> : null}
+          <></></> : null}</> : null}
         {selected.type === "ai" ? <><label><span>مدل و توکن این کارت</span><select value={String(selected.config.profileId ?? "default")}
           onChange={(event) => update(selected.key, "profileId", event.target.value)}>
           {!aiProfiles.some((profile) => profile.id === String(selected.config.profileId ?? "default")) ?
             <option value={String(selected.config.profileId ?? "default")}>مدل انتخاب‌شده موجود نیست</option> : null}
           {aiProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.provider} / {profile.model}</option>)}
-          </select></label><label><span>{selected.config.aiMode === "feedback" ? "راهنمای تحلیل (اختیاری)" : "دستور بازنویسی متن"}</span><textarea value={String(selected.config.instructions ?? "")}
+          </select></label><label><span>{selected.config.aiMode === "feedback" ? "راهنمای تحلیل (اختیاری)" : "دستور بازنویسی متن"}{selected.config.aiMode === "feedback" ? <FieldHelp>هر کامنت جدا برچسب می‌گیرد؛ شمارش مثبت، منفی و خنثی از برچسب‌ها محاسبه می‌شود. نتیجه را در صفحهٔ اجرای جریان ببین.</FieldHelp> : null}</span><textarea value={String(selected.config.instructions ?? "")}
           onChange={(event) => update(selected.key, "instructions", event.target.value)} placeholder={selected.config.aiMode === "feedback" ?
             "بازخورد کاربران را دربارهٔ کیفیت خدمات توضیح بده و نگرانی‌های پرتکرار را مشخص کن." : "خبر را کوتاه و دقیق بازنویسی کن."} /></label>
-          {selected.config.aiMode === "feedback" ? <small className="builder-note">هر کامنت جدا برچسب می‌گیرد؛ شمارش مثبت، منفی و خنثی از برچسب‌ها محاسبه می‌شود. نتیجه را در صفحهٔ اجرای جریان ببین.</small> : <>
+          {selected.config.aiMode === "feedback" ? <></> : <>
           <label><span>عنوان خبر</span><select value={String(selected.config.titleMode ?? "keep")}
             onChange={(event) => update(selected.key, "titleMode", event.target.value)}>
             <option value="keep">عنوان اصلی را نگه دار</option><option value="rewrite">عنوان را با AI بازنویسی کن</option>
@@ -1161,7 +1162,7 @@ export function WorkflowBuilder() {
           <Link href="/settings/ai">{aiReady ? "✓ مدل AI تنظیم شده" : "+ تنظیم مدل و توکن AI"}</Link></> : null}
         {selected.type === "manual_input" ? <label><span>متن ورودی</span><textarea value={prompt}
           onChange={(event) => setPrompt(event.target.value)} placeholder="متن خبر یا موضوع" /></label> : null}
-        {selected.type === "human_approval" ? <div className="builder-help">این شاخه منتظر تأیید می‌ماند؛ شاخه‌های دیگر ادامه می‌دهند.</div> : null}
+        {selected.type === "human_approval" ? <div>تأیید انسانی<FieldHelp>این شاخه منتظر تأیید می‌ماند؛ شاخه‌های دیگر ادامه می‌دهند.</FieldHelp></div> : null}
         <div className="graph-node-links"><strong>اتصال‌های این کارت</strong>{edges.filter((edge) => edge.sourceKey === selected.key || edge.targetKey === selected.key)
           .map((edge) => <button key={edgeId(edge)} onClick={() => removeEdge(edge)}>
             {edgeName(edge.sourceKey)} ← {edgeName(edge.targetKey)} · حذف ×</button>)}</div>

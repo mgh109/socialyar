@@ -1,4 +1,5 @@
 "use client";
+import { FieldHelp } from "./field-help";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/session";
@@ -14,14 +15,14 @@ export function YoutubeCommentsPanel({type,stepKey,workflowId,config,update,acco
  const preview=async()=>{if(!workflowId)return;setBusy(true);setMessage("");try{const r=await apiFetch(`/workflows/${workflowId}/youtube-comments/preview`,{method:"POST",body:JSON.stringify({stepKey})});const data=await r.json();if(!r.ok)throw new Error(data.error);setSamples(data.comments);setMessage(`${Number(data.comments.length).toLocaleString("fa-IR")} کامنت قابل پاسخ خوانده شد.`);}catch(e){setMessage(e instanceof Error?e.message:"خواندن ناموفق بود.");}finally{setBusy(false);}};
  const retry=async(item:Report)=>{setBusy(true);try{const r=await apiFetch(`/runs/${item.runId}/youtube-reply/retry`,{method:"POST",body:JSON.stringify({stepKey:item.stepKey})});const data=await r.json();if(!r.ok)throw new Error(data.error);setMessage("درخواست بررسی دوباره ثبت شد؛ ارسال نامعلوم دوباره تکرار نمی‌شود.");}catch(e){setMessage(e instanceof Error?e.message:"تلاش ناموفق بود.");}finally{setBusy(false);}};
  return <section className="youtube-comments-panel">
-  <label>حساب یوتیوب<select value={String(config.accountId||"")} onChange={e=>update("accountId",e.target.value)}><option value="">انتخاب حساب</option>{accounts.filter(a=>a.channel==="youtube"&&a.isActive).map(a=><option key={a.id} value={a.id}>{a.displayName||a.externalAccountId}</option>)}</select></label>
-  <small>حساب منبع و پاسخ را یکسان انتخاب کنید. <Link href="/connections">مدیریت اتصال‌ها</Link></small>
+  <label><span>حساب یوتیوب<FieldHelp>حساب منبع و پاسخ را یکسان انتخاب کنید. <Link href="/connections">مدیریت اتصال‌ها</Link></FieldHelp></span><select value={String(config.accountId||"")} onChange={e=>update("accountId",e.target.value)}><option value="">انتخاب حساب</option>{accounts.filter(a=>a.channel==="youtube"&&a.isActive).map(a=><option key={a.id} value={a.id}>{a.displayName||a.externalAccountId}</option>)}</select></label>
+
   {type==="youtube_comments"?<>
    <label>شناسه ویدئو (اختیاری)<input dir="ltr" value={String(config.videoId||"")} maxLength={11} placeholder="خالی: همه ویدئوهای کانال" onChange={e=>update("videoId",e.target.value.trim())}/></label>
-   <label>تعداد کامنت در هر بررسی<input type="number" min={1} max={500} value={Number(config.batchLimit??50)} onChange={e=>update("batchLimit",Number(e.target.value))}/></label>
+   <label><span>تعداد کامنت در هر بررسی<FieldHelp>خواندن طبق فاصله پایش جریان انجام می‌شود. کامنت خود کانال و موارد غیرقابل پاسخ کنار گذاشته می‌شوند.</FieldHelp></span><input type="number" min={1} max={500} value={Number(config.batchLimit??50)} onChange={e=>update("batchLimit",Number(e.target.value))}/></label>
    <div>فقط کامنت‌های بعد از این زمان (اختیاری)<PersianDateTimeField allowPast emptyLabel="بدون محدودیت تاریخ" clearLabel="حذف محدودیت تاریخ" value={String(config.after||"")} onChange={v=>update("after",v)}/></div>
-   <small>خواندن طبق فاصله پایش جریان انجام می‌شود. کامنت خود کانال و موارد غیرقابل پاسخ کنار گذاشته می‌شوند.</small>
-   <button type="button" className="ghost-button" disabled={busy||!workflowId} onClick={()=>void preview()}>{busy?"در حال خواندن…":"آزمایش خواندن کامنت‌ها"}</button><small>آزمایش از تنظیمات ذخیره‌شده استفاده می‌کند و پاسخی ارسال نمی‌کند.</small>
+
+   <button type="button" className="ghost-button" disabled={busy||!workflowId} onClick={()=>void preview()}>{busy?"در حال خواندن…":"آزمایش خواندن کامنت‌ها"}</button><FieldHelp>آزمایش از تنظیمات ذخیره‌شده استفاده می‌کند و پاسخی ارسال نمی‌کند.</FieldHelp>
    {health?<div role="status"><strong>آخرین پایش خودکار</strong>{health.status==="error"?<p role="alert">{health.error}</p>:health.status==="not_checked"?<p>هنوز پایش ثبت نشده؛ جریان را ذخیره و فعال کنید.</p>:<p>{Number(health.validCount||0).toLocaleString("fa-IR")} کامنت خوانده شد · {Number(health.queuedCount||0).toLocaleString("fa-IR")} مورد تازه وارد صف شد.</p>}{health.checkedAt?<small>{new Date(health.checkedAt).toLocaleString("fa-IR",{timeZone:"Asia/Tehran"})}</small>:null}</div>:null}
    {samples.map(item=><p key={item.id}>{item.text} <a href={item.url} target="_blank" rel="noreferrer">دیدن کامنت</a></p>)}
   </>:<>
@@ -30,8 +31,8 @@ export function YoutubeCommentsPanel({type,stepKey,workflowId,config,update,acco
    <label>لحن پاسخ<input value={String(config.tone||"")} maxLength={200} placeholder="محترمانه و صمیمی" onChange={e=>update("tone",e.target.value)}/></label>
    <label>اطلاعات کانال و پاسخ سؤال‌های متداول<textarea rows={5} maxLength={4000} value={String(config.context||"")} onChange={e=>update("context",e.target.value)}/></label>
    <label>قواعد پاسخگویی<textarea rows={5} maxLength={4000} placeholder="به تشکرها پاسخ کوتاه بده؛ برای سؤال بدون اطلاعات کافی پاسخ نساز." value={String(config.instructions||"")} onChange={e=>update("instructions",e.target.value)}/></label>
-   <label>سقف پاسخ روزانه کانال<input type="number" min={1} max={100} value={Number(config.dailyLimit??20)} onChange={e=>update("dailyLimit",Number(e.target.value))}/></label>
-   <small>سقف به وقت تهران است؛ باقی‌مانده روز بعد ادامه می‌یابد. پاسخ‌های قبلی کانال دوباره ارسال نمی‌شوند. توقف جریان، ارسال‌های بعدی را متوقف می‌کند.</small>
+   <label><span>سقف پاسخ روزانه کانال<FieldHelp>سقف به وقت تهران است؛ باقی‌مانده روز بعد ادامه می‌یابد. پاسخ‌های قبلی کانال دوباره ارسال نمی‌شوند. توقف جریان، ارسال‌های بعدی را متوقف می‌کند.</FieldHelp></span><input type="number" min={1} max={100} value={Number(config.dailyLimit??20)} onChange={e=>update("dailyLimit",Number(e.target.value))}/></label>
+
    <Link href="/approvals">بررسی و ویرایش پاسخ‌های منتظر تأیید</Link>
   </>}
   {message?<p role="status">{message}</p>:null}

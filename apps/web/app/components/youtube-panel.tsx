@@ -1,4 +1,5 @@
 "use client";
+import { FieldHelp } from "./field-help";
 import { persianError } from "../lib/persian";
 import { useEffect, useState, useRef } from "react";
 import { apiFetch } from "../lib/session";
@@ -96,8 +97,8 @@ export function YoutubePanel({ workflowId, stepKey, accountId, config, update, i
   return <section className="youtube-panel">
     <p><YoutubeIcon /> یوتیوب · تأیید انسانی اجباری</p>
     {privateOnly ? <p role="status">این پروژه برای انتشار عمومی تأیید نشده است؛ آپلودها به‌صورت خصوصی انجام می‌شوند.</p> : null}
-    <label>نوع محتوا<select value={String(config.videoType ?? "video")} onChange={(e) => update("videoType",e.target.value)}><option value="video">ویدئوی معمولی</option><option value="shorts">ویدئوی کوتاه / Shorts</option></select></label>
-    <small>تشخیص Shorts با یوتیوب است؛ فایل باید مربع یا عمودی و حداکثر ۳ دقیقه باشد. فایل خودکار برش نمی‌خورد.</small>
+    <label><span>نوع محتوا<FieldHelp>تشخیص Shorts با یوتیوب است؛ فایل باید مربع یا عمودی و حداکثر ۳ دقیقه باشد. فایل خودکار برش نمی‌خورد.</FieldHelp></span><select value={String(config.videoType ?? "video")} onChange={(e) => update("videoType",e.target.value)}><option value="video">ویدئوی معمولی</option><option value="shorts">ویدئوی کوتاه / Shorts</option></select></label>
+
     <label>پلی‌لیست (نام یا شناسه)<input value={String(config.playlist ?? "")} onChange={(e) => update("playlist",e.target.value)} /></label>
     <label>عنوان<input maxLength={100} value={String(config.youtubeTitle ?? "")} onChange={(e) => update("youtubeTitle", e.target.value)} placeholder="عنوان از کارت قبلی" /></label>
     <label>توضیحات<textarea maxLength={5000} value={String(config.youtubeDescription ?? "")} onChange={(e) => update("youtubeDescription", e.target.value)} /></label>

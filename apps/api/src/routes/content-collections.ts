@@ -11,11 +11,19 @@ const scope = z.object({ workflowId: z.string().uuid(), sourceStepKey: z.string(
 const previewSchema = scope.extend({ rows: collectionRowsSchema, detectRemovals: z.boolean().default(true) });
 const applySchema = previewSchema.extend({ revision: z.number().int().min(0), selected: z.array(z.object({ id: z.string(), version: z.number().nullable(), updatedAt: z.string().nullable() })).min(1).max(500) });
 class ImportConflict extends Error {}
-export async function contentCollectionRoutes(app: FastifyInstance, options: { database?: ReturnType<typeof getDb>; queue?: Pick<typeof publicationQueue,"add"> } = {}) {
+export async function contentCollectionRoutes(app: FastifyInstance, options: { database?: ReturnType<typeof getDb>; queue?: Pick<typeof publicationQueue,"add">; sheetFetcher?: typeof fetchGoogleSheet } = {}) {
   const db = options.database ?? getDb(); const queue = options.queue ?? publicationQueue; app.addHook("onRequest", app.authenticate);
   app.post("/content-collections/google-sheet",async(request,reply)=>{
-    const input=scope.extend({ url:z.string().url(),gid:z.string().regex(/^\d{1,15}$/).default("0") }).parse(request.body);
-    try { await destination(db,request.auth.workspaceId,input);return await fetchGoogleSheet(input.url,input.gid); }
+    const input=scope.omit({targetStepKey:true}).extend({ url:z.string().url(),gid:z.string().regex(/^\d{1,15}$/).default("0") }).parse(request.body);
+    try {
+      const [workflow]=await db.select().from(workflows).where(and(eq(workflows.id,input.workflowId),eq(workflows.workspaceId,request.auth.workspaceId)));
+      if(!workflow) throw new ImportConflict("جریان پیدا نشد.");
+      const [version]=await db.select().from(workflowVersions).where(eq(workflowVersions.workflowId,workflow.id)).orderBy(desc(workflowVersions.version)).limit(1);
+      if(!version) throw new ImportConflict("ابتدا جریان را ذخیره کنید.");
+      const [source]=await db.select().from(workflowSteps).where(and(eq(workflowSteps.workflowVersionId,version.id),eq(workflowSteps.key,input.sourceStepKey),eq(workflowSteps.type,"collection_source")));
+      if(!source) throw new ImportConflict("کارت مجموعه را ذخیره کنید.");
+      return await (options.sheetFetcher ?? fetchGoogleSheet)(input.url,input.gid);
+    }
     catch(e){return reply.code(422).send({error:e instanceof Error ? e.message : "خواندن شیت ناموفق بود."});}
   });
   app.get("/content-collections/google-sheet/snapshot",async(request)=>{

@@ -1737,3 +1737,9 @@ body:has(.calendar-minimal) .account-dock { top:5px; right:12px; }
 .graph-usage > div { box-sizing:border-box; max-height:min(480px,calc(100dvh - 180px)); overflow-y:auto; overflow-x:hidden; text-align:right; overflow-wrap:anywhere; }
 .graph-usage > div > section { border-top:1px solid var(--border); padding-top:10px; margin-top:4px; }
 .graph-usage > div > section p { margin:6px 0; font-size:11px; line-height:1.8; color:var(--muted); }
+
+/* Field guidance stays out of the card settings layout until requested. */
+.field-help { display: inline-flex; position: relative; vertical-align: middle; margin-inline-start: .4rem; font-weight: normal; }
+.field-help .field-help-trigger { display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; padding: 0; border: 1px solid var(--border, #cbd5e1); border-radius: 50%; background: transparent; color: inherit; font: inherit; font-size: .8rem; cursor: pointer; opacity: .7; }
+.field-help .field-help-trigger:hover, .field-help .field-help-trigger:focus-visible { opacity: 1; outline: 2px solid var(--accent, #16a34a); outline-offset: 2px; }
+.field-help-content { position: fixed; z-index: 10000; width: min(280px, calc(100vw - 16px)); max-height: 192px; overflow: auto; padding: .75rem; border: 1px solid var(--border, #cbd5e1); border-radius: .75rem; background: var(--panel); color: var(--text, #17212b); box-shadow: 0 8px 24px #0002; font-size: .8rem; line-height: 1.9; white-space: normal; overflow-wrap: anywhere; text-align: start; }
