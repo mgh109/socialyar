@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { setTimeout as pause } from "node:timers/promises";
-import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts } from "@socialyar/db";
+import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts, youtubeMediaFile, youtubeFileSource } from "@socialyar/db";
 
 import { attachYoutubePlaylist } from "./youtube-playlist";
 
@@ -38,10 +38,11 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0)
       return fetchYoutubeMedia(url, kind === "video" ? 250_000_000 : 2_000_000, kind);
     };
     if (!item.videoId) {
-      const video = await media("video");
-      if (item.settings.videoType === "shorts") assertShorts(await inspectVideo(video.bytes));
+      const stored = typeof item.settings.videoMediaId === "string" ? await youtubeMediaFile(item.workspaceId,item.settings.videoMediaId,"video") : null;
+      const video = stored ? null : await media("video");
+      if (item.settings.videoType === "shorts") assertShorts(await inspectVideo(stored ? stored.path : video!.bytes));
       await log("upload_started", { privateOnly, requestedPrivacy: item.settings.privacy });
-      item.videoId = await uploadYoutubeVideo({ bytes: video.bytes, type: video.type, token,
+      item.videoId = await uploadYoutubeVideo({ bytes: video?.bytes, source: stored ? youtubeFileSource(stored) : undefined, type: stored?.type ?? video!.type, token,
         session: item.sessionEnc ? decryptSecret(item.sessionEnc) : undefined,
         metadata: { snippet: { title: item.title, description: item.description, tags: item.settings.tags ?? [], categoryId: "22" },
           status: { privacyStatus: privateOnly ? "private" : item.settings.privacy ?? "private", selfDeclaredMadeForKids: item.settings.madeForKids === true } },

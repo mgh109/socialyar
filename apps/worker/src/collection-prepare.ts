@@ -2,10 +2,11 @@ import { generateContentImages } from "@socialyar/workflow/image-generation";
 import { imageConfigSchema } from "@socialyar/shared";
 import { ImageLimitError } from "@socialyar/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
-import { assertWorkspaceOperational, getDb, getPool, youtubeItems, fetchCollectionMedia, storeYoutubeMedia, inspectVideo, assertShorts, readYoutubeMedia } from "@socialyar/db";
+import { assertWorkspaceOperational, getDb, getPool, youtubeItems, fetchCollectionMedia, storeYoutubeMedia, inspectVideo, assertShorts, fetchCollectionVideo, youtubeMediaFile } from "@socialyar/db";
 const preparationServices = {
   lock: () => getPool().connect(), fetchMedia: fetchCollectionMedia, storeMedia: storeYoutubeMedia,
-  readMedia: readYoutubeMedia, inspect: inspectVideo, operational: assertWorkspaceOperational,
+  inspect: inspectVideo, operational: assertWorkspaceOperational,
+  fetchVideo:fetchCollectionVideo, mediaFile:youtubeMediaFile,
 };
 export async function prepareCollectionVideo(id: string, version: number, db = getDb(), services = preparationServices) {
   const lock = await services.lock();
@@ -22,12 +23,12 @@ export async function prepareCollectionVideo(id: string, version: number, db = g
   try {
     await services.operational(db,item.workspaceId);
     if (!settings.videoMediaId) {
-      const media = await services.fetchMedia(item.workspaceId, String(settings.sourceVideoUrl ?? settings.videoUrl), "video", settings.mediaConnection);
-      settings.videoMediaId = (await services.storeMedia(item.workspaceId, media.bytes)).mediaId;
+      const media = await services.fetchVideo(item.workspaceId,String(settings.sourceVideoUrl ?? settings.videoUrl),settings.mediaConnection);
+      settings.videoMediaId = media.mediaId;
     }
     stage = "video_inspection";
-    const video = await services.readMedia(item.workspaceId,String(settings.videoMediaId),"video");
-    const details = await services.inspect(video.bytes); settings.videoDetails = details;
+    const video = await services.mediaFile(item.workspaceId,String(settings.videoMediaId),"video");
+    const details = await services.inspect(video.path); settings.videoDetails = details;
     if (settings.videoType === "shorts") assertShorts(details);
     const imageStep = settings.imageStep as {key:string;config:Record<string,unknown>}|undefined;
     if (imageStep) {

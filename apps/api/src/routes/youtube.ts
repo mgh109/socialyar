@@ -1,9 +1,10 @@
+import { createReadStream } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, gt } from "drizzle-orm";
 import { randomBytes, createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getDb, assertWorkspaceOperational, reserveResourceQuota, TenantPolicyError, workspaces, socialAccounts, youtubeItems, youtubeOAuthStates, youtubeConfig, googleJson,
-  encryptSecret, decryptSecret, youtubeToken, workflows, storeYoutubeMedia, readYoutubeMedia, fetchYoutubeMedia, validateConnectionPolicy, secretConfigurationProblem } from "@socialyar/db";
+  youtubeMediaFile, encryptSecret, decryptSecret, youtubeToken, workflows, storeYoutubeMedia, readYoutubeMedia, fetchYoutubeMedia, validateConnectionPolicy, secretConfigurationProblem } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 import { policySchema } from "./proxies";
 
@@ -110,8 +111,8 @@ export async function youtubeRoutes(app: FastifyInstance) {
     });
     secured.get("/youtube/media/:id", async (request, reply) => {
       const { id } = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.params);
-      const { bytes, type } = await readYoutubeMedia(request.auth.workspaceId, id);
-      return reply.type(type).header("Cache-Control", "private, no-store").send(bytes);
+      const { path, type, size } = await youtubeMediaFile(request.auth.workspaceId, id);
+      return reply.type(type).header("Content-Length",size).header("Cache-Control", "private, no-store").send(createReadStream(path));
     });
     secured.get("/youtube/items", async (request) => {
       const query = z.object({ workflowId: z.string().uuid().optional() }).parse(request.query);
@@ -126,7 +127,7 @@ export async function youtubeRoutes(app: FastifyInstance) {
       const [account] = await db.select().from(socialAccounts).where(and(eq(socialAccounts.id, input.accountId), eq(socialAccounts.workspaceId, request.auth.workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true)));
       if (!workflow || !account) return reply.code(404).send({ error: "workflow_or_channel_not_found" });
       await validateConnectionPolicy(request.auth.workspaceId, input.connection);
-      if (input.videoMediaId) await readYoutubeMedia(request.auth.workspaceId, input.videoMediaId, "video");
+      if (input.videoMediaId) await youtubeMediaFile(request.auth.workspaceId, input.videoMediaId, "video");
       if (input.coverMediaId) await readYoutubeMedia(request.auth.workspaceId, input.coverMediaId, "image");
       const [item] = await db.insert(youtubeItems).values({ workspaceId: request.auth.workspaceId, workflowId: workflow.id, stepKey: input.stepKey,
         itemKey: input.videoMediaId ?? randomUUID(), accountId: account.id, channelName: account.displayName ?? account.externalAccountId,
@@ -137,7 +138,7 @@ export async function youtubeRoutes(app: FastifyInstance) {
     secured.patch("/youtube/items/:id/media", async (request, reply) => {
       const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
       const input = z.object({ videoMediaId: z.string().regex(/^[a-f0-9]{64}$/), coverMediaId: z.string().regex(/^[a-f0-9]{64}$/).optional() }).parse(request.body);
-      await readYoutubeMedia(request.auth.workspaceId, input.videoMediaId, "video");
+      await youtubeMediaFile(request.auth.workspaceId, input.videoMediaId, "video");
       if (input.coverMediaId) await readYoutubeMedia(request.auth.workspaceId, input.coverMediaId, "image");
       const [current] = await db.select().from(youtubeItems).where(and(eq(youtubeItems.id, id), eq(youtubeItems.workspaceId, request.auth.workspaceId), eq(youtubeItems.status, "waiting_video")));
       if (!current) return reply.code(409).send({ error: "item_not_waiting_video" });
@@ -155,7 +156,7 @@ export async function youtubeRoutes(app: FastifyInstance) {
       if (current.status !== "waiting_approval") return reply.code(409).send({ error: "item_not_waiting_approval" });
       if (input.action === "approve") {
         if (current.scheduledAt && current.scheduledAt.getTime() <= Date.now()) return reply.code(409).send({ error: "زمان انتشار گذشته؛ نیازمند تعیین تکلیف. زمان جدید تعیین کنید." });
-        await readYoutubeMedia(request.auth.workspaceId, String(current.settings.videoMediaId), "video");
+        await youtubeMediaFile(request.auth.workspaceId, String(current.settings.videoMediaId), "video");
         if (current.settings.coverMediaId) await readYoutubeMedia(request.auth.workspaceId, String(current.settings.coverMediaId), "image");
       }
       const [item] = await db.update(youtubeItems).set({ status: input.action === "approve" ? "queued" : "rejected",

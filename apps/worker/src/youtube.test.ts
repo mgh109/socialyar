@@ -89,3 +89,17 @@ test("media snapshots deduplicate content and enforce workspace isolation", asyn
     await rm(directory, { recursive: true });
   }
 });
+
+test("a large file source uploads in bounded chunks and resumes at the server acknowledged offset",async()=>{
+  const total=350_580_000;const resumeAt=8*1024*1024;const reads:Array<[number,number]>=[];
+  const source={size:total,read:async(start:number,end:number)=>{assert.ok(end-start<=8*1024*1024);reads.push([start,end]);return Buffer.alloc(end-start);}};
+  let probe=true;
+  const request=(async(_url:unknown,options:RequestInit)=>{
+    if(probe){probe=false;assert.equal((options.headers as any)["Content-Range"],`bytes */${total}`);return new Response(null,{status:308,headers:{range:`bytes=0-${resumeAt-1}`}});}
+    const range=String((options.headers as any)["Content-Range"]);const [,start,end]=range.match(/bytes (\d+)-(\d+)\//)!;
+    assert.equal((options.body as Uint8Array).byteLength,Number(end)-Number(start)+1);
+    return Number(end)+1===total?json({id:"large-video"}):new Response(null,{status:308,headers:{range:`bytes=0-${end}`}});
+  }) as typeof fetch;
+  assert.equal(await uploadYoutubeVideo({...input(),bytes:undefined,source,session},request),"large-video");
+  assert.equal(reads[0][0],resumeAt);assert.equal(reads.at(-1)![1],total);
+});

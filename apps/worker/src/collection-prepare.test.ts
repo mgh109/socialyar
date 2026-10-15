@@ -23,7 +23,8 @@ test("cover failure preserves downloaded video, identifies the failed stage, and
       return {bytes:Buffer.from(kind),type:kind==="video"?"video/mp4":"image/jpeg"} as any;
     },
     storeMedia:async(_workspace,bytes)=>({mediaId:bytes.toString()==="video"?"a".repeat(64):"b".repeat(64),kind:bytes.toString()==="video"?"video":"image"}),
-    readMedia:async()=>({bytes:Buffer.from("video"),type:"video/mp4"}),
+    fetchVideo:async()=>{videoDownloads++;return {mediaId:"a".repeat(64),kind:"video",type:"video/mp4",size:32};},
+    mediaFile:async()=>({path:"/test/video",size:32,type:"video/mp4"}),
     inspect:async()=>({width:1920,height:1080,duration:30}),
   };
   await assert.rejects(prepareCollectionVideo("item",1,database,services),/cover download failed/);

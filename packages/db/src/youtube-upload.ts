@@ -2,12 +2,12 @@ import { googleJson } from "./youtube";
 import { AmbiguousDeliveryError, isConnectionError } from "./publishing-connection";
 
 export async function uploadYoutubeVideo(input: {
-  bytes: Buffer; type: string; token: string; session?: string;
+  bytes?: Buffer; source?: {size:number;read:(start:number,end:number)=>Promise<Buffer>}; type: string; token: string; session?: string;
   metadata: Record<string, unknown>;
   saveSession: (session: string) => Promise<void>;
   saveProgress: (progress: number, videoId?: string) => Promise<void>;
 }, request: typeof fetch = fetch, recoveries = 0): Promise<string> {
-  const total = input.bytes.length;
+  const total = input.source?.size ?? input.bytes?.length ?? 0;
   if (!total) throw new Error("Empty video");
   const headers = { Authorization: `Bearer ${input.token}` };
   let session = input.session;
@@ -34,11 +34,13 @@ export async function uploadYoutubeVideo(input: {
   }
   while (offset < total) {
     const end = Math.min(offset + 8 * 1024 * 1024, total);
+    const chunk = input.source ? await input.source.read(offset,end) : input.bytes!.subarray(offset,end);
+    if(chunk.length!==end-offset)throw new Error("Stored video is incomplete");
     let response: Response;
     try {
       response = await request(session, { method: "PUT", headers: { ...headers, "Content-Type": input.type,
         "Content-Length": String(end - offset), "Content-Range": `bytes ${offset}-${end - 1}/${total}` },
-        body: new Uint8Array(input.bytes.subarray(offset, end)), signal: AbortSignal.timeout(120000) });
+        body: new Uint8Array(chunk), signal: AbortSignal.timeout(120000) });
     } catch (error) {
       if (recoveries < 2 && (error instanceof AmbiguousDeliveryError || isConnectionError(error))) {
         // Query the same persisted session on the selected route before sending another byte.

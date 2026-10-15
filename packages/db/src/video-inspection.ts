@@ -8,10 +8,10 @@ export function assertShorts(details: VideoDetails) {
   if (!Number.isFinite(details.duration) || details.duration <= 0 || details.duration > 180 || details.height < details.width)
     throw new Error("برای Shorts، ویدئو باید مربع یا عمودی و حداکثر ۳ دقیقه باشد. نوع محتوا یا فایل را اصلاح کنید.");
 }
-export async function inspectVideo(bytes: Buffer): Promise<VideoDetails> {
-  const directory = await mkdtemp(join(tmpdir(),"hoor-video-")); const path = join(directory,"video");
+export async function inspectVideo(bytes: Buffer | string): Promise<VideoDetails> {
+  const directory = typeof bytes === "string" ? null : await mkdtemp(join(tmpdir(),"hoor-video-")); const path = typeof bytes === "string" ? bytes : join(directory!,"video");
   try {
-    await writeFile(path,bytes,{ mode:0o600 });
+    if (typeof bytes !== "string") await writeFile(path,bytes,{ mode:0o600 });
     const { stdout } = await promisify(execFile)("ffprobe", ["-v","error","-show_streams","-show_format","-of","json",path], { timeout:30000, maxBuffer:1_000_000 });
     const info = JSON.parse(stdout); const stream = info.streams?.find((s: { codec_type: string }) => s.codec_type === "video");
     if (!stream) throw new Error("فایل جریان ویدئویی معتبر ندارد.");
@@ -21,5 +21,5 @@ export async function inspectVideo(bytes: Buffer): Promise<VideoDetails> {
     const duration = Number(info.format?.duration ?? stream.duration);
     if (!(width > 0 && height > 0 && duration > 0 && Number.isFinite(duration))) throw new Error("ابعاد یا مدت ویدئو قابل بررسی نیست.");
     return { width,height,duration };
-  } finally { await rm(directory,{ recursive:true,force:true }); }
+  } finally { if(directory) await rm(directory,{ recursive:true,force:true }); }
 }

@@ -3,9 +3,9 @@ import { getDb } from "./client";
 import { socialAccounts } from "./schema";
 import { decryptSecret, encryptSecret } from "./secrets";
 import { lookup } from "node:dns/promises";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, open, link, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { request as httpsRequest } from "node:https";
 import type { IncomingMessage } from "node:http";
@@ -28,6 +28,50 @@ export async function storeYoutubeMedia(workspaceId: string, bytes: Buffer) {
   try { await writeFile(resolve(directory, mediaId), bytes, { flag: "wx" }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   return { mediaId, kind: type.startsWith("video/") ? "video" : "image" };
+}
+/** Limit for server-side collection downloads; manual browser uploads keep their own cap. */
+export const youtubeVideoLimit = () => {
+  const value=Number(process.env.YOUTUBE_VIDEO_MAX_BYTES ?? 1_000_000_000);
+  return Number.isSafeInteger(value) && value>0 && value<=10_000_000_000 ? value : 1_000_000_000;
+};
+export async function youtubeMediaFile(workspaceId: string, mediaId: string, kind?: "video" | "image") {
+  if (!/^[a-f0-9]{64}$/.test(mediaId)) throw new Error("Invalid media id");
+  const path=resolve(mediaRoot(),workspaceId,mediaId); const handle=await open(path,"r");
+  try {
+    const header=Buffer.alloc(32);const {bytesRead}=await handle.read(header,0,32,0);
+    const type=youtubeMediaType(header.subarray(0,bytesRead));
+    if(kind && !type.startsWith(`${kind}/`))throw new Error(`Expected ${kind} file`);
+    return {path,type,size:(await handle.stat()).size};
+  } finally {await handle.close();}
+}
+/** Reads only one bounded upload chunk at a time, including on session recovery. */
+export function youtubeFileSource(file: {path:string;size:number}) {
+  return {size:file.size,read:async(start:number,end:number)=>{
+    if(start<0 || end>file.size || end<=start || end-start>8*1024*1024)throw new Error("Invalid video chunk");
+    const handle=await open(file.path,"r");
+    try {
+      const bytes=Buffer.alloc(end-start);let offset=0;
+      while(offset<bytes.length){const result=await handle.read(bytes,offset,bytes.length-offset,start+offset);if(!result.bytesRead)throw new Error("Stored video is incomplete");offset+=result.bytesRead;}
+      return bytes;
+    } finally {await handle.close();}
+  }};
+}
+/** Content-addressed storage with bounded memory and cleanup of interrupted downloads. */
+export async function storeYoutubeVideoStream(workspaceId:string, chunks:AsyncIterable<Uint8Array>, limit=youtubeVideoLimit()) {
+  const directory=resolve(mediaRoot(),workspaceId);await mkdir(directory,{recursive:true});
+  const temporary=resolve(directory,`.download-${randomUUID()}`);const handle=await open(temporary,"wx",0o600);
+  let size=0;let header=Buffer.alloc(0);const hash=createHash("sha256");
+  try {
+    for await(const chunk of chunks){
+      size+=chunk.length;if(size>limit)throw new Error(`حجم ویدئو بیش از سقف ${Math.floor(limit/1_000_000)} مگابایت است.`);
+      if(header.length<32)header=Buffer.concat([header,chunk.subarray(0,32-header.length)]);
+      hash.update(chunk);await handle.writeFile(chunk);
+    }
+    const type=youtubeMediaType(header);if(!type.startsWith("video/"))throw new Error("لینک به فایل ویدئو نمی‌رسد.");
+    const mediaId=hash.digest("hex");await handle.close();
+    try{await link(temporary,resolve(directory,mediaId));}catch(error){if((error as NodeJS.ErrnoException).code!=="EEXIST")throw error;}
+    return {mediaId,kind:"video" as const,type,size};
+  }finally{await handle.close().catch(()=>{});await unlink(temporary).catch(()=>{});}
 }
 export async function readYoutubeMedia(workspaceId: string, mediaId: string, kind?: "video" | "image") {
   if (!/^[a-f0-9]{64}$/.test(mediaId)) throw new Error("Invalid media id");

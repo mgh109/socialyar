@@ -3,7 +3,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { instagramProblems, calendarStatus, assertCalendarAction, type CalendarItem } from "@socialyar/shared";
 import { getDb, contentVariants, contentItems, publications, schedules, socialAccounts, workflows, runs, approvals, youtubeItems,
-  calendarActions, validateConnectionPolicy, readYoutubeMedia, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
+  calendarActions, validateConnectionPolicy, youtubeMediaFile, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 import { policySchema } from "./proxies";
 
@@ -119,7 +119,7 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
               if (!account) throw new CalendarConflict("اتصال کانال مقصد معتبر نیست."); accountId = account.id; channelName = account.displayName ?? account.externalAccountId;
             }
           }
-          if (input.action === "approve") await readYoutubeMedia(item.workspaceId, String(settings.videoMediaId), "video");
+          if (input.action === "approve") await youtubeMediaFile(item.workspaceId, String(settings.videoMediaId), "video");
           const date = input.action === "schedule" ? new Date(input.scheduledAt!) : input.action === "unschedule" ? null : input.action === "retry" ? new Date(Math.max(Date.now(), item.scheduledAt?.getTime() ?? 0)) : item.scheduledAt;
           const approved = input.action === "approve" ? true : input.action === "edit" || input.action === "reject" ? false : Boolean(item.approvedAt);
           const nextStatus = input.action === "stop" ? "cancelled" : input.action === "reject" ? "rejected" : !approved ? "waiting_approval" : date ? "queued" : "approved";

@@ -28,3 +28,22 @@ test("redirects are returned to the downloader so the next host can be revalidat
     agent.assertNoPendingInterceptors();
   } finally {await agent.close();}
 });
+
+test("a 350.58 MB video is streamed to disk, identified without a full read, and partial downloads are removed",async()=>{
+  const {mkdtemp,rm,readdir}=await import("node:fs/promises");
+  const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const {storeYoutubeVideoStream,youtubeMediaFile,youtubeFileSource}=await import("./youtube");
+  const directory=await mkdtemp(join(tmpdir(),"hoor-large-video-"));const previous=process.env.YOUTUBE_MEDIA_DIR;process.env.YOUTUBE_MEDIA_DIR=directory;
+  const size=350_580_000;const chunk=Buffer.alloc(1024*1024);chunk.write("ftyp",4);
+  async function* chunks(){let remaining=size;while(remaining){const length=Math.min(remaining,chunk.length);yield chunk.subarray(0,length);remaining-=length;}}
+  try {
+    const stored=await storeYoutubeVideoStream("workspace",chunks());
+    const file=await youtubeMediaFile("workspace",stored.mediaId,"video");assert.equal(file.size,size);
+    const source=youtubeFileSource(file);assert.equal((await source.read(0,32)).subarray(4,8).toString(),"ftyp");
+    assert.equal((await source.read(size-32,size)).length,32);
+    async function* interrupted(){yield chunk;throw new Error("connection lost");}
+    await assert.rejects(storeYoutubeVideoStream("workspace",interrupted()),/connection lost/);
+    await assert.rejects(storeYoutubeVideoStream("workspace",chunks(),100),/سقف/);
+    assert.deepEqual(await readdir(join(directory,"workspace")),[stored.mediaId]);
+  }finally{if(previous===undefined)delete process.env.YOUTUBE_MEDIA_DIR;else process.env.YOUTUBE_MEDIA_DIR=previous;await rm(directory,{recursive:true,force:true});}
+});
