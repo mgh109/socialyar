@@ -23,6 +23,8 @@ export function persianError(value: unknown, fallback = "عملیات ناموف
   if (/quota|rate limit|429/.test(lower)) return "سهمیه یا محدودیت تعداد درخواست‌های سرویس مقصد به پایان رسیده است.";
   if (/invalid_grant|refresh.token|disconnected/.test(lower)) return "دسترسی حساب پایان یافته یا قطع شده است؛ دوباره آن را متصل کنید.";
   if (/401|unauthorized|invalid.token/.test(lower)) return "اطلاعات ورود یا توکن حساب معتبر نیست؛ اتصال حساب را بررسی کنید.";
+  if (/\b(eacces|eperm|erofs)\b/.test(lower)) return "سرور اجازهٔ خواندن یا ذخیرهٔ فایل را ندارد؛ دسترسی فضای ذخیره‌سازی API و Worker را بررسی کنید.";
+  if (/\benospc\b/.test(lower)) return "فضای ذخیره‌سازی سرور پر شده است؛ فضای فایل‌های ویدئو را بررسی کنید.";
   if (/403|permission|forbidden/.test(lower)) return "مجوز لازم برای این عملیات وجود ندارد؛ دسترسی‌های رسمی حساب را بررسی کنید.";
   if (/oauth.*not configured|youtube_client/.test(lower)) return "اتصال رسمی گوگل هنوز در سرور تنظیم نشده است.";
   if (/expired.*session|upload session.*404/.test(lower)) return "نشست بارگذاری پایان یافته است؛ پیش از ساخت آیتم جدید، کانال مقصد را بررسی کنید تا ویدئو تکراری نشود.";
@@ -38,3 +40,12 @@ export function persianError(value: unknown, fallback = "عملیات ناموف
   return fallback;
 }
 export const protocolLabel = (protocol: string) => ({ http: "اچ‌تی‌تی‌پی", https: "اچ‌تی‌تی‌پی امن", socks5: "ساکس ۵" } as Record<string,string>)[protocol] ?? "نامشخص";
+
+/** Expose only diagnostic codes; never display raw URLs, tokens or exception text. */
+export function diagnosticErrorCode(value: unknown): string | null {
+  const text=value instanceof Error ? value.message : typeof value === "string" ? value : "";
+  const system=text.match(/\b(EACCES|EPERM|EROFS|ENOSPC|ENOENT|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT)\b/i)?.[1];
+  if(system)return system.toUpperCase();
+  const status=text.match(/\bHTTP\s+(\d{3})\b/i)?.[1];
+  return status ? `HTTP ${status}` : null;
+}

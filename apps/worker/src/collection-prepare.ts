@@ -57,7 +57,9 @@ export async function prepareCollectionVideo(id: string, version: number, db = g
       logs: [...item.logs, { result: "prepared", time: new Date().toISOString(), channel: item.channelName }] })
       .where(and(eq(youtubeItems.id, id), eq(youtubeItems.queueVersion, version), eq(youtubeItems.status, "preparing")));
   } catch (error) {
-    await db.update(youtubeItems).set({ settings: {...settings,preparationFailureStage:stage}, status: "failed", error: error instanceof Error ? error.message : "آماده‌سازی ناموفق بود.", logs:[...item.logs,{result:"preparation_failed",stage,time:new Date().toISOString(),channel:item.channelName}], updatedAt: new Date() })
+    const message=error instanceof Error ? error.message : "آماده‌سازی ناموفق بود.";
+    const code=error && typeof error === "object" && "code" in error && typeof error.code === "string" && /^[A-Z][A-Z0-9_]{1,40}$/.test(error.code) ? error.code : undefined;
+    await db.update(youtubeItems).set({ settings: {...settings,preparationFailureStage:stage}, status: "failed", error: message, logs:[...item.logs,{result:"preparation_failed",stage,error:message,...(code ? {code} : {}),time:new Date().toISOString(),channel:item.channelName}], updatedAt: new Date() })
       .where(and(eq(youtubeItems.id, id), eq(youtubeItems.queueVersion, version), eq(youtubeItems.status, "preparing"))); throw error;
   }
   } finally { await lock.query("SELECT pg_advisory_unlock(hashtext($1))",[`youtube-prepare:${id}`]).catch(()=>{}); lock.release(); }
