@@ -1,4 +1,5 @@
 "use client";
+import { youtubeCompletionLabel } from "../lib/youtube-publication";
 import { persianError } from "../lib/persian";
 import { useEffect, useMemo, useState } from "react";
 import { canMoveCalendarItem, type CalendarItem } from "@socialyar/shared";
@@ -19,7 +20,7 @@ function PublicationTile({ item, timezone, open, busy }: { item: CalendarItem; t
     <span className="publication-thumbnail">{image || video ? <MediaPreview compact mediaId={image ? item.coverMediaId : item.videoMediaId} url={image ? item.imageUrl : item.videoUrl} video={Boolean(video)} /> : <span aria-hidden="true">{item.channel === "youtube" ? "▶" : "▤"}</span>}</span>
     <span className="publication-tile-content"><strong>{item.title}</strong><span>{networkLabels[item.channel]} · {item.workflowName}</span>
       <span>{item.scheduledAt ? new Intl.DateTimeFormat("fa-IR", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(item.scheduledAt)) : "بدون زمان"} · {item.accountName ?? "مقصد انتخاب نشده"}</span>
-      <span className={`publication-status status-${item.status}`}>{calendarLabels[item.status]}</span>{item.overdue ? <small className="calendar-overdue">زمان انتشار گذشته؛ نیازمند تعیین تکلیف</small> : null}</span>
+      <span className={`publication-status status-${item.status}`}>{youtubeCompletionLabel(item.kind==="youtube" && item.remoteConfirmed,item.status) ?? calendarLabels[item.status]}</span>{item.overdue ? <small className="calendar-overdue">زمان انتشار گذشته؛ نیازمند تعیین تکلیف</small> : null}</span>
   </button>;
 }
 export function CalendarPublish() {

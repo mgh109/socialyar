@@ -35,6 +35,7 @@ export async function attachYoutubePlaylist(item: typeof youtubeItems.$inferSele
       await api("playlistItems?part=snippet",{ method:"POST",body:JSON.stringify({ snippet:{ playlistId,position,resourceId:{ kind:"youtube#video",videoId:item.videoId } } }) });
     }
     await getDb().update(youtubeItems).set({ settings:{ ...item.settings,playlistId },updatedAt:new Date() }).where(eq(youtubeItems.id,item.id));
+    return playlistId;
   } finally { await client.query("SELECT pg_advisory_unlock(hashtext($1))",[`youtube-playlist:${item.accountId}`]).catch(()=>{}); client.release(); }
 }
 async function getChannelId(accountId: string) {

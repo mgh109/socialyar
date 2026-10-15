@@ -1,11 +1,11 @@
 import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { and, eq } from "drizzle-orm";
 import { setTimeout as pause } from "node:timers/promises";
-import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts, youtubeMediaFile, youtubeFileSource, openCollectionVideoSource, inspectRemoteVideo, fetchCollectionMedia, type RemoteVideoSnapshot, collectionVideoUrl } from "@socialyar/db";
+import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts, youtubeMediaFile, youtubeFileSource, openCollectionVideoSource, inspectRemoteVideo, fetchCollectionMedia, type RemoteVideoSnapshot, collectionVideoUrl, isConnectionError, connectionErrorReason } from "@socialyar/db";
 
 import { attachYoutubePlaylist } from "./youtube-playlist";
 
-const youtubeServices = {operational:assertWorkspaceOperational,transport:publishingTransport,token:youtubeToken,openVideo:openCollectionVideoSource,inspectRemote:inspectRemoteVideo,fetchMedia:fetchCollectionMedia};
+const youtubeServices = {operational:assertWorkspaceOperational,transport:publishingTransport,token:youtubeToken,openVideo:openCollectionVideoSource,inspectRemote:inspectRemoteVideo,fetchMedia:fetchCollectionMedia,pause:(ms:number)=>pause(ms),playlist:attachYoutubePlaylist};
 export async function executeYoutube(id: string, db = getDb(), queueVersion = 0, services = youtubeServices) {
   let [item] = await db.select().from(youtubeItems).where(eq(youtubeItems.id, id));
   if (!item || !item.approvedAt || !["queued", "uploading", "processing"].includes(item.status)) return;
@@ -19,16 +19,34 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
     item.logs = [...item.logs, entry];
     await db.update(youtubeItems).set({ logs: item.logs, updatedAt: new Date() }).where(eq(youtubeItems.id, id));
   };
+  let stage="authentication";
+  const checkpoint=async(next:string,extra:Record<string,unknown>={})=>{
+    stage=next;item.settings={...item.settings,...extra,publicationStage:stage,publicationFailureStage:null};
+    await db.update(youtubeItems).set({settings:item.settings,updatedAt:new Date()}).where(eq(youtubeItems.id,id));
+  };
   let transport: Awaited<ReturnType<typeof publishingTransport>> | undefined;
   try {
     await services.operational(db,item.workspaceId);
+    await checkpoint("authentication");
     transport = await services.transport(item.workspaceId, item.settings.connection, "youtube", async (event) => {
       await db.insert(publicationConnectionEvents).values({ workspaceId: item.workspaceId, youtubeItemId: item.id, ...event });
       await log("connection", event);
     });
     const request: typeof fetch = async (url, init) => {
       if (init?.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) await services.operational(db, item.workspaceId);
-      return transport!.fetch(url, init);
+      const read=["GET","HEAD"].includes((init?.method??"GET").toUpperCase());
+      for(let attempt=0;;attempt++){
+        let response:Response;
+        try {response=await transport!.fetch(url,attempt && init?.signal?.aborted && init.signal.reason?.name==="TimeoutError" ? {...init,signal:AbortSignal.timeout(15000)} : init);}
+        catch(error){
+          const transient=isConnectionError(error)||error instanceof TypeError||error instanceof Error && ["اتصال شبکه برقرار نشد یا مهلت پاسخ پایان یافت.","اتصال به پروکسی یا سرویس مقصد ناموفق بود."].includes(error.message);
+          if(!read||!transient||attempt>=2)throw error;
+          await log("read_retry",{stage,attempt:attempt+1,error:connectionErrorReason(error)});
+          await services.pause(1000*(attempt+1));continue;
+        }
+        if(!read||attempt>=2||![429,500,502,503,504].includes(response.status))return response;
+        await response.body?.cancel();await log("read_retry",{stage,attempt:attempt+1,httpStatus:response.status});await services.pause(1000*(attempt+1));
+      }
     };
     const { token, privateOnly } = await services.token(item.accountId, item.workspaceId, request);
     const headers = { Authorization: `Bearer ${token}` };
@@ -43,6 +61,7 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
       return fetchYoutubeMedia(url, kind === "video" ? 250_000_000 : YOUTUBE_COVER_MAX_BYTES, kind);
     };
     if (!item.videoId) {
+      await checkpoint("source_check");
       if(item.settings.collectionId && item.sessionEnc && !item.settings.remoteVideo)throw new Error("نشست قبلی با فایل محلی آغاز شده است؛ پیش از تغییر روش انتقال، وضعیت همان آپلود در یوتیوب باید بررسی شود.");
       const remote=item.settings.collectionId ? await services.openVideo(item.workspaceId,collectionVideoUrl(item.settings),item.settings.mediaConnection,item.settings.remoteVideo as RemoteVideoSnapshot|undefined) : null;
       if(remote) {
@@ -55,21 +74,26 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
       const stored = !remote && typeof item.settings.videoMediaId === "string" ? await youtubeMediaFile(item.workspaceId,item.settings.videoMediaId,"video") : null;
       const video = remote || stored ? null : await media("video");
       if (item.settings.videoType === "shorts") assertShorts(remote ? await services.inspectRemote(remote) : await inspectVideo(stored ? stored.path : video!.bytes));
+      await checkpoint("upload");
       await log("upload_started", { privateOnly, requestedPrivacy: item.settings.privacy });
       item.videoId = await uploadYoutubeVideo({ bytes: video?.bytes, source: remote ?? (stored ? youtubeFileSource(stored) : undefined), type: remote?.type ?? stored?.type ?? video!.type, token,
         session: item.sessionEnc ? decryptSecret(item.sessionEnc) : undefined,
         metadata: { snippet: { title: item.title, description: item.description, tags: item.settings.tags ?? [], categoryId: "22" },
           status: { privacyStatus: privateOnly ? "private" : item.settings.privacy ?? "private", selfDeclaredMadeForKids: item.settings.madeForKids === true } },
-        saveSession: async (session) => { await db.update(youtubeItems).set({ sessionEnc: encryptSecret(session) }).where(eq(youtubeItems.id, id)); },
-        saveProgress: async (progress, videoId) => { await db.update(youtubeItems).set({ progress, ...(videoId ? { videoId } : {}), updatedAt: new Date() }).where(eq(youtubeItems.id, id)); },
+        saveSession: async (session) => { item.sessionEnc=encryptSecret(session); await db.update(youtubeItems).set({ sessionEnc:item.sessionEnc }).where(eq(youtubeItems.id, id)); },
+        saveProgress: async (progress, videoId) => { if(videoId)item.videoId=String(videoId); await db.update(youtubeItems).set({ progress, ...(videoId ? { videoId } : {}), updatedAt: new Date() }).where(eq(youtubeItems.id, id)); },
       }, request);
       await db.update(youtubeItems).set({ status: "processing", progress: 100, videoId: item.videoId, updatedAt: new Date() }).where(eq(youtubeItems.id, id));
     }
-    if (item.settings.coverMediaId || item.settings.coverUrl) {
+    if ((item.settings.coverMediaId || item.settings.coverUrl) && !item.settings.coverUploaded) {
+      await checkpoint("cover_fetch");
       const cover = await media("image");
+      await checkpoint("cover_upload");
       await googleJson(await request(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(item.videoId!)}&uploadType=media`, {
         method: "POST", headers: { ...headers, "Content-Type": cover.type }, body: new Uint8Array(cover.bytes), signal: AbortSignal.timeout(30000) }));
+      await checkpoint("status_check",{coverUploaded:true});
     }
+    await checkpoint("status_check");
     for (let poll = 0; poll < 60; poll++) {
       const data = await googleJson(await request(`https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=${encodeURIComponent(item.videoId!)}`, {
         headers, signal: AbortSignal.timeout(15000) }));
@@ -79,19 +103,22 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
       if (["failed", "terminated"].includes(processing) || ["failed", "rejected", "deleted"].includes(status.uploadStatus))
         throw new Error(`YouTube processing failed: ${status.rejectionReason ?? status.failureReason ?? result.processingDetails?.processingFailureReason ?? processing}`);
       if (status.uploadStatus === "processed" && processing !== "processing") {
-        await attachYoutubePlaylist(item,token,request,privateOnly);
+        await checkpoint("playlist",{videoProcessingConfirmed:true});
+        const playlistId=await services.playlist(item,token,request,privateOnly);
+        await checkpoint("complete",playlistId ? {playlistId} : {});
         await db.update(youtubeItems).set({ status: "published", actualPrivacy: status.privacyStatus, error: null, updatedAt: new Date() }).where(eq(youtubeItems.id, id));
         await log("published", { videoUrl: `https://www.youtube.com/watch?v=${item.videoId}`, actualPrivacy: status.privacyStatus,
           privateOnly, privacyRestricted: status.privacyStatus !== item.settings.privacy }); return;
       }
-      await pause(10000);
+      await services.pause(10000);
     }
     throw new Error("YouTube is still processing; retry to check this same video without reuploading");
   } catch (error) {
     const message = error instanceof Error ? error.message : "YouTube publication failed";
     const changed=(error as NodeJS.ErrnoException)?.code==="REMOTE_VIDEO_CHANGED";
-    await db.update(youtubeItems).set({ status: "failed", error: message, ...(changed?{settings:{...item.settings,remoteVideoChanged:true}}:{}),updatedAt: new Date() }).where(eq(youtubeItems.id, id));
-    await log("failed", { error: message, videoUrl: item.videoId ? `https://www.youtube.com/watch?v=${item.videoId}` : null });
+    item.settings={...item.settings,publicationStage:stage,publicationFailureStage:stage,...(changed?{remoteVideoChanged:true}:{})};
+    await db.update(youtubeItems).set({ status: "failed", error: message,settings:item.settings,updatedAt: new Date() }).where(eq(youtubeItems.id, id));
+    await log("failed", { error: message,stage, videoUrl: item.videoId ? `https://www.youtube.com/watch?v=${item.videoId}` : null });
     throw error;
   } finally { await transport?.close(); }
 }

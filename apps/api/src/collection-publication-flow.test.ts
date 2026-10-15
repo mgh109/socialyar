@@ -15,6 +15,7 @@ import {getDb,openCollectionVideoSource,inspectRemoteVideo,assertWorkspaceOperat
 import {readCollectionSheet,mapCollectionRows,inferMapping} from "../../web/app/lib/collection-sheet";
 import {contentCollectionRoutes} from "./routes/content-collections";
 import {mutateCalendarItem} from "./routes/calendar";
+import {workflowRoutes} from "./routes/workflows";
 import {youtubeRoutes} from "./routes/youtube";
 import {prepareCollectionVideo} from "../../worker/src/collection-prepare";
 import {executeYoutube} from "../../worker/src/youtube";
@@ -51,6 +52,13 @@ test("real XLSX → remote inspection → approval without shared disk → resum
     app.setErrorHandler((error,_request,reply)=>reply.code(400).send({error:error instanceof Error ? error.message : "خطا"}));
     await app.register(contentCollectionRoutes,{database:db,queue,sheetFetcher:async()=>data});
     await app.register(youtubeRoutes,{database:db,queue});
+    await app.register(workflowRoutes,{database:db});
+    const disconnected=await app.inject({method:"PUT",url:`/workflows/${workflowId}`,payload:{status:"active",autonomyMode:"full_auto",steps:[{key:"sheet",type:"collection_source",name:"شیت"},{key:"youtube",type:"publish",name:"یوتیوب",config:{accountId}}],connections:[]}});
+    assert.equal(disconnected.statusCode,409);assert.equal(disconnected.json().error,"graph_missing_input");
+    const activation=await app.inject({method:"PUT",url:`/workflows/${workflowId}`,payload:{status:"active",autonomyMode:"full_auto",steps:[{key:"sheet",type:"collection_source",name:"شیت",config:{collectionSource:"google_sheet"}},{key:"youtube",type:"publish",name:"یوتیوب",config:{accountId}}],connections:[{sourceKey:"sheet",targetKey:"youtube"}]}});
+    assert.equal(activation.statusCode,200,activation.body);
+    assert.equal(activation.json().workflow.status,"active");
+    assert.equal(jobs.length,0);assert.equal((await db.select().from(schema.youtubeItems)).length,0);
     const scope={workflowId,sourceStepKey:"sheet",targetStepKey:"youtube",rows};
     const gs=await app.inject({method:"POST",url:"/content-collections/google-sheet",payload:{workflowId,sourceStepKey:"sheet",url:"https://docs.google.com/spreadsheets/d/test/edit"}});
     assert.equal(gs.statusCode,200,gs.body);assert.deepEqual(gs.json(),data);
@@ -111,7 +119,7 @@ test("real XLSX → remote inspection → approval without shared disk → resum
       if(path.includes("processingDetails"))return json({items:[{status:{privacyStatus:"private",uploadStatus:"processed"},processingDetails:{processingStatus:"succeeded"}}]});
       throw new Error(`Unexpected request: ${path}`);
     }) as typeof fetch;
-    const publishServices:Parameters<typeof executeYoutube>[3]={operational:assertWorkspaceOperational,transport:async()=>({fetch:request,close:async()=>{}} as any),token:async()=>({token:"test-token",privateOnly:true,account:{} as any}),openVideo,inspectRemote:inspectRemoteVideo,fetchMedia};
+    const publishServices:Parameters<typeof executeYoutube>[3]={operational:assertWorkspaceOperational,transport:async()=>({fetch:request,close:async()=>{}} as any),token:async()=>({token:"test-token",privateOnly:true,account:{} as any}),openVideo,inspectRemote:inspectRemoteVideo,fetchMedia,pause:async()=>{},playlist:async()=>undefined};
     await executeYoutube(item.id,db,item.queueVersion,publishServices);assert.equal(uploadSessions,0); // human approval is mandatory
     const approve=()=>app.inject({method:"POST",url:`/youtube/items/${item.id}/resolve`,payload:{action:"approve"}});
     const approved=await approve();assert.equal(approved.statusCode,200,approved.body);assert.equal(jobs.at(-1)?.name,"youtube-publish");
@@ -123,7 +131,7 @@ test("real XLSX → remote inspection → approval without shared disk → resum
     await prepareCollectionVideo(item.id,item.queueVersion,db,services);
     assert.equal((await approve()).statusCode,200);
     await assert.rejects(executeYoutube(item.id,db,item.queueVersion,publishServices),/503/);
-    [item]=await db.select().from(schema.youtubeItems);assert.equal(item.videoId,"confirmed-video");assert.equal(item.status,"failed");
+    [item]=await db.select().from(schema.youtubeItems);assert.equal(item.videoId,"confirmed-video");assert.equal(item.status,"failed");assert.equal(item.settings.publicationFailureStage,"cover_upload");
     thumbnailFails=false;
     assert.equal((await app.inject({method:"POST",url:`/youtube/items/${item.id}/retry`})).statusCode,200);
     await executeYoutube(item.id,db,item.queueVersion,publishServices);

@@ -163,16 +163,16 @@ async function insertGraph(
   }
 }
 
-async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connections: z.infer<typeof connectionSchema>[], workspaceId: string): Promise<string | null> {
+async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connections: z.infer<typeof connectionSchema>[], workspaceId: string, db=getDb()): Promise<string | null> {
   const sorted = [...steps].sort((a, b) => a.order - b.order);
-  const source = sorted.find((step) => ["rss_source", "api_source", "youtube_comments"].includes(step.type));
+  const source = sorted.find((step) => ["rss_source", "api_source", "youtube_comments", "collection_source"].includes(step.type));
   const graphError = graphProblem(steps, connections, true);
   if (graphError) return graphError;
   if (!source || steps.some((step) => step.type === "manual_input")) return "graph_missing_input";
   for (const step of sorted.filter(item => ["youtube_comments", "youtube_reply"].includes(item.type))) {
     const config = step.config;
     if (!z.string().uuid().safeParse(config.accountId).success) return "youtube_comment_account_required";
-    const [account] = await getDb().select().from(socialAccounts).where(and(eq(socialAccounts.id, String(config.accountId)), eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true)));
+    const [account] = await db.select().from(socialAccounts).where(and(eq(socialAccounts.id, String(config.accountId)), eq(socialAccounts.workspaceId, workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true)));
     if (!account) return "youtube_comment_account_required";
     if (step.type === "youtube_comments" && (!Number.isInteger(config.batchLimit ?? 50) || Number(config.batchLimit ?? 50) < 1 || Number(config.batchLimit ?? 50) > 500 || config.videoId && !/^[A-Za-z0-9_-]{11}$/.test(String(config.videoId)) || config.after && !z.string().datetime().safeParse(config.after).success)) return "youtube_comment_settings_invalid";
     if (step.type === "youtube_reply" && (!Number.isInteger(config.dailyLimit ?? 20) || Number(config.dailyLimit ?? 20) < 1 || Number(config.dailyLimit ?? 20) > 100 || config.requireApproval !== undefined && typeof config.requireApproval !== "boolean" || ["context","instructions","tone"].some(key => config[key] !== undefined && (typeof config[key] !== "string" || String(config[key]).length > (key === "tone" ? 200 : 4000))))) return "youtube_comment_settings_invalid";
@@ -206,7 +206,6 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     } catch { return "invalid_rss_url"; }
   }
   }
-  const db = getDb();
   if (sorted.some((step) => ["api_source", "api_action"].includes(step.type))) await ensureCommentStorage();
   for (const step of sorted.filter((item) => ["api_source", "api_action"].includes(item.type))) {
     const { connectionId, path } = step.config;
@@ -320,8 +319,8 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
   return null;
 }
 
-export async function workflowRoutes(app: FastifyInstance) {
-  const db = getDb();
+export async function workflowRoutes(app: FastifyInstance, options:{database?:ReturnType<typeof getDb>}={}) {
+  const db = options.database ?? getDb();
   app.addHook("onRequest", app.authenticate);
 
   app.post("/workflows/generate", async (request, reply) => {
@@ -556,7 +555,7 @@ export async function workflowRoutes(app: FastifyInstance) {
     const graphError = graphProblem(input.steps, input.connections, input.status === "active");
     if (graphError) return reply.code(409).send({ error: graphError });
     if (input.status === "active" && input.autonomyMode === "full_auto") {
-      const problem = await autoWorkflowProblem(input.steps, input.connections, request.auth.workspaceId);
+      const problem = await autoWorkflowProblem(input.steps, input.connections, request.auth.workspaceId, db);
       if (problem) return reply.code(409).send({ error: problem });
     }
 
@@ -756,7 +755,7 @@ export async function workflowRoutes(app: FastifyInstance) {
     const graphError = graphProblem(input.steps, input.connections, (input.status ?? existing.status) === "active");
     if (graphError) return reply.code(409).send({ error: graphError });
     if ((input.status ?? existing.status) === "active" && (input.autonomyMode ?? existing.autonomyMode) === "full_auto") {
-      const problem = await autoWorkflowProblem(input.steps, input.connections, request.auth.workspaceId);
+      const problem = await autoWorkflowProblem(input.steps, input.connections, request.auth.workspaceId, db);
       if (problem) return reply.code(409).send({ error: problem });
     }
 

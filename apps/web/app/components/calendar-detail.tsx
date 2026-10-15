@@ -8,9 +8,10 @@ import { ConnectionSelector } from "./connection-selector";
 import { ConnectionHistory } from "./connection-history";
 import { apiFetch } from "../lib/session";
 import { faDigits } from "../lib/persian-calendar";
+import { youtubeCompletionLabel,youtubeFailureTitle } from "../lib/youtube-publication";
 import { persianError } from "../lib/persian";
 
-export const calendarLabels = { draft: "پیش‌نویس", preparing: "منتظر دریافت فایل", waiting_approval: "منتظر تأیید", scheduled: "زمان‌بندی‌شده", queued: "در صف", sending: "در حال ارسال", published: "منتشرشده", failed: "ناموفق", stopped: "متوقف‌شده" };
+export const calendarLabels = { draft: "پیش‌نویس", preparing: "در حال بررسی و آماده‌سازی", waiting_approval: "منتظر تأیید", scheduled: "زمان‌بندی‌شده", queued: "در صف", sending: "در حال ارسال", published: "منتشرشده", failed: "ناموفق", stopped: "متوقف‌شده" };
 export const networkLabels: Record<string,string> = { youtube: "یوتیوب", telegram: "تلگرام", instagram: "اینستاگرام", eitaa: "ایتا", bale: "بله", website: "وب‌سایت", x: "ایکس", linkedin: "لینکدین" };
 export type CalendarAccount = { id: string; channel: string; displayName: string | null; externalAccountId: string; isActive: boolean };
 export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, timezone, error, message }: { item: CalendarItem; accounts: CalendarAccount[]; busy: boolean; timezone: string; error: string; message: string;
@@ -28,7 +29,7 @@ export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, 
   const stale = version !== item.version || editUpdatedAt !== item.updatedAt;
   const eligibleAccounts = accounts.filter((account) => account.channel === item.channel && account.isActive);
   return <div className="calendar-drawer-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}><aside className="calendar-drawer" role="dialog" aria-modal="true" aria-labelledby="calendar-detail-title">
-    <header><div><h2 id="calendar-detail-title">جزئیات انتشار</h2><span className={`publication-status status-${item.status}`}>{calendarLabels[item.status]}</span></div><button type="button" aria-label="بستن جزئیات" onClick={close}>×</button></header>
+    <header><div><h2 id="calendar-detail-title">جزئیات انتشار</h2><span className={`publication-status status-${item.status}`}>{youtubeCompletionLabel(item.kind==="youtube" && item.remoteConfirmed,item.status) ?? calendarLabels[item.status]}</span></div><button type="button" aria-label="بستن جزئیات" onClick={close}>×</button></header>
     <p>{item.kind === "youtube" ? `${item.settings.videoType === "shorts" ? "Shorts" : "ویدئوی معمولی"}${item.settings.collectionRowId ? ` · شناسه: ${String(item.settings.collectionRowId)}` : ""}` : ""}</p>
     <p>{networkLabels[item.channel]} · {item.accountName ?? "مقصد انتخاب نشده"} · {item.workflowName}</p>
     <p>زمان انتشار: {item.scheduledAt ? new Date(item.scheduledAt).toLocaleString("fa-IR-u-ca-persian", { timeZone: timezone }) : "بدون زمان‌بندی"}</p>
@@ -59,16 +60,17 @@ export function CalendarDetail({ item, accounts, busy, close, mutate, schedule, 
       {dirty ? <small>پس از ویرایش، محتوا دوباره نیازمند تأیید است.</small> : null}
     </> : <p>محتوای این آیتم قفل است؛ ارسال آغاز شده یا در مقصد ثبت شده است.</p>}
     <div className="calendar-detail-actions">
-      {item.deliveryUnknown || item.status === "failed" && item.approved ? <label><input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} /> مقصد و گزارش را بررسی کردم؛ انتشار تکراری رخ نمی‌دهد یا وضعیت همان ویدئوی یوتیوب بررسی می‌شود.</label> : null}
+      {item.deliveryUnknown || item.kind!=="youtube" && item.status === "failed" && item.approved ? <label><input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} /> مقصد و گزارش را بررسی کردم؛ انتشار تکراری رخ نمی‌دهد یا وضعیت همان ویدئوی یوتیوب بررسی می‌شود.</label> : null}
       {editable ? <><button type="button" disabled={busy || dirty} onClick={() => schedule(item)}>تغییر زمان</button>
         {item.scheduledAt ? <button type="button" disabled={busy || dirty} onClick={() => void mutate(item, "unschedule")}>حذف از برنامه و انتقال به بدون زمان‌بندی</button> : null}</> : null}
       {item.status === "waiting_approval" ? <><button type="button" disabled={busy || dirty || item.overdue || item.deliveryUnknown && !checked} onClick={() => void mutate(item, "approve", { destinationChecked: checked })}>تأیید محتوا{item.scheduledAt ? " و اجرای برنامه" : ""}</button>
         <button type="button" disabled={busy} onClick={() => void mutate(item, "reject")}>رد محتوا</button></> : null}
       {!locked && item.status !== "stopped" ? <button type="button" disabled={busy || dirty} onClick={() => void mutate(item, "stop")}>توقف انتشار</button> : null}
       {item.status === "failed" && item.approved && (item.kind === "youtube" || !item.remoteConfirmed) ? <>
-        <button type="button" disabled={busy || !checked || dirty} onClick={() => void mutate(item, "retry", { destinationChecked: checked })}>تلاش مجدد</button></> : null}
+        <button type="button" disabled={busy || item.kind!=="youtube" && !checked || dirty} onClick={() => void mutate(item, "retry", { destinationChecked: checked })}>{item.kind==="youtube" && item.remoteConfirmed ? "تکمیل همین ویدئو" : "تلاش مجدد"}</button></> : null}
     </div>
-    {item.error ? <p className="calendar-warning" role="alert">علت خطا: {persianError(item.error)}</p> : null}
+    {item.kind==="youtube" && item.remoteConfirmed && item.status==="failed" ? <p className="calendar-note">ویدئو در یوتیوب ثبت شده است. «تکمیل همین ویدئو» ادامهٔ کار را با همان شناسه انجام می‌دهد.</p> : null}
+    {item.error ? <div className="calendar-warning" role="alert">{item.kind==="youtube" && (item.remoteConfirmed || item.settings.publicationFailureStage) ? <strong>{youtubeFailureTitle(item.settings,item.remoteConfirmed)}<br/></strong> : null}علت خطا: {persianError(item.error)}</div> : null}
     {item.deliveryUnknown ? <p className="calendar-warning">نتیجه ارسال قبلی نامشخص است؛ پیش از تلاش مجدد مقصد را بررسی کنید.</p> : null}
     {item.externalUrl ? <a href={item.externalUrl} target="_blank" rel="noreferrer">مشاهده خروجی در {networkLabels[item.channel]}</a> : null}
     {item.workflowId ? <Link href={`/workflows/new?id=${item.workflowId}${item.stepKey ? `&step=${encodeURIComponent(item.stepKey)}` : ""}`}>رفتن به جریان و کارت مربوطه</Link> : null}
