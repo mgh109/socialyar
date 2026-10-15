@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { access, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -12,7 +12,12 @@ export async function inspectVideo(bytes: Buffer | string): Promise<VideoDetails
   const directory = typeof bytes === "string" ? null : await mkdtemp(join(tmpdir(),"hoor-video-")); const path = typeof bytes === "string" ? bytes : join(directory!,"video");
   try {
     if (typeof bytes !== "string") await writeFile(path,bytes,{ mode:0o600 });
-    const { stdout } = await promisify(execFile)("ffprobe", ["-v","error","-show_streams","-show_format","-of","json",path], { timeout:30000, maxBuffer:1_000_000 });
+    // A missing input and a missing executable both otherwise report ENOENT.
+    await access(path);
+    const { stdout } = await promisify(execFile)("ffprobe", ["-v","error","-show_streams","-show_format","-of","json",path], { timeout:30000, maxBuffer:1_000_000 }).catch(error => {
+      if (error.code === "ENOENT") throw Object.assign(new Error("ابزار بررسی ویدئو در پردازشگر نصب نیست؛ سرویس Worker باید با ffprobe اجرا شود."), { code:"VIDEO_INSPECTOR_UNAVAILABLE" });
+      throw error;
+    });
     const info = JSON.parse(stdout); const stream = info.streams?.find((s: { codec_type: string }) => s.codec_type === "video");
     if (!stream) throw new Error("فایل جریان ویدئویی معتبر ندارد.");
     let width = Number(stream.width), height = Number(stream.height);

@@ -12,8 +12,9 @@ import { policySchema } from "./proxies";
 const metadata = z.object({ title: z.string().trim().min(1).max(100), description: z.string().max(5000),
   privacy: z.enum(["public", "unlisted", "private"]), tags: z.array(z.string().max(100)).max(50),
   madeForKids: z.boolean(), videoType: z.enum(["video", "shorts"]).default("video"), playlist: z.string().max(150).default(""), scheduledAt: z.string().datetime().nullable().optional(), connection: policySchema.optional() });
-export async function youtubeRoutes(app: FastifyInstance) {
-  const db = getDb();
+export async function youtubeRoutes(app: FastifyInstance, options: {database?:ReturnType<typeof getDb>; queue?:Pick<typeof publicationQueue,"add"|"getJob">} = {}) {
+  const db = options.database ?? getDb();
+  const queue = options.queue ?? publicationQueue;
   app.get("/youtube/oauth/callback", async (request, reply) => {
     const query = z.object({ state: z.string(), code: z.string().optional(), error: z.string().optional() }).parse(request.query);
     const [state] = await db.delete(youtubeOAuthStates).where(and(eq(youtubeOAuthStates.id, query.state),
@@ -112,7 +113,12 @@ export async function youtubeRoutes(app: FastifyInstance) {
     });
     secured.get("/youtube/media/:id", async (request, reply) => {
       const { id } = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/) }).parse(request.params);
-      const { path, type, size } = await youtubeMediaFile(request.auth.workspaceId, id);
+      const file = await youtubeMediaFile(request.auth.workspaceId, id).catch(error => {
+        if(error.code === "ENOENT")return null;
+        throw error;
+      });
+      if(!file)return reply.code(404).send({error:"فایل در فضای ذخیره‌سازی API پیدا نشد؛ فضای پایدار مشترک API و Worker را بررسی کنید."});
+      const {path,type,size}=file;
       return reply.type(type).header("Content-Length",size).header("Cache-Control", "private, no-store").send(createReadStream(path));
     });
     secured.get("/youtube/items", async (request) => {
@@ -157,8 +163,13 @@ export async function youtubeRoutes(app: FastifyInstance) {
       if (current.status !== "waiting_approval") return reply.code(409).send({ error: "item_not_waiting_approval" });
       if (input.action === "approve") {
         if (current.scheduledAt && current.scheduledAt.getTime() <= Date.now()) return reply.code(409).send({ error: "زمان انتشار گذشته؛ نیازمند تعیین تکلیف. زمان جدید تعیین کنید." });
-        await youtubeMediaFile(request.auth.workspaceId, String(current.settings.videoMediaId), "video");
-        if (current.settings.coverMediaId) await readYoutubeMedia(request.auth.workspaceId, String(current.settings.coverMediaId), "image");
+        try {
+          await youtubeMediaFile(request.auth.workspaceId, String(current.settings.videoMediaId), "video");
+          if (current.settings.coverMediaId) await youtubeMediaFile(request.auth.workspaceId, String(current.settings.coverMediaId), "image");
+        }catch(error){
+          if((error as NodeJS.ErrnoException).code === "ENOENT")return reply.code(409).send({error:"پردازشگر فایل را آماده کرده، اما API به آن دسترسی ندارد؛ هر دو سرویس باید به همان فضای پایدار و مسیر YOUTUBE_MEDIA_DIR متصل باشند. پس از اصلاح اتصال، تأیید را دوباره بزنید."});
+          throw error;
+        }
       }
       const [item] = await db.update(youtubeItems).set({ status: input.action === "approve" ? "queued" : "rejected",
         logs: [...current.logs, { channel: current.channelName, time: new Date().toISOString(), result: input.action === "approve" ? "approved_and_queued" : "rejected", userId: request.auth.userId }],
@@ -167,19 +178,31 @@ export async function youtubeRoutes(app: FastifyInstance) {
         .where(and(eq(youtubeItems.id, id), eq(youtubeItems.workspaceId, request.auth.workspaceId), eq(youtubeItems.status, "waiting_approval"))).returning();
       if (!item) return reply.code(409).send({ error: "item_not_waiting_approval" });
       if (input.action === "approve") {
-        try { await enqueue(item); } catch { await db.update(youtubeItems).set({ status: "failed", error: "Publication queue unavailable" }).where(eq(youtubeItems.id, id)); return reply.code(503).send({ error: "queue_unavailable_retry" }); }
+        try { await enqueue(item,queue); } catch { await db.update(youtubeItems).set({ status: "failed", error: "Publication queue unavailable" }).where(eq(youtubeItems.id, id)); return reply.code(503).send({ error: "queue_unavailable_retry" }); }
       }
       return { ok: true };
     });
     secured.post("/youtube/items/:id/:action", async (request, reply) => {
       const { id, action } = z.object({ id: z.string().uuid(), action: z.enum(["cancel", "retry"]) }).parse(request.params);
       const [current] = await db.select().from(youtubeItems).where(and(eq(youtubeItems.id, id), eq(youtubeItems.workspaceId, request.auth.workspaceId)));
-      if (action === "retry" && current?.status === "failed" && current.settings.collectionId && !current.approvedAt) {
-        await publicationQueue.add("youtube-prepare", { youtubeItemId: id, queueVersion: current.queueVersion },
-          { jobId: `youtube-prepare-retry-${id}-${Date.now()}`, attempts: 1, removeOnComplete: 100, removeOnFail: 100 });
-        return { ok: true, approvalRequired: true };
+      if (action === "retry" && current?.status === "failed" && current.settings.collectionId && !current.approvedAt && !current.videoId && !current.sessionEnc) {
+        const version=current.queueVersion+1;
+        const [claimed]=await db.update(youtubeItems).set({status:"waiting_video",queueVersion:version,error:null,
+          settings:{...current.settings,preparationStage:"queued",preparationFailureStage:null,imageRetryAt:null},
+          logs:[...current.logs,{result:"preparation_queued",time:new Date().toISOString(),channel:current.channelName}],updatedAt:new Date()})
+          .where(and(eq(youtubeItems.id,id),eq(youtubeItems.workspaceId,request.auth.workspaceId),eq(youtubeItems.status,"failed"),eq(youtubeItems.queueVersion,current.queueVersion))).returning();
+        if(!claimed)return reply.code(409).send({error:"item_state_conflict"});
+        try {
+          await queue.add("youtube-prepare", { youtubeItemId: id, queueVersion:version },
+            { jobId: `youtube-prepare-${id}-v${version}`, attempts: 1, removeOnComplete: 100, removeOnFail: 100 });
+        } catch {
+          await db.update(youtubeItems).set({status:"failed",error:"صف آماده‌سازی در دسترس نیست؛ دوباره تلاش کنید.",updatedAt:new Date()})
+            .where(and(eq(youtubeItems.id,id),eq(youtubeItems.queueVersion,version),eq(youtubeItems.status,"waiting_video")));
+          return reply.code(503).send({error:"queue_unavailable_retry"});
+        }
+        return { ok: true, approvalRequired: true, status:"waiting_video" };
       }
-      if (action === "retry" && current?.status === "failed" && !current.approvedAt && typeof current.settings.sourceVideoUrl === "string") {
+      if (action === "retry" && current?.status === "failed" && !current.approvedAt && !current.videoId && !current.sessionEnc && typeof current.settings.sourceVideoUrl === "string") {
         const video = await fetchYoutubeMedia(current.settings.sourceVideoUrl, 250_000_000, "video");
         const { mediaId: videoMediaId } = await storeYoutubeMedia(request.auth.workspaceId, video.bytes);
         let coverMediaId: string | undefined;
@@ -202,15 +225,15 @@ export async function youtubeRoutes(app: FastifyInstance) {
       if (!item) return reply.code(409).send({ error: "item_state_conflict" });
       if (action === "retry") {
         if (!item.approvedAt) return reply.code(409).send({ error: "approval_required" });
-        try { await enqueue(item); } catch { await db.update(youtubeItems).set({ status: "failed", error: "Publication queue unavailable" }).where(eq(youtubeItems.id, id)); return reply.code(503).send({ error: "queue_unavailable" }); }
+        try { await enqueue(item,queue); } catch { await db.update(youtubeItems).set({ status: "failed", error: "Publication queue unavailable" }).where(eq(youtubeItems.id, id)); return reply.code(503).send({ error: "queue_unavailable" }); }
       }
       return { ok: true };
     });
   });
 }
-async function enqueue(item: typeof youtubeItems.$inferSelect) {
-  const jobId = `youtube-${item.id}`; const old = await publicationQueue.getJob(jobId);
+async function enqueue(item: typeof youtubeItems.$inferSelect, queue:Pick<typeof publicationQueue,"add"|"getJob">) {
+  const jobId = `youtube-${item.id}`; const old = await queue.getJob(jobId);
   if (old) { const state = await old.getState(); if (state === "active") throw new Error("Job is active"); await old.remove(); }
-  await publicationQueue.add("youtube-publish", { youtubeItemId: item.id, queueVersion: item.queueVersion }, { jobId,
+  await queue.add("youtube-publish", { youtubeItemId: item.id, queueVersion: item.queueVersion }, { jobId,
     delay: Math.max(0, (item.scheduledAt?.getTime() ?? Date.now()) - Date.now()), attempts: 1, removeOnComplete: 1000, removeOnFail: 1000 });
 }

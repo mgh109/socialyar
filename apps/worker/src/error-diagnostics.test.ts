@@ -9,3 +9,9 @@ test("technical diagnostics expose known codes without leaking credentials or pa
   assert.equal(diagnosticErrorCode("Google HTTP 403: forbidden https://example.com/?token=secret"),"HTTP 403");
   assert.equal(diagnosticErrorCode("https://example.com/?token=secret"),null);
 });
+
+test("a missing ffprobe executable is reported separately from a missing stored video",()=>{
+  assert.match(persianError("spawn ffprobe ENOENT"),/ابزار بررسی/);
+  assert.equal(diagnosticErrorCode("VIDEO_INSPECTOR_UNAVAILABLE"),"VIDEO_INSPECTOR_UNAVAILABLE");
+  assert.match(persianError("ENOENT: no such file, open '/private/video'"),/فضای فایل مشترک/);
+});

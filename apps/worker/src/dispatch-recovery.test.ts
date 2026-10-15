@@ -49,3 +49,20 @@ test("daily-limited comment runs wait for Tehran next-day retry while other queu
  await reconcileDispatch(q.options,now);assert.ok(!q.workflowJobs.some(job=>job[1].runId===id));
  await reconcileDispatch(q.options,new Date("2028-01-02T00:00:01Z"));assert.ok(q.workflowJobs.some(job=>job[1].runId===id));
 });
+
+test("YouTube collection preparation and approved due uploads recover from lost Redis jobs without approving failed, future or unapproved content",async()=>{
+ const {youtubeItems}=tables;
+ const add=async(status:string,settings:Record<string,unknown>,extra:Record<string,unknown>={})=>(await db.insert(youtubeItems).values({workspaceId,workflowId,stepKey:"youtube",itemKey:randomUUID(),accountId,channelName:"کانال",title:"آزمون",description:"",status,settings,queueVersion:4,updatedAt:old,...extra}).returning())[0];
+ const prep=await add("waiting_video",{collectionId:"collection"});
+ const interrupted=await add("preparing",{collectionId:"collection",videoMediaId:"a".repeat(64)});
+ const due=await add("queued",{},{approvedAt:old,scheduledAt:old});
+ const future=await add("queued",{},{approvedAt:old,scheduledAt:new Date("2028-01-02T00:00:00Z")});
+ const unapproved=await add("queued",{});const failed=await add("failed",{collectionId:"collection"});
+ const manual=await add("waiting_video",{});const alreadySent=await add("preparing",{collectionId:"collection"},{videoId:"confirmed"});
+ const q=queues();await reconcileDispatch(q.options,now);
+ const jobs=q.publicationJobs.filter(j=>j[0].startsWith("youtube-"));
+ assert.deepEqual(new Set(jobs.map(j=>j[1].youtubeItemId)),new Set([prep.id,interrupted.id,due.id]));
+ assert.ok(jobs.every(j=>j[1].queueVersion===4));assert.equal(jobs.find(j=>j[1].youtubeItemId===due.id)[0],"youtube-publish");
+ assert.ok(!jobs.some(j=>[future.id,unapproved.id,failed.id,manual.id,alreadySent.id].includes(j[1].youtubeItemId)));
+ await reconcileDispatch(q.options,now);assert.equal(q.publicationJobs.filter(j=>j[0].startsWith("youtube-")).length,3);
+});

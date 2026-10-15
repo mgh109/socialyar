@@ -5,7 +5,8 @@ import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYou
 
 import { attachYoutubePlaylist } from "./youtube-playlist";
 
-export async function executeYoutube(id: string, db = getDb(), queueVersion = 0) {
+const youtubeServices = {operational:assertWorkspaceOperational,transport:publishingTransport,token:youtubeToken};
+export async function executeYoutube(id: string, db = getDb(), queueVersion = 0, services = youtubeServices) {
   let [item] = await db.select().from(youtubeItems).where(eq(youtubeItems.id, id));
   if (!item || !item.approvedAt || !["queued", "uploading", "processing"].includes(item.status)) return;
   if (item.queueVersion !== queueVersion) return;
@@ -20,16 +21,16 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0)
   };
   let transport: Awaited<ReturnType<typeof publishingTransport>> | undefined;
   try {
-    await assertWorkspaceOperational(db,item.workspaceId);
-    transport = await publishingTransport(item.workspaceId, item.settings.connection, "youtube", async (event) => {
+    await services.operational(db,item.workspaceId);
+    transport = await services.transport(item.workspaceId, item.settings.connection, "youtube", async (event) => {
       await db.insert(publicationConnectionEvents).values({ workspaceId: item.workspaceId, youtubeItemId: item.id, ...event });
       await log("connection", event);
     });
     const request: typeof fetch = async (url, init) => {
-      if (init?.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) await assertWorkspaceOperational(db, item.workspaceId);
+      if (init?.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) await services.operational(db, item.workspaceId);
       return transport!.fetch(url, init);
     };
-    const { token, privateOnly } = await youtubeToken(item.accountId, item.workspaceId, request);
+    const { token, privateOnly } = await services.token(item.accountId, item.workspaceId, request);
     const headers = { Authorization: `Bearer ${token}` };
     const media = async (kind: "video" | "image") => {
       const mediaId = item.settings[kind === "video" ? "videoMediaId" : "coverMediaId"];

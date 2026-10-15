@@ -1,6 +1,6 @@
 import { and, eq, lt, lte, inArray, sql, asc, or, isNull } from "drizzle-orm";
 import type { Queue } from "bullmq";
-import { getDb, runs, publications, schedules, contentVariants } from "@socialyar/db";
+import { getDb, runs, publications, schedules, contentVariants, youtubeItems } from "@socialyar/db";
 
 export type DispatchRecoveryOptions = {
   database: ReturnType<typeof getDb>;
@@ -14,6 +14,21 @@ export type DispatchRecoveryOptions = {
 /** Reconcile durable database intent with versioned Redis jobs. */
 export async function reconcileDispatch(options: DispatchRecoveryOptions, now = new Date()) {
   const { database: db, workflowQueue, publicationQueue, prepare, recover, reserveSlot } = options;
+    // A committed collection import/approval must survive Redis loss or a rollout.
+    // Failed items still require an explicit retry; approval is never inferred.
+    const youtubePending=await db.select().from(youtubeItems).where(and(
+      inArray(youtubeItems.status,["waiting_video","preparing","queued"]),
+      lt(youtubeItems.updatedAt,new Date(now.getTime()-60000)))).orderBy(asc(youtubeItems.updatedAt)).limit(100);
+    for(const item of youtubePending){
+      const preparation=["waiting_video","preparing"].includes(item.status) && item.settings.collectionId && !item.approvedAt && !item.videoId && !item.sessionEnc;
+      const publication=item.status==="queued" && item.approvedAt && (!item.scheduledAt || item.scheduledAt<=now);
+      if(!preparation && !publication)continue;
+      const jobId=preparation ? `youtube-prepare-${item.id}-v${item.queueVersion}` : `youtube-${item.id}`;
+      const prior=await publicationQueue.getJob(jobId);
+      if(prior){const state=await prior.getState();if(state==="failed" || state==="completed")await prior.remove();else continue;}
+      await publicationQueue.add(preparation ? "youtube-prepare" : "youtube-publish",{youtubeItemId:item.id,queueVersion:item.queueVersion},
+        {jobId,attempts:1,removeOnComplete:1000,removeOnFail:1000});
+    }
     const queued = await db.select().from(runs).where(and(eq(runs.status, "queued"), lt(runs.createdAt, new Date(now.getTime() - 10000)), or(sql`${runs.output}->>'retryAt' IS NULL`, sql`${runs.output}->>'retryAt' <= ${now.toISOString()}`))).orderBy(asc(runs.createdAt)).limit(100);
     for (const run of queued) {
       if (typeof run.output?.retryAt === "string" && new Date(run.output.retryAt).getTime() > now.getTime()) continue;

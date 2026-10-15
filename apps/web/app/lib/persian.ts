@@ -20,6 +20,7 @@ export function persianError(value: unknown, fallback = "عملیات ناموف
   if (errors[text]) return errors[text];
   if (/[آ-ی]/.test(text)) return text;
   const lower = text.toLowerCase();
+  if (/video_inspector_unavailable|spawn ffprobe.*enoent/.test(lower)) return "ابزار بررسی ویدئو در پردازشگر نصب نیست؛ Worker باید با ffprobe اجرا شود.";
   if (/quota|rate limit|429/.test(lower)) return "سهمیه یا محدودیت تعداد درخواست‌های سرویس مقصد به پایان رسیده است.";
   if (/invalid_grant|refresh.token|disconnected/.test(lower)) return "دسترسی حساب پایان یافته یا قطع شده است؛ دوباره آن را متصل کنید.";
   if (/401|unauthorized|invalid.token/.test(lower)) return "اطلاعات ورود یا توکن حساب معتبر نیست؛ اتصال حساب را بررسی کنید.";
@@ -44,7 +45,7 @@ export const protocolLabel = (protocol: string) => ({ http: "اچ‌تی‌تی�
 /** Expose only diagnostic codes; never display raw URLs, tokens or exception text. */
 export function diagnosticErrorCode(value: unknown): string | null {
   const text=value instanceof Error ? value.message : typeof value === "string" ? value : "";
-  const system=text.match(/\b(EACCES|EPERM|EROFS|ENOSPC|ENOENT|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT)\b/i)?.[1];
+  const system=text.match(/\b(VIDEO_INSPECTOR_UNAVAILABLE|EACCES|EPERM|EROFS|ENOSPC|ENOENT|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT)\b/i)?.[1];
   if(system)return system.toUpperCase();
   const status=text.match(/\bHTTP\s+(\d{3})\b/i)?.[1];
   return status ? `HTTP ${status}` : null;

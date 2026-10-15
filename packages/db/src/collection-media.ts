@@ -22,7 +22,7 @@ export function requestPinnedMedia(url: URL, address: string, dispatcher: Dispat
 /** Pin the checked destination IP for direct, HTTP proxy and SOCKS paths.
  * Keep the original HTTPS hostname for certificate validation and Host headers on every redirect. */
 async function downloadCollectionMedia<T>(workspaceId:string,raw:string,kind:"video"|"image",policyInput:unknown,verifyOnly:boolean,limit:number,
-  consume:(body:AsyncIterable<Uint8Array>)=>Promise<T>, timeout=180000) {
+  consume:(body:AsyncIterable<Uint8Array>,total?:number)=>Promise<T>, timeout=180000) {
   const policy = connectionPolicy(policyInput);
   let dispatcher: Dispatcher | undefined;
   const download = async (proxy: boolean) => {
@@ -39,7 +39,8 @@ async function downloadCollectionMedia<T>(workspaceId:string,raw:string,kind:"vi
         }
         if (response.statusCode < 200 || response.statusCode >= 300) { response.body.destroy(); throw new Error(response.statusCode===401 || response.statusCode===403 ? `هاست فایل اجازهٔ دریافت ${kind==="video" ? "ویدئو" : "کاور"} را نداد (HTTP ${response.statusCode})؛ عمومی‌بودن لینک و محدودیت دانلود هاست را بررسی کنید. این خطا از حساب یوتیوب نیست.` : `دریافت ${kind==="video" ? "ویدئو" : "کاور"} از هاست ناموفق بود (HTTP ${response.statusCode}). لینک فایل را بررسی کنید.`); }
         if (!verifyOnly && Number(response.headers["content-length"]) > limit) { response.body.destroy(); throw new Error(`حجم فایل بیش از سقف ${Math.floor(limit/1_000_000)} مگابایت است.`); }
-        try { return await consume(response.body); }
+        const length=Number(response.headers["content-length"]);
+        try { return await consume(response.body,Number.isSafeInteger(length) && length>0 ? length : undefined); }
         finally { response.body.destroy(); }
 
       } finally { await dispatcher.destroy(); dispatcher = undefined; }
@@ -63,8 +64,17 @@ export async function fetchCollectionMedia(workspaceId: string, raw: string, kin
     return {bytes,type};
   });
 }
-export async function fetchCollectionVideo(workspaceId:string,raw:string,policyInput?:unknown) {
+export async function fetchCollectionVideo(workspaceId:string,raw:string,policyInput?:unknown,onProgress?:(progress:{bytes:number;total?:number})=>Promise<void>) {
   const limit=youtubeVideoLimit();
   return downloadCollectionMedia(workspaceId,raw,"video",policyInput,false,limit,
-    body=>storeYoutubeVideoStream(workspaceId,body,limit),20*60*1000);
+    async(body,total)=>{
+      async function* tracked(){
+        let bytes=0,last=0;
+        for await(const chunk of body){bytes+=chunk.length;yield chunk;
+          if(onProgress && Date.now()-last>=2000){await onProgress({bytes,total});last=Date.now();}
+        }
+        await onProgress?.({bytes,total});
+      }
+      return storeYoutubeVideoStream(workspaceId,tracked(),limit);
+    },20*60*1000);
 }
