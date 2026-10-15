@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {readFile,mkdtemp,rm,unlink} from "node:fs/promises";
+import {readFile,mkdtemp,rm,writeFile,stat} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import {randomUUID} from "node:crypto";
@@ -11,23 +11,24 @@ import {PGlite} from "@electric-sql/pglite";
 import {drizzle} from "drizzle-orm/pglite";
 import {eq} from "drizzle-orm";
 import * as schema from "@socialyar/db/schema";
-import {getDb,storeYoutubeVideoStream,storeYoutubeMedia,youtubeMediaFile,inspectVideo,assertWorkspaceOperational} from "@socialyar/db";
+import {getDb,openCollectionVideoSource,inspectRemoteVideo,assertWorkspaceOperational} from "@socialyar/db";
 import {readCollectionSheet,mapCollectionRows,inferMapping} from "../../web/app/lib/collection-sheet";
 import {contentCollectionRoutes} from "./routes/content-collections";
+import {mutateCalendarItem} from "./routes/calendar";
 import {youtubeRoutes} from "./routes/youtube";
 import {prepareCollectionVideo} from "../../worker/src/collection-prepare";
 import {executeYoutube} from "../../worker/src/youtube";
 import {connection} from "./queue";
 
-test("real XLSX → import → interrupted preparation → lost-file recovery → approval → resumable upload; retries never publish twice",async()=>{
+test("real XLSX → remote inspection → approval without shared disk → resumable upload; source changes and retries never publish twice",async()=>{
   connection.disconnect();
   const engine=new PGlite();const db=drizzle(engine,{schema}) as unknown as ReturnType<typeof getDb>;
   const app=Fastify();const mediaRoot=await mkdtemp(join(tmpdir(),"hoor-collection-flow-"));
   const oldMedia=process.env.YOUTUBE_MEDIA_DIR,oldKey=process.env.HOOR_SECRET_KEY;
-  process.env.YOUTUBE_MEDIA_DIR=mediaRoot;process.env.HOOR_SECRET_KEY=Buffer.alloc(32,7).toString("base64");
+  process.env.YOUTUBE_MEDIA_DIR=join(mediaRoot,"blocked-media-path");await writeFile(process.env.YOUTUBE_MEDIA_DIR,"no media directory");process.env.HOOR_SECRET_KEY=Buffer.alloc(32,7).toString("base64");
   const userId=randomUUID(),workspaceId=randomUUID(),workflowId=randomUUID(),versionId=randomUUID(),accountId=randomUUID();
   const jobs:Array<{name:string;data:any}>=[];let queueDown=false;
-  const queue={add:async(name:string,data:any)=>{if(queueDown)throw new Error("queue unavailable");jobs.push({name,data});return {} as any;},getJob:async()=>null};
+  const queue={add:async(name:string,data:any)=>{if(queueDown)throw new Error("queue unavailable");jobs.push({name,data});return {} as any;},getJob:async()=>undefined};
   try {
     for(const name of ["0000_initial.sql","0001_auth.sql","0002_eitaa_automation.sql","0006_youtube.sql","0007_publishing_proxies.sql","0008_publication_calendar.sql","0009_content_collections.sql","0011_execution_recovery.sql","0012_tenant_access.sql","0014_image_generation.sql"])
       await engine.exec(await readFile(new URL(`../../../packages/db/migrations/${name}`,import.meta.url),"utf8"));
@@ -59,26 +60,47 @@ test("real XLSX → import → interrupted preparation → lost-file recovery �
     let [item]=await db.select().from(schema.youtubeItems);assert.equal(item.approvedAt,null);
     const video=execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=black:s=192x108:r=1","-t","1","-c:v","libx264","-movflags","frag_keyframe+empty_moov","-f","mp4","pipe:1"]);
     const cover=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6VfoAAAAASUVORK5CYII=","base64");
-    let downloads=0,coverFails=true;
+    let checks=0,coverFails=true,sourceChanged=false;
+    const openVideo:typeof openCollectionVideoSource=async(workspace,url,policy,expected)=>{
+      checks++;
+      return openCollectionVideoSource(workspace,url,policy,expected,async(w,raw,start,end)=>{
+        assert.equal(w,workspaceId);assert.equal(raw,rows[0].videoUrl);end=Math.min(end,video.length);
+        return {bytes:video.subarray(start,end),headers:{"content-range":`bytes ${start}-${end-1}/${video.length}`,etag:sourceChanged?'"changed"':'"video-v1"'}};
+      });
+    };
+    const fetchMedia:NonNullable<Parameters<typeof prepareCollectionVideo>[3]>["fetchMedia"]=async(_workspace,_url,kind,_policy,verifyOnly)=>{
+      assert.equal(kind,"image");if(verifyOnly)assert.equal(_workspace,workspaceId);
+      if(coverFails)throw new Error("دریافت کاور از هاست ناموفق بود (HTTP 403).");return {bytes:cover,type:"image/png"};
+    };
     const services:Parameters<typeof prepareCollectionVideo>[3]={
-      lock:async()=>({query:async()=>({rows:[]}),release:()=>{}} as any),operational:assertWorkspaceOperational,mediaFile:youtubeMediaFile,inspect:inspectVideo,storeMedia:storeYoutubeMedia,
-      fetchVideo:async(_workspace,_url,_policy,onProgress)=>{downloads++;await onProgress?.({bytes:video.length,total:video.length});const [during]=await db.select().from(schema.youtubeItems);assert.equal(during.status,"preparing");assert.equal(during.settings.videoDownloadedBytes,video.length);return storeYoutubeVideoStream(workspaceId,(async function*(){yield video;})());},
-      fetchMedia:async()=>{if(coverFails)throw new Error("دریافت کاور از هاست ناموفق بود (HTTP 403).");return {bytes:cover,type:"image/png"};},
+      lock:async()=>({query:async()=>({rows:[]}),release:()=>{}} as any),operational:assertWorkspaceOperational,
+      inspect:inspectRemoteVideo,openVideo,fetchMedia,
     };
     await assert.rejects(prepareCollectionVideo(item.id,item.queueVersion,db,services),/403/);
-    [item]=await db.select().from(schema.youtubeItems);assert.equal(item.settings.preparationFailureStage,"cover_download");assert.ok(item.settings.videoMediaId);
-    assert.ok(item.logs.some(log=>log.result==="video_downloaded"));
-    // Simulate a restarted worker or moved volume. Retrying must repair the file, not repeat ENOENT forever.
-    await unlink((await youtubeMediaFile(workspaceId,String(item.settings.videoMediaId))).path);
+    [item]=await db.select().from(schema.youtubeItems);assert.equal(item.settings.preparationFailureStage,"cover_link");assert.equal(item.settings.videoMediaId,undefined);assert.ok(item.settings.remoteVideo);
+    assert.ok(item.logs.some(log=>log.result==="video_link_checked"));
     const denied=await app.inject({method:"POST",url:`/youtube/items/${item.id}/retry`,headers:{"x-other":"1"}});assert.equal(denied.statusCode,409);
     const retry=await app.inject({method:"POST",url:`/youtube/items/${item.id}/retry`});assert.equal(retry.statusCode,200,retry.body);
     const duplicate=await app.inject({method:"POST",url:`/youtube/items/${item.id}/retry`});assert.equal(duplicate.statusCode,409);assert.equal(jobs.filter(j=>j.name==="youtube-prepare").length,2);
     coverFails=false;[item]=await db.select().from(schema.youtubeItems);
     await prepareCollectionVideo(item.id,item.queueVersion-1,db,services); // stale job cannot change the current revision
-    assert.equal(downloads,1);
+    assert.equal(checks,1);
     await prepareCollectionVideo(item.id,item.queueVersion,db,services);
-    [item]=await db.select().from(schema.youtubeItems);assert.equal(downloads,2);assert.equal(item.status,"waiting_approval");assert.equal(item.error,null);assert.equal(item.approvedAt,null);
-    assert.equal(item.settings.preparationStage,"ready");assert.ok(item.logs.some(log=>log.result==="video_recovery"));
+    [item]=await db.select().from(schema.youtubeItems);assert.equal(checks,2);assert.equal(item.status,"waiting_approval");assert.equal(item.error,null);assert.equal(item.approvedAt,null);
+    assert.equal(item.settings.preparationStage,"ready");assert.equal(item.settings.coverMediaId,undefined);assert.equal(item.settings.mediaTransfer,"remote");
+    // Existing prepared collection items can be approved in the calendar without any shared file.
+    const legacyId=randomUUID();const legacySettings:Record<string,unknown>={...item.settings,videoMediaId:"a".repeat(64)};delete legacySettings.remoteVideo;
+    await db.insert(schema.youtubeItems).values({...item,id:legacyId,itemKey:"legacy-calendar",queueVersion:0,settings:legacySettings});
+    const auth={userId,workspaceId} as Parameters<typeof mutateCalendarItem>[1];
+    assert.equal((await mutateCalendarItem(db,auth,{kind:"youtube",id:legacyId},{action:"approve",version:0},queue)).status,200);
+    const future=new Date(Date.now()+86400000).toISOString();
+    assert.equal((await mutateCalendarItem(db,auth,{kind:"youtube",id:legacyId},{action:"schedule",version:1,scheduledAt:future},queue)).status,200);
+    assert.equal((await mutateCalendarItem(db,auth,{kind:"youtube",id:legacyId},{action:"edit",version:2,settings:{videoUrl:"https://files.example.com/replacement.mp4",coverUrl:"https://files.example.com/new-cover.png"}},queue)).status,200);
+    const [edited]=await db.select().from(schema.youtubeItems).where(eq(schema.youtubeItems.id,legacyId));
+    assert.equal(edited.status,"waiting_video");assert.equal(edited.approvedAt,null);assert.equal(edited.settings.videoMediaId,undefined);
+    assert.equal(edited.settings.remoteVideo,undefined);assert.equal(edited.settings.sourceVideoUrl,"https://files.example.com/replacement.mp4");
+    assert.equal(jobs.at(-1)?.name,"youtube-prepare");
+    await db.delete(schema.youtubeItems).where(eq(schema.youtubeItems.id,legacyId));
     const json=(value:unknown)=>new Response(JSON.stringify(value),{headers:{"Content-Type":"application/json"}});
     let uploadSessions=0,thumbnailFails=true;const uploads:Uint8Array[]=[];
     const request=(async(url:unknown,init:RequestInit={})=>{
@@ -89,14 +111,17 @@ test("real XLSX → import → interrupted preparation → lost-file recovery �
       if(path.includes("processingDetails"))return json({items:[{status:{privacyStatus:"private",uploadStatus:"processed"},processingDetails:{processingStatus:"succeeded"}}]});
       throw new Error(`Unexpected request: ${path}`);
     }) as typeof fetch;
-    const publishServices:Parameters<typeof executeYoutube>[3]={operational:assertWorkspaceOperational,transport:async()=>({fetch:request,close:async()=>{}} as any),token:async()=>({token:"test-token",privateOnly:true,account:{} as any})};
+    const publishServices:Parameters<typeof executeYoutube>[3]={operational:assertWorkspaceOperational,transport:async()=>({fetch:request,close:async()=>{}} as any),token:async()=>({token:"test-token",privateOnly:true,account:{} as any}),openVideo,inspectRemote:inspectRemoteVideo,fetchMedia};
     await executeYoutube(item.id,db,item.queueVersion,publishServices);assert.equal(uploadSessions,0); // human approval is mandatory
     const approve=()=>app.inject({method:"POST",url:`/youtube/items/${item.id}/resolve`,payload:{action:"approve"}});
-    process.env.YOUTUBE_MEDIA_DIR=join(mediaRoot,"unshared-api-volume");
-    const unavailable=await approve();assert.equal(unavailable.statusCode,409);assert.match(unavailable.json().error,/API/);
-    process.env.YOUTUBE_MEDIA_DIR=mediaRoot;
     const approved=await approve();assert.equal(approved.statusCode,200,approved.body);assert.equal(jobs.at(-1)?.name,"youtube-publish");
     assert.equal((await approve()).statusCode,409);
+    sourceChanged=true;
+    await assert.rejects(executeYoutube(item.id,db,item.queueVersion,publishServices),/تغییر/);assert.equal(uploadSessions,0);
+    sourceChanged=false;assert.equal((await app.inject({method:"POST",url:`/youtube/items/${item.id}/retry`})).statusCode,200);
+    [item]=await db.select().from(schema.youtubeItems);assert.equal(item.status,"waiting_video");assert.equal(item.approvedAt,null);
+    await prepareCollectionVideo(item.id,item.queueVersion,db,services);
+    assert.equal((await approve()).statusCode,200);
     await assert.rejects(executeYoutube(item.id,db,item.queueVersion,publishServices),/503/);
     [item]=await db.select().from(schema.youtubeItems);assert.equal(item.videoId,"confirmed-video");assert.equal(item.status,"failed");
     thumbnailFails=false;
@@ -106,6 +131,13 @@ test("real XLSX → import → interrupted preparation → lost-file recovery �
     assert.equal(uploadSessions,1);assert.deepEqual(Buffer.concat(uploads),video);
     await executeYoutube(item.id,db,item.queueVersion,publishServices);assert.equal(uploadSessions,1);
     const again=await app.inject({method:"POST",url:"/content-collections/preview",payload:scope});assert.equal(again.json().changes[0].kind,"unchanged");assert.equal((await db.select().from(schema.youtubeItems)).length,1);
+    // No preparation, approval, publication or thumbnail retry touched the configured media path.
+    assert.equal((await stat(process.env.YOUTUBE_MEDIA_DIR!)).isFile(),true);
+    assert.equal(await readFile(process.env.YOUTUBE_MEDIA_DIR!,"utf8"),"no media directory");
+    // An already-started upload is never reset or sent back for preparation, even after an origin change.
+    await db.update(schema.youtubeItems).set({status:"failed",videoId:null,sessionEnc:"preserved-session",settings:{...item.settings,remoteVideoChanged:true}}).where(eq(schema.youtubeItems.id,item.id));
+    assert.equal((await app.inject({method:"POST",url:`/youtube/items/${item.id}/retry`})).statusCode,200);
+    [item]=await db.select().from(schema.youtubeItems);assert.equal(item.status,"queued");assert.ok(item.approvedAt);assert.equal(item.sessionEnc,"preserved-session");assert.equal(jobs.at(-1)?.name,"youtube-publish");
     // Queue failure is visible and leaves a retryable item rather than a permanently queued one.
     await db.update(schema.youtubeItems).set({status:"failed",approvedAt:null,videoId:null,sessionEnc:null}).where(eq(schema.youtubeItems.id,item.id));queueDown=true;
     const failedQueue=await app.inject({method:"POST",url:`/youtube/items/${item.id}/retry`});assert.equal(failedQueue.statusCode,503);

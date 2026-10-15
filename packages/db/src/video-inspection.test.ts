@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {mkdtemp,writeFile,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {inspectVideo} from "./video-inspection";
+import {inspectVideo,inspectRemoteVideo} from "./video-inspection";
 
 test("missing inspection tool and missing input produce distinct actionable errors; an existing input is preserved",async()=>{
   const directory=await mkdtemp(join(tmpdir(),"hoor-inspection-"));const path=join(directory,"video");
@@ -14,4 +14,13 @@ test("missing inspection tool and missing input produce distinct actionable erro
     await assert.rejects(inspectVideo(path),(error:NodeJS.ErrnoException)=>error.code==="VIDEO_INSPECTOR_UNAVAILABLE" && /ffprobe/.test(error.message));
     const {stat}=await import("node:fs/promises");assert.equal((await stat(path)).size,10);
   }finally{if(previousPath===undefined)delete process.env.PATH;else process.env.PATH=previousPath;await rm(directory,{recursive:true,force:true});}
+});
+
+test("real ffprobe reads MP4 metadata through the bounded range bridge; origin errors propagate",async()=>{
+  const {execFileSync}=await import("node:child_process");
+  const bytes=execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=black:s=192x108:r=1","-t","2","-c:v","libx264","-movflags","frag_keyframe+empty_moov","-f","mp4","pipe:1"]);
+  let reads=0;
+  const source={size:bytes.length,type:"video/mp4",read:async(start:number,end:number)=>{reads++;assert.ok(end-start<=1024*1024);return bytes.subarray(start,end);}};
+  assert.deepEqual(await inspectRemoteVideo(source),{width:192,height:108,duration:2});assert.ok(reads>0);
+  await assert.rejects(inspectRemoteVideo({...source,read:async()=>{throw new Error("origin unavailable");}}),/origin unavailable/);
 });

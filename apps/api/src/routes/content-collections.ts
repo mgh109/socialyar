@@ -4,7 +4,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { collectionDiff, collectionRowSchema, collectionRowsSchema, validateCollectionDestination, collectionDestinations, collectionBody, collectionTextChanged } from "@socialyar/shared";
 import { getDb, contentCollections, collectionImportEvents, youtubeItems, workflows, workflowVersions, workflowSteps, workflowConnections,
-  collectionSheetSnapshots, fetchGoogleSheet, socialAccounts, validateConnectionPolicy, youtubeToken, publishingTransport, googleJson, fetchCollectionMedia, storeYoutubeMedia } from "@socialyar/db";
+  collectionSheetSnapshots, fetchGoogleSheet, socialAccounts, validateConnectionPolicy, youtubeToken, publishingTransport, googleJson, fetchCollectionMedia } from "@socialyar/db";
 import { connectionCheckQueue, publicationQueue } from "../queue";
 import { previewCollectionDestination, applyCollectionDestination } from "./collection-destinations";
 const scope = z.object({ workflowId: z.string().uuid(), sourceStepKey: z.string().min(1), targetStepKey: z.string().min(1) });
@@ -55,16 +55,14 @@ export async function contentCollectionRoutes(app: FastifyInstance, options: { d
           const tags=fields.includes("tags") ? input.row.tags : video.snippet.tags ?? [];
           const privacy=fields.includes("privacy") ? privateOnly ? "private" : input.row.privacy : video.status.privacyStatus;
           const madeForKids=fields.includes("madeForKids") ? input.row.madeForKids : video.status.selfDeclaredMadeForKids ?? false;
-          let coverMediaId: string | undefined;
           if (fields.includes("coverUrl")) {
             const cover = await fetchCollectionMedia(item.workspaceId,input.row.coverUrl,"image",item.settings.mediaConnection);
-            coverMediaId = (await storeYoutubeMedia(item.workspaceId,cover.bytes)).mediaId;
             await googleJson(await transport.fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(item.videoId!)}&uploadType=media`,{
               method:"POST",headers:{ Authorization:`Bearer ${token}`,"Content-Type":cover.type },body:new Uint8Array(cover.bytes),signal:AbortSignal.timeout(30000) }));
           }
           await googleJson(await transport.fetch("https://www.googleapis.com/youtube/v3/videos?part=snippet,status",{ method:"PUT",headers,
             body:JSON.stringify({ id:item.videoId,snippet:{ title,description,tags,categoryId:video.snippet.categoryId },status:{ privacyStatus:privacy,selfDeclaredMadeForKids:madeForKids } }),signal:AbortSignal.timeout(15000) }));
-          const settings: Record<string,unknown> = { ...item.settings, ...(coverMediaId ? { coverMediaId } : {}) }; for (const key of ["tags","privacy","madeForKids","coverUrl"] as const) if (fields.includes(key)) settings[key]=input.row[key];
+          const settings: Record<string,unknown> = { ...item.settings }; if(fields.includes("coverUrl")){delete settings.coverMediaId;settings.sourceCoverUrl=input.row.coverUrl;} for (const key of ["tags","privacy","madeForKids","coverUrl"] as const) if (fields.includes(key)) settings[key]=input.row[key];
           await tx.update(youtubeItems).set({ title,description,settings,actualPrivacy:privacy,queueVersion:item.queueVersion+1,updatedAt:new Date(),
             logs:[...item.logs,{ result:"metadata_updated",time:new Date().toISOString(),channel:item.channelName,userId:request.auth.userId }] }).where(eq(youtubeItems.id,item.id));
           await tx.update(contentCollections).set({ revision:collection.revision+1,updatedAt:new Date(),records:collection.records.map((r) => r.row.id===input.row.id ? { ...r,row:input.row } : r) }).where(eq(contentCollections.id,collection.id));
@@ -139,9 +137,11 @@ export async function contentCollectionRoutes(app: FastifyInstance, options: { d
             // Only changed spreadsheet fields overwrite content edited in the calendar.
             for (const key of ["videoUrl", "coverUrl", "videoType", "playlist", "order", "tags", "privacy", "madeForKids"] as const)
               if (!old || change.fields.includes(key)) settings[key] = row[key];
-            if (!old || change.fields.includes("videoUrl")) { delete settings.videoMediaId; settings.sourceVideoUrl = row.videoUrl; }
-            if (!old || change.fields.includes("coverUrl")) { delete settings.coverMediaId; settings.sourceCoverUrl = row.coverUrl; }
-            const prepare = Boolean(target.imageStep) || !settings.videoMediaId || Boolean(settings.coverUrl && !settings.coverMediaId) || change.fields.includes("videoType");
+            if (!old || change.fields.includes("videoUrl")) { delete settings.videoMediaId; delete settings.remoteVideo; delete settings.videoDetails; settings.sourceVideoUrl = row.videoUrl; }
+            if (!old || change.fields.includes("coverUrl")) { delete settings.coverMediaId; delete settings.coverLinkChecked; settings.sourceCoverUrl = row.coverUrl; }
+            settings.mediaTransfer="remote";
+            const prepare = Boolean(target.imageStep) || !settings.remoteVideo || Boolean(settings.coverUrl && !settings.coverLinkChecked) || change.fields.includes("videoType");
+            if(prepare){settings.preparationStage="queued";settings.preparationFailureStage=null;}
             const values = { settings, title: !old || change.fields.includes("title") ? row.title : old.title,
               description: !old || collectionTextChanged(change.fields,"youtube") ? collectionBody(row,"youtube") : old.description,
               scheduledAt: !old || change.fields.includes("scheduledAt") ? row.scheduledAt ? new Date(row.scheduledAt) : null : old.scheduledAt,

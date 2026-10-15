@@ -5,7 +5,7 @@ import { and, desc, eq, gt } from "drizzle-orm";
 import { randomBytes, createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { getDb, assertWorkspaceOperational, reserveResourceQuota, TenantPolicyError, workspaces, socialAccounts, youtubeItems, youtubeOAuthStates, youtubeConfig, googleJson,
-  youtubeMediaFile, encryptSecret, decryptSecret, youtubeToken, workflows, storeYoutubeMedia, readYoutubeMedia, fetchYoutubeMedia, validateConnectionPolicy, secretConfigurationProblem } from "@socialyar/db";
+  youtubeMediaFile, encryptSecret, decryptSecret, youtubeToken, workflows, storeYoutubeMedia, readYoutubeMedia, fetchYoutubeMedia, validateConnectionPolicy, secretConfigurationProblem, collectionVideoUrl } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 import { policySchema } from "./proxies";
 
@@ -164,8 +164,11 @@ export async function youtubeRoutes(app: FastifyInstance, options: {database?:Re
       if (input.action === "approve") {
         if (current.scheduledAt && current.scheduledAt.getTime() <= Date.now()) return reply.code(409).send({ error: "زمان انتشار گذشته؛ نیازمند تعیین تکلیف. زمان جدید تعیین کنید." });
         try {
-          await youtubeMediaFile(request.auth.workspaceId, String(current.settings.videoMediaId), "video");
-          if (current.settings.coverMediaId) await youtubeMediaFile(request.auth.workspaceId, String(current.settings.coverMediaId), "image");
+          if(current.settings.collectionId)collectionVideoUrl(current.settings);
+          else {
+            await youtubeMediaFile(request.auth.workspaceId, String(current.settings.videoMediaId), "video");
+            if (current.settings.coverMediaId) await youtubeMediaFile(request.auth.workspaceId, String(current.settings.coverMediaId), "image");
+          }
         }catch(error){
           if((error as NodeJS.ErrnoException).code === "ENOENT")return reply.code(409).send({error:"پردازشگر فایل را آماده کرده، اما API به آن دسترسی ندارد؛ هر دو سرویس باید به همان فضای پایدار و مسیر YOUTUBE_MEDIA_DIR متصل باشند. پس از اصلاح اتصال، تأیید را دوباره بزنید."});
           throw error;
@@ -185,10 +188,10 @@ export async function youtubeRoutes(app: FastifyInstance, options: {database?:Re
     secured.post("/youtube/items/:id/:action", async (request, reply) => {
       const { id, action } = z.object({ id: z.string().uuid(), action: z.enum(["cancel", "retry"]) }).parse(request.params);
       const [current] = await db.select().from(youtubeItems).where(and(eq(youtubeItems.id, id), eq(youtubeItems.workspaceId, request.auth.workspaceId)));
-      if (action === "retry" && current?.status === "failed" && current.settings.collectionId && !current.approvedAt && !current.videoId && !current.sessionEnc) {
+      if (action === "retry" && current?.status === "failed" && current.settings.collectionId && (!current.approvedAt || current.settings.remoteVideoChanged===true) && !current.videoId && !current.sessionEnc) {
         const version=current.queueVersion+1;
-        const [claimed]=await db.update(youtubeItems).set({status:"waiting_video",queueVersion:version,error:null,
-          settings:{...current.settings,preparationStage:"queued",preparationFailureStage:null,imageRetryAt:null},
+        const [claimed]=await db.update(youtubeItems).set({status:"waiting_video",queueVersion:version,error:null,approvedAt:null,approvedBy:null,
+          settings:{...current.settings,remoteVideoChanged:false,preparationStage:"queued",preparationFailureStage:null,imageRetryAt:null},
           logs:[...current.logs,{result:"preparation_queued",time:new Date().toISOString(),channel:current.channelName}],updatedAt:new Date()})
           .where(and(eq(youtubeItems.id,id),eq(youtubeItems.workspaceId,request.auth.workspaceId),eq(youtubeItems.status,"failed"),eq(youtubeItems.queueVersion,current.queueVersion))).returning();
         if(!claimed)return reply.code(409).send({error:"item_state_conflict"});

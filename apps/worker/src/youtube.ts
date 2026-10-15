@@ -1,11 +1,11 @@
 import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { and, eq } from "drizzle-orm";
 import { setTimeout as pause } from "node:timers/promises";
-import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts, youtubeMediaFile, youtubeFileSource } from "@socialyar/db";
+import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts, youtubeMediaFile, youtubeFileSource, openCollectionVideoSource, inspectRemoteVideo, fetchCollectionMedia, type RemoteVideoSnapshot, collectionVideoUrl } from "@socialyar/db";
 
 import { attachYoutubePlaylist } from "./youtube-playlist";
 
-const youtubeServices = {operational:assertWorkspaceOperational,transport:publishingTransport,token:youtubeToken};
+const youtubeServices = {operational:assertWorkspaceOperational,transport:publishingTransport,token:youtubeToken,openVideo:openCollectionVideoSource,inspectRemote:inspectRemoteVideo,fetchMedia:fetchCollectionMedia};
 export async function executeYoutube(id: string, db = getDb(), queueVersion = 0, services = youtubeServices) {
   let [item] = await db.select().from(youtubeItems).where(eq(youtubeItems.id, id));
   if (!item || !item.approvedAt || !["queued", "uploading", "processing"].includes(item.status)) return;
@@ -33,6 +33,9 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
     const { token, privateOnly } = await services.token(item.accountId, item.workspaceId, request);
     const headers = { Authorization: `Bearer ${token}` };
     const media = async (kind: "video" | "image") => {
+      if(kind === "image" && item.settings.collectionId && !(item.settings.imageStep && Array.isArray(item.settings.images) && item.settings.images.some(image=>image?.mediaId===item.settings.coverMediaId))) {
+        return services.fetchMedia(item.workspaceId,String(item.settings.coverUrl ?? item.settings.sourceCoverUrl),"image",item.settings.mediaConnection);
+      }
       const mediaId = item.settings[kind === "video" ? "videoMediaId" : "coverMediaId"];
       if (typeof mediaId === "string") return readYoutubeMedia(item.workspaceId, mediaId, kind);
       const url = item.settings[kind === "video" ? "videoUrl" : "coverUrl"];
@@ -40,11 +43,20 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
       return fetchYoutubeMedia(url, kind === "video" ? 250_000_000 : YOUTUBE_COVER_MAX_BYTES, kind);
     };
     if (!item.videoId) {
-      const stored = typeof item.settings.videoMediaId === "string" ? await youtubeMediaFile(item.workspaceId,item.settings.videoMediaId,"video") : null;
-      const video = stored ? null : await media("video");
-      if (item.settings.videoType === "shorts") assertShorts(await inspectVideo(stored ? stored.path : video!.bytes));
+      if(item.settings.collectionId && item.sessionEnc && !item.settings.remoteVideo)throw new Error("نشست قبلی با فایل محلی آغاز شده است؛ پیش از تغییر روش انتقال، وضعیت همان آپلود در یوتیوب باید بررسی شود.");
+      const remote=item.settings.collectionId ? await services.openVideo(item.workspaceId,collectionVideoUrl(item.settings),item.settings.mediaConnection,item.settings.remoteVideo as RemoteVideoSnapshot|undefined) : null;
+      if(remote) {
+        // Save source identity before the resumable session. A retry must never mix file versions.
+        item.settings={...item.settings,mediaTransfer:"remote",remoteVideo:remote.snapshot};
+        delete item.settings.videoMediaId;
+        if(!item.settings.imageStep)delete item.settings.coverMediaId;
+        await db.update(youtubeItems).set({settings:item.settings,updatedAt:new Date()}).where(eq(youtubeItems.id,id));
+      }
+      const stored = !remote && typeof item.settings.videoMediaId === "string" ? await youtubeMediaFile(item.workspaceId,item.settings.videoMediaId,"video") : null;
+      const video = remote || stored ? null : await media("video");
+      if (item.settings.videoType === "shorts") assertShorts(remote ? await services.inspectRemote(remote) : await inspectVideo(stored ? stored.path : video!.bytes));
       await log("upload_started", { privateOnly, requestedPrivacy: item.settings.privacy });
-      item.videoId = await uploadYoutubeVideo({ bytes: video?.bytes, source: stored ? youtubeFileSource(stored) : undefined, type: stored?.type ?? video!.type, token,
+      item.videoId = await uploadYoutubeVideo({ bytes: video?.bytes, source: remote ?? (stored ? youtubeFileSource(stored) : undefined), type: remote?.type ?? stored?.type ?? video!.type, token,
         session: item.sessionEnc ? decryptSecret(item.sessionEnc) : undefined,
         metadata: { snippet: { title: item.title, description: item.description, tags: item.settings.tags ?? [], categoryId: "22" },
           status: { privacyStatus: privateOnly ? "private" : item.settings.privacy ?? "private", selfDeclaredMadeForKids: item.settings.madeForKids === true } },
@@ -77,7 +89,8 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
     throw new Error("YouTube is still processing; retry to check this same video without reuploading");
   } catch (error) {
     const message = error instanceof Error ? error.message : "YouTube publication failed";
-    await db.update(youtubeItems).set({ status: "failed", error: message, updatedAt: new Date() }).where(eq(youtubeItems.id, id));
+    const changed=(error as NodeJS.ErrnoException)?.code==="REMOTE_VIDEO_CHANGED";
+    await db.update(youtubeItems).set({ status: "failed", error: message, ...(changed?{settings:{...item.settings,remoteVideoChanged:true}}:{}),updatedAt: new Date() }).where(eq(youtubeItems.id, id));
     await log("failed", { error: message, videoUrl: item.videoId ? `https://www.youtube.com/watch?v=${item.videoId}` : null });
     throw error;
   } finally { await transport?.close(); }

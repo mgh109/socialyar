@@ -69,7 +69,7 @@ test("calendar edits after preview cause a conflict rather than being overwritte
 test("editing an approved queued row revokes approval, invalidates the old job and preserves unchanged calendar fields",async()=>{
   const [collection]=await db.select().from(tables.contentCollections);const record=collection.records.find((r)=>r.row.id==="two")!;
   await db.update(tables.youtubeItems).set({ status:"queued",approvedAt:new Date(),approvedBy:userId,title:"عنوان ویرایش‌شده در تقویم",
-    settings:{ videoMediaId:"a".repeat(64),collectionId:collection.id,videoType:"video",privacy:"private" },queueVersion:8 }).where(eq(tables.youtubeItems.id,record.itemId));
+    settings:{ remoteVideo:{size:100,type:"video/mp4",headHash:"hash",etag:"stable"},collectionId:collection.id,videoType:"video",privacy:"private" },queueVersion:8 }).where(eq(tables.youtubeItems.id,record.itemId));
   const rows=[{ ...row(),title:"عنوان جدید" },{ ...row("two",2),description:"توضیحات تازه" },row("three",3)];const p=await preview(rows);
   const result=await apply(rows,p,["two"]);assert.equal(result.statusCode,200,result.body);
   const [item]=await db.select().from(tables.youtubeItems).where(eq(tables.youtubeItems.id,record.itemId));

@@ -29,6 +29,16 @@ test("redirects are returned to the downloader so the next host can be revalidat
   } finally {await agent.close();}
 });
 
+test("chunk requests pin the virtual host and send Range with the saved source validator",async()=>{
+  const agent=new MockAgent();agent.disableNetConnect();
+  agent.get("https://203.0.113.10").intercept({path:"/video.mp4",method:"GET",headers:{host:"files.example.com",range:"bytes=4096-8191","if-range":'"file-v1"'}})
+    .reply(206,Buffer.alloc(4096),{headers:{"content-range":"bytes 4096-8191/10000",etag:'"file-v1"'}});
+  try{
+    const response=await requestPinnedMedia(new URL("https://files.example.com/video.mp4"),"203.0.113.10",agent,AbortSignal.timeout(5000),false,{start:4096,end:8192,ifRange:'"file-v1"'});
+    assert.equal(response.statusCode,206);assert.equal((await response.body.arrayBuffer()).byteLength,4096);agent.assertNoPendingInterceptors();
+  }finally{await agent.close();}
+});
+
 test("a 350.58 MB video is streamed to disk, identified without a full read, and partial downloads are removed",async()=>{
   const {mkdtemp,rm,readdir}=await import("node:fs/promises");
   const {tmpdir}=await import("node:os");const {join}=await import("node:path");

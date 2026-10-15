@@ -11,14 +11,14 @@ import { PersianDateTimeField } from "./persian-date-time-field";
 export type YoutubeItem = { id: string; runId: string | null; stepKey: string; status: string; title: string; description: string; channelName: string;
   progress: number; videoId: string | null; actualPrivacy: string | null; error: string | null; updatedAt: string;
   approvedAt?: string | null; scheduledAt: string | null; settings: Record<string, unknown>; logs: Array<Record<string, unknown>> };
-const preparationStageNames: Record<string,string> = {queued:"در صف آماده‌سازی",video_download:"در حال دریافت ویدئو",video_inspection:"در حال بررسی ویدئو",image_generation:"در حال تولید کاور",cover_download:"در حال آماده‌سازی کاور",ready:"آماده تأیید"};
-const preparationStageLabels: Record<string,string> = {cover_download:"دریافت کاور ناموفق",video_inspection:"بررسی ویدئو ناموفق",image_generation:"تولید تصویر ناموفق",video_download:"دریافت ویدئو ناموفق"};
+const preparationStageNames: Record<string,string> = {queued:"در صف آماده‌سازی",video_link:"در حال بررسی لینک ویدئو",cover_link:"در حال بررسی لینک کاور",video_download:"در حال دریافت ویدئو",video_inspection:"در حال بررسی ویدئو",image_generation:"در حال تولید کاور",cover_download:"در حال آماده‌سازی کاور",ready:"آماده تأیید"};
+const preparationStageLabels: Record<string,string> = {video_link:"بررسی لینک ویدئو ناموفق",cover_link:"بررسی لینک کاور ناموفق",cover_download:"دریافت کاور ناموفق",video_inspection:"بررسی ویدئو ناموفق",image_generation:"تولید تصویر ناموفق",video_download:"دریافت ویدئو ناموفق"};
 export const youtubeStatus = (item?: YoutubeItem) => !item ? "منتظر ویدئو" : ({ waiting_video: item.settings.collectionId ? "در صف آماده‌سازی" : "منتظر ویدئو", preparing: preparationStageNames[String(item.settings.preparationStage)] ?? "در حال آماده‌سازی", waiting_approval: "منتظر تأیید",
   approved: "بدون زمان‌بندی",
   queued: "در صف انتشار", uploading: `در حال بارگذاری — ${faDigits(item.progress)}٪`, processing: "در حال پردازش یوتیوب",
-  prepared: "فایل آماده تأیید است", published: "منتشر شد", failed: preparationStageLabels[String(item.settings.preparationFailureStage)] ?? "عملیات ناموفق", rejected: "رد شد", cancelled: "متوقف شد" }[item.status] ?? "نامشخص");
+  prepared: "محتوا آماده تأیید است", published: "منتشر شد", failed: preparationStageLabels[String(item.settings.preparationFailureStage)] ?? "عملیات ناموفق", rejected: "رد شد", cancelled: "متوقف شد" }[item.status] ?? "نامشخص");
 const privacyLabels: Record<string,string> = { public: "عمومی", private: "خصوصی", unlisted: "فهرست‌نشده" };
-const logLabels: Record<string,string> = { approved_and_queued: "تأیید و ورود به صف", rejected: "رد شد", cancelled: "متوقف شد", retry_queued: "تلاش مجدد در صف", upload_started: "شروع بارگذاری", prepared: "فایل آماده تأیید است", published: "منتشر شد", failed: "خطا", preparation_failed: "آماده‌سازی ناموفق", preparation_queued:"در صف آماده‌سازی", video_downloaded:"ویدئو دریافت شد", video_inspected:"ویدئو بررسی شد", video_recovery:"فایل قبلی در دسترس نبود؛ دریافت دوباره از منبع", connection: "بررسی مسیر اتصال", calendar_schedule: "تغییر زمان از تقویم", calendar_edit: "ویرایش از تقویم", calendar_unschedule: "حذف از برنامه", calendar_approve: "تأیید از تقویم", calendar_reject: "رد از تقویم", calendar_stop: "توقف از تقویم", calendar_retry: "تلاش مجدد از تقویم" };
+const logLabels: Record<string,string> = { approved_and_queued: "تأیید و ورود به صف", rejected: "رد شد", cancelled: "متوقف شد", retry_queued: "تلاش مجدد در صف", upload_started: "شروع بارگذاری", video_link_checked:"لینک ویدئو آماده انتقال است", prepared: "محتوا آماده تأیید است", published: "منتشر شد", failed: "خطا", preparation_failed: "آماده‌سازی ناموفق", preparation_queued:"در صف آماده‌سازی", video_downloaded:"ویدئو دریافت شد", video_inspected:"ویدئو بررسی شد", video_recovery:"فایل قبلی در دسترس نبود؛ دریافت دوباره از منبع", connection: "بررسی مسیر اتصال", calendar_schedule: "تغییر زمان از تقویم", calendar_edit: "ویرایش از تقویم", calendar_unschedule: "حذف از برنامه", calendar_approve: "تأیید از تقویم", calendar_reject: "رد از تقویم", calendar_stop: "توقف از تقویم", calendar_retry: "تلاش مجدد از تقویم" };
 export function YoutubeIcon() {
   return <svg width="22" height="16" viewBox="0 0 24 18" role="img" aria-label="یوتیوب"><rect width="24" height="18" rx="5" fill="#ff0033" /><path d="M10 4.5v9l7-4.5z" fill="white" /></svg>;
 }
@@ -29,7 +29,7 @@ export function MediaPreview({ mediaId, url, video, compact }: { mediaId?: unkno
     const remote = typeof url === "string" && url.startsWith("https://") ? url : "";
     // Collection videos can be hundreds of MB. Preview the host URL without eagerly
     // downloading the entire authenticated file into a browser Blob on every open.
-    if(video && remote) {setSrc(remote);return;}
+    if(remote && (video || !mediaId)) {setSrc(remote);return;}
     if(video && !loadVideo)return;
     if (typeof mediaId === "string") void apiFetch(`/youtube/media/${mediaId}`).then(async (response) => {
       if (!response.ok) throw new Error("پیش‌نمایش فایل در دسترس نیست؛ این وضعیت به‌تنهایی نتیجهٔ آماده‌سازی را تغییر نمی‌دهد.");
@@ -45,10 +45,10 @@ export function MediaPreview({ mediaId, url, video, compact }: { mediaId?: unkno
 function PreparationProgress({item}:{item:YoutubeItem}) {
   if(!item.settings.collectionId)return null;
   const stage=String(item.settings.preparationFailureStage ?? item.settings.preparationStage ?? "queued");
-  const active=({queued:0,video_download:0,video_inspection:1,image_generation:2,cover_download:2,ready:3} as Record<string,number>)[stage] ?? 0;
+  const active=({queued:0,video_link:0,video_download:0,video_inspection:1,image_generation:2,cover_link:2,cover_download:2,ready:3} as Record<string,number>)[stage] ?? 0;
   const ready=["waiting_approval","queued","uploading","processing","published"].includes(item.status);
   return <ol className="youtube-stages" aria-label="وضعیت آماده‌سازی">
-    {["دریافت ویدئو","بررسی فایل","آماده‌سازی کاور","تأیید انتشار"].map((label,index)=>{
+    {["بررسی لینک","مشخصات ویدئو","بررسی کاور","تأیید انتشار"].map((label,index)=>{
       const done=ready ? index<3 : index<active;
       const failed=item.status==="failed" && !item.videoId && index===active;
       return <li key={label} className={failed ? "failed" : done ? "done" : index===active ? "active" : ""}><span aria-hidden="true">{failed ? "!" : done ? "✓" : faDigits(index+1)}</span>{label}</li>;
@@ -56,6 +56,7 @@ function PreparationProgress({item}:{item:YoutubeItem}) {
   </ol>;
 }
 function DownloadProgress({item}:{item:YoutubeItem}) {
+  if(item.settings.mediaTransfer==="remote")return null;
   if(item.status!=="preparing" || item.settings.preparationStage!=="video_download")return null;
   const bytes=Number(item.settings.videoDownloadedBytes) || 0,total=Number(item.settings.videoTotalBytes) || 0;
   const mb=(value:number)=>(value/1_000_000).toLocaleString("fa-IR",{maximumFractionDigits:1});
@@ -80,10 +81,11 @@ export function YoutubeReview({ item, refresh }: { item: YoutubeItem; refresh: (
     {item.status === "waiting_video" && item.error ? <p role="status">{persianError(item.error)}</p> : null}
     <PreparationProgress item={item} />
     <DownloadProgress item={item} />
+    {item.settings.collectionId ? <p className="media-preview-note">پس از تأیید، ویدئو از لینک منبع به یوتیوب منتقل می‌شود؛ ویدئو و کاورِ لینک‌شده روی سرور ذخیره نمی‌شوند.</p> : null}
     {actionResult ? <p role="status" className="collection-feedback success">{actionResult}</p> : null}
     <details className="youtube-media-preview"><summary>پیش‌نمایش ویدئو</summary><MediaPreview video mediaId={item.settings.videoMediaId} url={item.settings.videoUrl} /></details>
     {item.settings.imageGeneration && (item.settings.imageGeneration as {error?:string}).error ? <p role="status">{String((item.settings.imageGeneration as {error?:string}).error)}</p> : null}
-    <MediaPreview mediaId={item.settings.coverMediaId} url={item.settings.coverUrl} />
+    <MediaPreview mediaId={item.settings.collectionId && !item.settings.imageStep ? undefined : item.settings.coverMediaId} url={item.settings.coverUrl} />
     {item.status === "waiting_approval" ? <>
       <p>نوع محتوا: {item.settings.videoType === "shorts" ? "ویدئوی کوتاه / Shorts" : "ویدئوی معمولی"}{item.settings.playlist ? ` · پلی‌لیست: ${String(item.settings.playlist)}` : ""}</p>
     <label>عنوان<input maxLength={100} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
@@ -97,7 +99,7 @@ export function YoutubeReview({ item, refresh }: { item: YoutubeItem; refresh: (
     {item.status === "published" && item.videoId ? <a href={`https://www.youtube.com/watch?v=${item.videoId}`} target="_blank" rel="noreferrer">مشاهده در یوتیوب</a> : null}
     {item.actualPrivacy ? <p>وضعیت واقعی در یوتیوب: {({ public: "عمومی", private: "خصوصی", unlisted: "فهرست‌نشده" })[item.actualPrivacy] ?? item.actualPrivacy}
       {item.actualPrivacy !== item.settings.privacy ? " — محدودیت انتشار: وضعیت درخواستی اعمال نشده است." : ""}</p> : null}
-    {(!actionResult && item.status === "failed" && item.error) || error ? <div className="collection-feedback error" role="alert"><strong>{error ? "عملیات انجام نشد" : item.videoId ? "ویدئو بارگذاری شده؛ مرحلهٔ بعدی ناموفق است" : ({cover_download:"ویدئو دریافت شد؛ دریافت کاور ناموفق بود",video_inspection:"ویدئو دریافت شد؛ بررسی فایل ناموفق بود",image_generation:"ویدئو دریافت شد؛ تولید تصویر ناموفق بود",video_download:"دریافت ویدئو ناموفق بود"} as Record<string,string>)[String(item.settings.preparationFailureStage)] ?? "عملیات یوتیوب ناموفق بود"}</strong><span>{persianError(error || item.error)}</span>{diagnosticErrorCode(error || item.error) ? <code dir="ltr">{diagnosticErrorCode(error || item.error)}</code> : null}</div> : null}
+    {(!actionResult && item.status === "failed" && item.error) || error ? <div className="collection-feedback error" role="alert"><strong>{error ? "عملیات انجام نشد" : item.videoId ? "ویدئو بارگذاری شده؛ مرحلهٔ بعدی ناموفق است" : ({video_link:"بررسی لینک ویدئو ناموفق بود",cover_link:"ویدئو بررسی شد؛ لینک کاور مشکل دارد",cover_download:"ویدئو دریافت شد؛ دریافت کاور ناموفق بود",video_inspection:"ویدئو دریافت شد؛ بررسی فایل ناموفق بود",image_generation:"ویدئو دریافت شد؛ تولید تصویر ناموفق بود",video_download:"دریافت ویدئو ناموفق بود"} as Record<string,string>)[String(item.settings.preparationFailureStage)] ?? "عملیات یوتیوب ناموفق بود"}</strong><span>{persianError(error || item.error)}</span>{diagnosticErrorCode(error || item.error) ? <code dir="ltr">{diagnosticErrorCode(error || item.error)}</code> : null}</div> : null}
     <details><summary>مسیر اتصال</summary><ConnectionHistory youtubeItemId={item.id} /></details>
     <details><summary>گزارش اجرا</summary>{item.runId ? <a href={`/runs/${item.runId}`}>اجرای جریان {item.runId.slice(0,8)}</a> : <p>{item.settings.collectionId ? "ورود از مجموعه اکسل / گوگل‌شیت" : "بارگذاری دستی"}</p>}{item.logs.map((entry, i) => <p key={i}>{String(entry.channel ?? "یوتیوب")} · {new Date(String(entry.time)).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} · {entry.result === "preparation_failed" ? preparationStageLabels[String(entry.stage)] ?? "آماده‌سازی ناموفق" : logLabels[String(entry.result)] ?? "تغییر وضعیت انتشار"}{entry.route ? ` · ${entry.route === "proxy" ? `پروکسی: ${entry.proxyName}` : "مستقیم"}` : ""}{entry.actualPrivacy ? ` · ${privacyLabels[String(entry.actualPrivacy)] ?? "نامشخص"}` : ""}{entry.error ? ` · ${persianError(entry.error)}` : ""}{typeof entry.code === "string" && /^[A-Z][A-Z0-9_]{1,40}$/.test(entry.code) ? <code dir="ltr"> · {entry.code}</code> : null}{entry.videoUrl ? <a href={String(entry.videoUrl)} target="_blank" rel="noreferrer"> لینک ویدئو</a> : null}</p>)}</details>
   </article>;

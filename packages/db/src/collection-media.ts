@@ -13,16 +13,16 @@ export async function publicMediaAddress(raw: string) {
 }
 /** Fetch strips Host headers. The low-level client must retain the virtual host
  * while TLS and the TCP destination remain pinned to the validated address. */
-export function requestPinnedMedia(url: URL, address: string, dispatcher: Dispatcher, signal: AbortSignal, verifyOnly: boolean) {
+export function requestPinnedMedia(url: URL, address: string, dispatcher: Dispatcher, signal: AbortSignal, verifyOnly: boolean, range?:{start:number;end:number;ifRange?:string}) {
   const pinned = new URL(url); pinned.hostname = address;
   return undiciRequest(pinned, { method:"GET", dispatcher,
-    headers:{ host:url.host, ...(verifyOnly ? { range:"bytes=0-4095" } : {}) },
+    headers:{ host:url.host, ...(range ? {range:`bytes=${range.start}-${range.end-1}`,...(range.ifRange ? {"if-range":range.ifRange} : {})} : verifyOnly ? { range:"bytes=0-4095" } : {}) },
     signal });
 }
 /** Pin the checked destination IP for direct, HTTP proxy and SOCKS paths.
  * Keep the original HTTPS hostname for certificate validation and Host headers on every redirect. */
 async function downloadCollectionMedia<T>(workspaceId:string,raw:string,kind:"video"|"image",policyInput:unknown,verifyOnly:boolean,limit:number,
-  consume:(body:AsyncIterable<Uint8Array>,total?:number)=>Promise<T>, timeout=180000) {
+  consume:(body:AsyncIterable<Uint8Array>,total:number|undefined,response:Pick<Dispatcher.ResponseData,"statusCode"|"headers">)=>Promise<T>, timeout=180000,range?:{start:number;end:number;ifRange?:string}) {
   const policy = connectionPolicy(policyInput);
   let dispatcher: Dispatcher | undefined;
   const download = async (proxy: boolean) => {
@@ -32,15 +32,18 @@ async function downloadCollectionMedia<T>(workspaceId:string,raw:string,kind:"vi
       dispatcher = proxy ? await createProxyDispatcher(await loadPublishingProxy(workspaceId,policy.proxyId!),undefined,url.hostname)
         : new Agent({ connect:{ servername:url.hostname,rejectUnauthorized:true } });
       try {
-        const response = await requestPinnedMedia(url,address,dispatcher,signal,verifyOnly);
+        const response = await requestPinnedMedia(url,address,dispatcher,signal,verifyOnly,range);
         if ([301,302,303,307,308].includes(response.statusCode)) {
           const location = response.headers.location; response.body.destroy();
           if (typeof location !== "string") throw new Error("نشانی دانلود پیدا نشد."); current = new URL(location,url).toString(); continue;
         }
         if (response.statusCode < 200 || response.statusCode >= 300) { response.body.destroy(); throw new Error(response.statusCode===401 || response.statusCode===403 ? `هاست فایل اجازهٔ دریافت ${kind==="video" ? "ویدئو" : "کاور"} را نداد (HTTP ${response.statusCode})؛ عمومی‌بودن لینک و محدودیت دانلود هاست را بررسی کنید. این خطا از حساب یوتیوب نیست.` : `دریافت ${kind==="video" ? "ویدئو" : "کاور"} از هاست ناموفق بود (HTTP ${response.statusCode}). لینک فایل را بررسی کنید.`); }
+        if(range && response.statusCode!==206){response.body.destroy();throw Object.assign(new Error(range.ifRange ? "فایل منبع تغییر کرده یا هاست ادامهٔ بازه‌ای را نپذیرفت؛ انتقال متوقف شد و نشست قبلی برای جلوگیری از ارسال تکراری حفظ می‌شود." : "هاست فایل باید دانلود بازه‌ای (HTTP Range) را پشتیبانی کند؛ انتقال بدون ذخیره روی دیسک برای این لینک ممکن نیست."),range.ifRange ? {code:"REMOTE_VIDEO_CHANGED"} : {});}
+        const imageSize=kind==="image" ? Number(String(response.headers["content-range"]??"").match(/\/(\d+)$/)?.[1] ?? response.headers["content-length"]) : 0;
+        if(imageSize>limit){response.body.destroy();throw new Error("حجم کاور بیش از سقف ۵۰ مگابایت است.");}
         if (!verifyOnly && Number(response.headers["content-length"]) > limit) { response.body.destroy(); throw new Error(`حجم فایل بیش از سقف ${Math.floor(limit/1_000_000)} مگابایت است.`); }
         const length=Number(response.headers["content-length"]);
-        try { return await consume(response.body,Number.isSafeInteger(length) && length>0 ? length : undefined); }
+        try { return await consume(response.body,Number.isSafeInteger(length) && length>0 ? length : undefined,response); }
         finally { response.body.destroy(); }
 
       } finally { await dispatcher.destroy(); dispatcher = undefined; }
@@ -49,6 +52,17 @@ async function downloadCollectionMedia<T>(workspaceId:string,raw:string,kind:"vi
   };
   try { return await download(policy.mode === "proxy"); }
   catch (error) { if (policy.mode !== "auto" || !isConnectionError(error)) throw error; return download(true); }
+}
+
+/** Range reads retain the same DNS pinning, TLS, redirect and workspace proxy policy. */
+export async function readCollectionMediaRange(workspaceId:string,raw:string,start:number,end:number,policyInput?:unknown,ifRange?:string) {
+  if(!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start<0 || end<=start || end-start>8*1024*1024)throw new Error("Invalid media range");
+  return downloadCollectionMedia(workspaceId,raw,"video",policyInput,false,end-start,async(body,_length,response)=>{
+    if(response.statusCode!==206)throw new Error("هاست فایل باید دانلود بازه‌ای (HTTP Range) را پشتیبانی کند؛ انتقال بدون ذخیره روی دیسک برای این لینک ممکن نیست یا فایل منبع تغییر کرده است.");
+    const chunks:Buffer[]=[];let size=0;
+    for await(const chunk of body){size+=chunk.length;if(size>end-start)throw new Error("پاسخ هاست از بازهٔ درخواستی بزرگ‌تر است.");chunks.push(Buffer.from(chunk));}
+    return {bytes:Buffer.concat(chunks),headers:response.headers};
+  },120000,{start,end,ifRange});
 }
 
 export async function fetchCollectionMedia(workspaceId: string, raw: string, kind: "video" | "image", policyInput?: unknown, verifyOnly = false) {

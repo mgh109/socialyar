@@ -18,3 +18,4 @@ export * from "./tenant-policy";
 export * from "./youtube-comments";
 
 export * from "./image-generation";
+export * from "./remote-video";

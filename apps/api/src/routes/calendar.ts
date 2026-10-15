@@ -4,7 +4,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { instagramProblems, calendarStatus, assertCalendarAction, type CalendarItem } from "@socialyar/shared";
 import { getDb, contentVariants, contentItems, publications, schedules, socialAccounts, workflows, runs, approvals, youtubeItems,
-  calendarActions, validateConnectionPolicy, youtubeMediaFile, fetchYoutubeMedia, storeYoutubeMedia } from "@socialyar/db";
+  calendarActions, validateConnectionPolicy, youtubeMediaFile, fetchYoutubeMedia, storeYoutubeMedia, collectionVideoUrl } from "@socialyar/db";
 import { publicationQueue } from "../queue";
 import { policySchema } from "./proxies";
 
@@ -86,18 +86,18 @@ export async function calendarRoutes(app: FastifyInstance) {
 }
 
 export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: import("../auth").AuthContext,
-  params: { kind: "variant" | "youtube"; id: string }, rawInput: unknown): Promise<{ status: number; body: Record<string, unknown> }> {
+  params: { kind: "variant" | "youtube"; id: string }, rawInput: unknown, queue:Pick<typeof publicationQueue,"add"|"getJob">=publicationQueue): Promise<{ status: number; body: Record<string, unknown> }> {
     const input = mutationSchema.parse(rawInput);
     if (!validTimezone(input.timezone)) return { status: 400, body: { error: "منطقه زمانی معتبر نیست." } };
     if (input.action === "schedule" && (!input.scheduledAt || new Date(input.scheduledAt).getTime() <= Date.now())) return { status: 400, body: { error: "تاریخ و ساعت آینده را انتخاب کنید." } };
     try {
       const result = await db.transaction(async (tx) => {
-        let task: { kind: "variant" | "youtube"; id: string; version: number; scheduledAt: Date; channel?:string } | null = null;
+        let task: { kind: "variant" | "youtube" | "youtube-prepare"; id: string; version: number; scheduledAt: Date; channel?:string } | null = null;
         let previousTask: { kind: "variant" | "youtube"; id: string; version: number } | null = null;
         if (params.kind === "youtube") {
           const [item] = await tx.select().from(youtubeItems).where(and(eq(youtubeItems.id, params.id), eq(youtubeItems.workspaceId, auth.workspaceId))).for("update");
           if (!item) throw new CalendarConflict("آیتم پیدا نشد.");
-          if (item.settings.collectionId && !item.settings.videoMediaId && !["stop","reject"].includes(input.action)) throw new CalendarConflict("ابتدا فایل را از کارت مجموعه دریافت مجدد کنید یا لینک آن را در اکسل اصلاح کنید.");
+          if (item.settings.collectionId && !item.videoId && !item.settings.remoteVideo && !item.settings.videoDetails && !item.settings.videoMediaId && !["stop","reject","edit"].includes(input.action)) throw new CalendarConflict("ابتدا بررسی لینک را از کارت مجموعه ادامه دهید یا لینک ویدئو را اصلاح کنید.");
           if (item.queueVersion !== input.version || input.updatedAt && input.updatedAt !== item.updatedAt.toISOString()) throw new CalendarConflict("آیتم تغییر کرده است؛ اطلاعات تازه را دریافت کنید.");
           previousTask = { kind: "youtube", id: item.id, version: item.queueVersion };
           const status = calendarStatus({ rawStatus: item.status, scheduledAt: item.scheduledAt, approved: Boolean(item.approvedAt) });
@@ -112,24 +112,32 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
             if (input.settings?.connection) await validateConnectionPolicy(auth.workspaceId, input.settings.connection);
             settings = { ...settings, ...input.settings };
             if (input.settings?.coverUrl && input.settings.coverUrl !== item.settings.coverUrl) {
-              const cover = await fetchYoutubeMedia(input.settings.coverUrl, YOUTUBE_COVER_MAX_BYTES, "image"); settings.coverMediaId = (await storeYoutubeMedia(item.workspaceId, cover.bytes)).mediaId;
+              if(settings.collectionId){delete settings.coverMediaId;delete settings.coverLinkChecked;settings.sourceCoverUrl=input.settings.coverUrl;}
+              else {const cover = await fetchYoutubeMedia(input.settings.coverUrl, YOUTUBE_COVER_MAX_BYTES, "image"); settings.coverMediaId = (await storeYoutubeMedia(item.workspaceId, cover.bytes)).mediaId;}
             }
-            if (input.settings?.coverUrl === null) { delete settings.coverMediaId; delete settings.coverUrl; }
+            if (input.settings?.coverUrl === null) { delete settings.coverMediaId; delete settings.coverUrl; delete settings.sourceCoverUrl; delete settings.coverLinkChecked; }
+            if(settings.collectionId && input.settings?.videoUrl !== undefined && input.settings.videoUrl !== item.settings.videoUrl){
+              settings.sourceVideoUrl=input.settings.videoUrl;delete settings.videoMediaId;delete settings.remoteVideo;delete settings.videoDetails;
+              collectionVideoUrl(settings);
+            }
             if (input.accountId && input.accountId !== item.accountId) {
               const [account] = await tx.select().from(socialAccounts).where(and(eq(socialAccounts.id, input.accountId), eq(socialAccounts.workspaceId, auth.workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true)));
               if (!account) throw new CalendarConflict("اتصال کانال مقصد معتبر نیست."); accountId = account.id; channelName = account.displayName ?? account.externalAccountId;
             }
           }
-          if (input.action === "approve") await youtubeMediaFile(item.workspaceId, String(settings.videoMediaId), "video");
+          if (input.action === "approve") {if(settings.collectionId)collectionVideoUrl(settings);else await youtubeMediaFile(item.workspaceId, String(settings.videoMediaId), "video");}
           const date = input.action === "schedule" ? new Date(input.scheduledAt!) : input.action === "unschedule" ? null : input.action === "retry" ? new Date(Math.max(Date.now(), item.scheduledAt?.getTime() ?? 0)) : item.scheduledAt;
           const approved = input.action === "approve" ? true : input.action === "edit" || input.action === "reject" ? false : Boolean(item.approvedAt);
-          const nextStatus = input.action === "stop" ? "cancelled" : input.action === "reject" ? "rejected" : !approved ? "waiting_approval" : date ? "queued" : "approved";
+          const prepare=Boolean(settings.collectionId) && input.action==="edit" && (!settings.remoteVideo || input.settings?.videoType!==undefined && input.settings.videoType!==item.settings.videoType || settings.coverUrl && !settings.coverMediaId && !settings.coverLinkChecked);
+          if(prepare){settings.mediaTransfer="remote";settings.preparationStage="queued";settings.preparationFailureStage=null;}
+          const nextStatus = prepare ? "waiting_video" : input.action === "stop" ? "cancelled" : input.action === "reject" ? "rejected" : !approved ? "waiting_approval" : date ? "queued" : "approved";
           const version = item.queueVersion + 1;
           await tx.update(youtubeItems).set({ settings, accountId, channelName, title: input.title ?? item.title, description: input.body ?? item.description,
             queueVersion: version, status: nextStatus, scheduledAt: date, updatedAt: new Date(), error: null,
             approvedAt: approved ? item.approvedAt ?? new Date() : null, approvedBy: approved ? item.approvedBy ?? auth.userId : null,
             logs: [...item.logs, { channel: channelName, time: new Date().toISOString(), result: `calendar_${input.action}` }] }).where(eq(youtubeItems.id, item.id));
-          if (nextStatus === "queued" && date) task = { kind: "youtube", id: item.id, version, scheduledAt: date };
+          if(prepare)task={kind:"youtube-prepare",id:item.id,version,scheduledAt:new Date()};
+          else if (nextStatus === "queued" && date) task = { kind: "youtube", id: item.id, version, scheduledAt: date };
         } else {
           const [owned] = await tx.select({ variant: contentVariants }).from(contentVariants).innerJoin(contentItems, eq(contentVariants.contentItemId, contentItems.id))
             .where(and(eq(contentVariants.id, params.id), eq(contentItems.workspaceId, auth.workspaceId)));
@@ -209,18 +217,18 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
         const prefix = previous.kind === "youtube" ? "youtube" : "publication";
         for (const id of [`${prefix}-${previous.id}`, `${prefix}-${previous.id}-v${previous.version}`]) {
           try {
-            const old = await publicationQueue.getJob(id);
+            const old = await queue.getJob(id);
             if (old && (old.data.queueVersion ?? 0) === previous.version && await old.getState() !== "active") await old.remove();
           } catch { /* The durable queue version also invalidates an old job when Redis is temporarily unavailable. */ }
         }
       }
       if (result.task) {
-        const task = result.task; const youtube = task.kind === "youtube";
-        try { await publicationQueue.add(youtube ? "youtube-publish" : "publish-content", youtube ? { youtubeItemId: task.id, queueVersion: task.version } : { publicationId: task.id, queueVersion: task.version },
-          { jobId: `${youtube ? "youtube" : "publication"}-${task.id}-v${task.version}`, delay: Math.max(0, task.scheduledAt.getTime() - Date.now()), attempts: youtube ? 1 : task.channel==="instagram" ? 10 : 3,
+        const task = result.task; const prepare=task.kind==="youtube-prepare"; const youtube = task.kind === "youtube" || prepare;
+        try { await queue.add(prepare ? "youtube-prepare" : youtube ? "youtube-publish" : "publish-content", youtube ? { youtubeItemId: task.id, queueVersion: task.version } : { publicationId: task.id, queueVersion: task.version },
+          { jobId: `${prepare ? "youtube-prepare" : youtube ? "youtube" : "publication"}-${task.id}-v${task.version}`, delay: Math.max(0, task.scheduledAt.getTime() - Date.now()), attempts: youtube ? 1 : task.channel==="instagram" ? 10 : 3,
             backoff: { type: task.channel==="instagram" ? "fixed" : "exponential", delay: task.channel==="instagram" ? 60000 : 5000 }, removeOnComplete: 1000, removeOnFail: 1000 }); }
         catch {
-          if (youtube) await db.update(youtubeItems).set({ status: "failed", error: "صف انتشار در دسترس نیست.", updatedAt: new Date() }).where(and(eq(youtubeItems.id, task.id), eq(youtubeItems.queueVersion, task.version), eq(youtubeItems.status, "queued")));
+          if (youtube) await db.update(youtubeItems).set({ status: "failed", error: "صف انتشار در دسترس نیست.", updatedAt: new Date() }).where(and(eq(youtubeItems.id, task.id), eq(youtubeItems.queueVersion, task.version), eq(youtubeItems.status, prepare ? "waiting_video" : "queued")));
           else await db.update(publications).set({ status: "failed", error: { message: "صف انتشار در دسترس نیست." }, updatedAt: new Date() }).where(and(eq(publications.id, task.id), eq(publications.queueVersion, task.version), eq(publications.status, "queued")));
           return { status: 503, body: { error: "تغییر ذخیره شد، اما صف انتشار در دسترس نیست؛ تلاش مجدد کنید." } };
         }
