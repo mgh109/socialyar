@@ -1,3 +1,4 @@
+import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { createHash } from "node:crypto";
 import { and, eq, sql, inArray } from "drizzle-orm";
 import { Queue } from "bullmq";
@@ -43,7 +44,7 @@ async function enqueueClaimedAutoPublication(runId: string) {
       }
       const coverUrl = publishStep.config.coverUrl || generated?.imageUrl;
       if (typeof coverUrl === "string" && coverUrl) {
-        const cover = await fetchYoutubeMedia(coverUrl, 2_000_000, "image");
+        const cover = await fetchYoutubeMedia(coverUrl, YOUTUBE_COVER_MAX_BYTES, "image");
         coverMediaId = (await storeYoutubeMedia(row.workspaceId, cover.bytes)).mediaId;
       }
       const itemKey = videoMediaId ?? createHash("sha256").update(`missing:${runId}`).digest("hex");

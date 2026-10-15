@@ -1,4 +1,5 @@
 "use client";
+import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { FieldHelp } from "./field-help";
 import { persianError, diagnosticErrorCode } from "../lib/persian";
 import { useEffect, useState, useRef } from "react";
@@ -80,7 +81,7 @@ export function YoutubePanel({ workflowId, stepKey, accountId, config, update, i
   const upload = async (file: File | undefined, cover: boolean) => {
     if (!file) return; setBusy(true); setMessage("");
     try {
-      if (file.size > (cover ? 2_000_000 : 250_000_000)) throw new Error(cover ? "کاور باید کمتر از ۲ مگابایت باشد" : "ویدئو باید کمتر از ۲۵۰ مگابایت باشد");
+      if (file.size > (cover ? YOUTUBE_COVER_MAX_BYTES : 250_000_000)) throw new Error(cover ? "حجم کاور نباید بیشتر از ۵۰ مگابایت باشد" : "ویدئو باید کمتر از ۲۵۰ مگابایت باشد");
       const response = await apiFetch("/youtube/media", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file });
       const data = await response.json(); if (!response.ok || data.kind !== (cover ? "image" : "video")) throw new Error(data.error ?? "نوع فایل معتبر نیست");
       if (cover) setCoverMediaId(data.mediaId); else setVideoMediaId(data.mediaId); setMessage("فایل دریافت شد؛ برای ارسال به صف تأیید دکمه را بزنید.");

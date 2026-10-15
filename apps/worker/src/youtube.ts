@@ -1,3 +1,4 @@
+import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { and, eq } from "drizzle-orm";
 import { setTimeout as pause } from "node:timers/promises";
 import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts, youtubeMediaFile, youtubeFileSource } from "@socialyar/db";
@@ -35,7 +36,7 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0)
       if (typeof mediaId === "string") return readYoutubeMedia(item.workspaceId, mediaId, kind);
       const url = item.settings[kind === "video" ? "videoUrl" : "coverUrl"];
       if (typeof url !== "string") throw new Error("Video is missing");
-      return fetchYoutubeMedia(url, kind === "video" ? 250_000_000 : 2_000_000, kind);
+      return fetchYoutubeMedia(url, kind === "video" ? 250_000_000 : YOUTUBE_COVER_MAX_BYTES, kind);
     };
     if (!item.videoId) {
       const stored = typeof item.settings.videoMediaId === "string" ? await youtubeMediaFile(item.workspaceId,item.settings.videoMediaId,"video") : null;

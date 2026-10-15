@@ -1,3 +1,4 @@
+import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -111,7 +112,7 @@ export async function mutateCalendarItem(db: ReturnType<typeof getDb>, auth: imp
             if (input.settings?.connection) await validateConnectionPolicy(auth.workspaceId, input.settings.connection);
             settings = { ...settings, ...input.settings };
             if (input.settings?.coverUrl && input.settings.coverUrl !== item.settings.coverUrl) {
-              const cover = await fetchYoutubeMedia(input.settings.coverUrl, 2_000_000, "image"); settings.coverMediaId = (await storeYoutubeMedia(item.workspaceId, cover.bytes)).mediaId;
+              const cover = await fetchYoutubeMedia(input.settings.coverUrl, YOUTUBE_COVER_MAX_BYTES, "image"); settings.coverMediaId = (await storeYoutubeMedia(item.workspaceId, cover.bytes)).mediaId;
             }
             if (input.settings?.coverUrl === null) { delete settings.coverMediaId; delete settings.coverUrl; }
             if (input.accountId && input.accountId !== item.accountId) {

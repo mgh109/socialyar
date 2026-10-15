@@ -1,3 +1,4 @@
+import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { createReadStream } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { and, desc, eq, gt } from "drizzle-orm";
@@ -183,7 +184,7 @@ export async function youtubeRoutes(app: FastifyInstance) {
         const { mediaId: videoMediaId } = await storeYoutubeMedia(request.auth.workspaceId, video.bytes);
         let coverMediaId: string | undefined;
         if (typeof current.settings.sourceCoverUrl === "string" && current.settings.sourceCoverUrl) {
-          const cover = await fetchYoutubeMedia(current.settings.sourceCoverUrl, 2_000_000, "image");
+          const cover = await fetchYoutubeMedia(current.settings.sourceCoverUrl, YOUTUBE_COVER_MAX_BYTES, "image");
           coverMediaId = (await storeYoutubeMedia(request.auth.workspaceId, cover.bytes)).mediaId;
         }
         const [duplicate] = await db.select().from(youtubeItems).where(and(eq(youtubeItems.workflowId, current.workflowId), eq(youtubeItems.stepKey, current.stepKey), eq(youtubeItems.itemKey, videoMediaId)));

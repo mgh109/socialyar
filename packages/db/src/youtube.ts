@@ -1,3 +1,4 @@
+import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "./client";
 import { socialAccounts } from "./schema";
@@ -21,7 +22,7 @@ export function youtubeMediaType(bytes: Buffer): "video/mp4" | "video/webm" | "i
 }
 export async function storeYoutubeMedia(workspaceId: string, bytes: Buffer) {
   const type = youtubeMediaType(bytes);
-  if (bytes.length > (type.startsWith("image/") ? 2_000_000 : 250_000_000)) throw new Error("Media exceeds upload limit");
+  if (bytes.length > (type.startsWith("image/") ? YOUTUBE_COVER_MAX_BYTES : 250_000_000)) throw new Error("Media exceeds upload limit");
   const mediaId = createHash("sha256").update(bytes).digest("hex");
   const directory = resolve(mediaRoot(), workspaceId);
   await mkdir(directory, { recursive: true });

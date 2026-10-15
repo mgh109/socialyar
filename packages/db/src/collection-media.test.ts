@@ -47,3 +47,22 @@ test("a 350.58 MB video is streamed to disk, identified without a full read, and
     assert.deepEqual(await readdir(join(directory,"workspace")),[stored.mediaId]);
   }finally{if(previous===undefined)delete process.env.YOUTUBE_MEDIA_DIR;else process.env.YOUTUBE_MEDIA_DIR=previous;await rm(directory,{recursive:true,force:true});}
 });
+
+test("covers above the old decimal 2 MB cap and up to 50 MB are stored; larger covers remain rejected",async()=>{
+  const {mkdtemp,rm}=await import("node:fs/promises");
+  const {tmpdir}=await import("node:os");const {join}=await import("node:path");
+  const {storeYoutubeMedia,readYoutubeMedia}=await import("./youtube");
+  const {YOUTUBE_COVER_MAX_BYTES}=await import("@socialyar/shared");
+  const directory=await mkdtemp(join(tmpdir(),"hoor-cover-limit-"));
+  const previous=process.env.YOUTUBE_MEDIA_DIR;process.env.YOUTUBE_MEDIA_DIR=directory;
+  const png=(size:number)=>{const bytes=Buffer.alloc(size);Buffer.from([137,80,78,71,13,10,26,10]).copy(bytes);return bytes;};
+  try {
+    // A UI reporting MiB can display this as 1.91 MB, despite exceeding 2,000,000 bytes.
+    const nearOldLimit=png(2_002_780);const small=await storeYoutubeMedia("workspace",nearOldLimit);
+    assert.deepEqual((await readYoutubeMedia("workspace",small.mediaId,"image")).bytes,nearOldLimit);
+    assert.equal(YOUTUBE_COVER_MAX_BYTES,50_000_000);
+    const atLimit=await storeYoutubeMedia("workspace",png(YOUTUBE_COVER_MAX_BYTES));
+    assert.equal((await readYoutubeMedia("workspace",atLimit.mediaId,"image")).bytes.length,YOUTUBE_COVER_MAX_BYTES);
+    await assert.rejects(storeYoutubeMedia("workspace",png(YOUTUBE_COVER_MAX_BYTES+1)),/upload limit/);
+  }finally{if(previous===undefined)delete process.env.YOUTUBE_MEDIA_DIR;else process.env.YOUTUBE_MEDIA_DIR=previous;await rm(directory,{recursive:true,force:true});}
+});

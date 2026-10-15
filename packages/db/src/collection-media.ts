@@ -1,7 +1,7 @@
 import { Agent, request as undiciRequest, type Dispatcher } from "undici";
 import { lookup } from "node:dns/promises";
 import { connectionPolicy, createProxyDispatcher, loadPublishingProxy, isConnectionError } from "./publishing-connection";
-import { dropboxDownloadUrl } from "@socialyar/shared";
+import { dropboxDownloadUrl, YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { youtubeMediaType, storeYoutubeVideoStream, youtubeVideoLimit } from "./youtube";
 export async function publicMediaAddress(raw: string) {
   const url = new URL(raw);
@@ -51,7 +51,7 @@ async function downloadCollectionMedia<T>(workspaceId:string,raw:string,kind:"vi
 }
 
 export async function fetchCollectionMedia(workspaceId: string, raw: string, kind: "video" | "image", policyInput?: unknown, verifyOnly = false) {
-  const limit=kind === "video" ? 250_000_000 : 2_000_000;
+  const limit=kind === "video" ? 250_000_000 : YOUTUBE_COVER_MAX_BYTES;
   return downloadCollectionMedia(workspaceId,raw,kind,policyInput,verifyOnly,limit,async(body)=>{
     let size=0;const chunks:Uint8Array[]=[];
     for await(const part of body){
