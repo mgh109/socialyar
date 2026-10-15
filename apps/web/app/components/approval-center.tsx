@@ -1,314 +1,61 @@
 "use client";
-import { WorkflowApprovalCard, type WorkflowApproval } from "./workflow-approval-card";
-import { YoutubeApprovalQueue } from "./youtube-panel";
-import { apiFetch, getWorkspaceId } from "../lib/session";
-import { statusLabel, persianError } from "../lib/persian";
-import { faDigits } from "../lib/persian-calendar";
-
-import { BrandLogo } from "./brand-logo";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-
-type ApprovalRow = {
-  approval: {
-    id: string;
-    status: "pending" | "approved" | "rejected" | "changes_requested";
-    reason: string | null;
-    agentRecommendation: string | null;
-    createdAt: string;
+import {useEffect,useMemo,useRef,useState} from "react";
+import {WorkflowApprovalCard,type WorkflowApproval} from "./workflow-approval-card";
+import {YoutubeReview} from "./youtube-panel";
+import {ContentApprovalReview} from "./content-approval-review";
+import {BrandLogo} from "./brand-logo";
+import {useApprovalInbox} from "../hooks/use-approval-inbox";
+import {approvalInbox,approvalChannels,filterApprovalInbox,type ApprovalRow,type InboxState} from "../lib/approval-inbox";
+import {apiFetch,getWorkspaceId} from "../lib/session";
+import {persianError} from "../lib/persian";
+import {faDigits} from "../lib/persian-calendar";
+const states=[{id:"pending",label:"منتظر تأیید"},{id:"attention",label:"نیازمند رسیدگی"},{id:"running",label:"در حال اجرا"},{id:"all",label:"همه"}] as const;
+export function ApprovalCenter(){
+  const inbox=useApprovalInbox(getWorkspaceId());
+  const [selected,setSelected]=useState<string|null>(null),[state,setState]=useState<InboxState|"all">("pending"),[channel,setChannel]=useState(""),[search,setSearch]=useState("");
+  const [busy,setBusy]=useState(false),[notice,setNotice]=useState<{text:string;error?:boolean}|null>(null);
+  const entries=useMemo(()=>approvalInbox(inbox.workflows,inbox.youtube,inbox.content),[inbox.workflows,inbox.youtube,inbox.content]);
+  const filtered=useMemo(()=>filterApprovalInbox(entries,state,channel,search),[entries,state,channel,search]);
+  const active=filtered.find(item=>item.key===selected)??filtered[0];
+  const detail=useRef<HTMLElement>(null);
+  useEffect(()=>{detail.current?.scrollTo({top:0});if(selected)detail.current?.focus({preventScroll:true});},[active?.key,selected]);
+  const unavailable=active && Boolean(inbox.errors[active.kind]);
+  const post=async(path:string,payload:unknown)=>{const response=await apiFetch(path,{method:"POST",body:JSON.stringify(payload)});const data=await response.json();if(!response.ok)throw new Error(data.error??"ثبت تصمیم ناموفق بود.");return data;};
+  const perform=async(action:()=>Promise<unknown>,text:string)=>{
+    setBusy(true);setNotice(null);
+    try{await action();await inbox.refresh(true);setNotice({text});return true;}
+    catch(error){setNotice({text:persianError(error,"ثبت تصمیم ناموفق بود؛ دوباره تلاش کنید."),error:true});await inbox.refresh(true);return false;}
+    finally{setBusy(false);}
   };
-  variant: {
-    id: string;
-    channel: string;
-    title: string | null;
-    body: string;
-    status: string;
+  const resolveWorkflow=async(item:WorkflowApproval,action:"approve"|"reject",edit?:{title?:string;text?:string;reply?:string})=>{
+    await perform(()=>post(`/runs/${item.runId}/approval`,{action,stepKey:item.stepKey,edit}),action==="approve"?"تأیید شد؛ ادامهٔ جریان در حال انجام است.":"محتوا رد شد.");
   };
-  content: {
-    id: string;
-    runId: string | null;
-    title: string | null;
+  const resolveContent=async(row:ApprovalRow,action:"approve"|"reject"|"changes_requested")=>{
+    await perform(()=>post(`/approvals/${row.approval.id}/resolve`,{action}),action==="approve"?"محتوا تأیید شد.":action==="reject"?"محتوا رد شد.":"محتوا برای اصلاح برگشت داده شد.");
   };
-};
-
-
-const channelLabels: Record<string, string> = {
-  instagram: "اینستاگرام",
-  telegram: "تلگرام",
-  eitaa: "ایتا",
-  website: "وب‌سایت",
-  x: "ایکس",
-  linkedin: "لینکدین",
-};
-
-
-export function ApprovalCenter() {
-  const workspaceId = getWorkspaceId();
-  const [rows, setRows] = useState<ApprovalRow[]>([]);
-  const [workflowApprovals, setWorkflowApprovals] = useState<WorkflowApproval[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [message, setMessage] = useState("در حال دریافت صف تأیید...");
-  const [busy, setBusy] = useState(false);
-  const [workflowLoaded, setWorkflowLoaded] = useState(false);
-  const [workflowError, setWorkflowError] = useState("");
-  const [workflowUpdatedAt, setWorkflowUpdatedAt] = useState<number | null>(null);
-  const [workflowRefresh, setWorkflowRefresh] = useState(0);
-
-  const load = async () => {
-    if (!workspaceId) {
-      setMessage("ابتدا وارد حساب کاربری شوید");
-      return;
-    }
-
-    const response = await apiFetch(
-      `/approvals?workspaceId=${workspaceId}`,
-    );
-
-    if (!response.ok) {
-      throw new Error(`Approvals failed (${response.status})`);
-    }
-
-    const data = (await response.json()) as ApprovalRow[];
-    setRows(data);
-    setActiveId((current) => current ?? data[0]?.approval.id ?? null);
-    setMessage(data.length ? "صف تأیید آماده است" : "موردی برای تأیید وجود ندارد");
-  };
-  const loadWorkflowApprovals = async () => {
-    const response = await apiFetch("/workflow-approvals");
-    if (!response.ok) throw new Error("دریافت تأییدهای جریان ناموفق بود");
-    setWorkflowApprovals(await response.json());
-    setWorkflowLoaded(true); setWorkflowError(""); setWorkflowUpdatedAt(Date.now());
-  };
-  const resolveWorkflow = async (item: WorkflowApproval, action: "approve" | "reject", edit?: { title?: string; text?: string; reply?: string }) => {
-    if (action === "reject" && !window.confirm("این شاخه رد شود؟ خبر از این مسیر منتشر نمی‌شود.")) return;
-    setBusy(true); setMessage("در حال ثبت تصمیم...");
-    try {
-      const response = await apiFetch(`/runs/${item.runId}/approval`, { method: "POST",
-        body: JSON.stringify({ action, stepKey: item.stepKey, edit }) });
-      if (!response.ok) throw new Error(`ثبت تصمیم ناموفق بود (${response.status})`);
-      await loadWorkflowApprovals(); setMessage(action === "approve" ? "شاخه تأیید شد و ادامه می‌یابد." : "شاخه رد شد.");
-    } catch (error) { setMessage(persianError(error, "ثبت تصمیم ناموفق بود")); }
-    finally { setBusy(false); }
-  };
-
-  useEffect(() => {
-    void load().catch((error) =>
-      setMessage(persianError(error, "خطا در دریافت صف تأیید")),
-    );
-  }, [workspaceId]);
-  useEffect(() => {
-    let active = true;
-    let fetching = false;
-    const controller = new AbortController();
-    const refresh = async () => {
-      if (fetching || document.visibilityState === "hidden") return;
-      fetching = true;
-      try {
-        const response = await apiFetch("/workflow-approvals", { signal: controller.signal });
-        if (!response.ok) throw new Error("دریافت صف تأیید ناموفق بود؛ پیش از تصمیم، اطلاعات را به‌روز کنید.");
-        const items = await response.json() as WorkflowApproval[];
-        if (active) { setWorkflowApprovals(items); setWorkflowLoaded(true); setWorkflowError(""); setWorkflowUpdatedAt(Date.now()); }
-      } catch (error) { if (active) setWorkflowError(persianError(error, "صف تأیید به‌روز نیست؛ دوباره تلاش کنید.")); }
-      finally { fetching = false; }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 15_000);
-    const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => { active = false; controller.abort(); window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility); };
-  }, [workflowRefresh]);
-
-  const active = useMemo(
-    () => rows.find((row) => row.approval.id === activeId) ?? null,
-    [activeId, rows],
-  );
-
-  const resolve = async (
-    action: "approve" | "reject" | "changes_requested",
-  ) => {
-    if (!active) return;
-    setBusy(true);
-    setMessage("در حال ثبت تصمیم...");
-
-    try {
-      const response = await apiFetch(
-        `/approvals/${active.approval.id}/resolve`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action,
-            note:
-              action === "approve"
-                ? "تأیید شد"
-                : action === "reject"
-                  ? "رد شد"
-                  : "نیاز به اصلاح دارد",
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error(`Resolve failed (${response.status})`);
-      }
-
-      await load();
-      setMessage(
-        action === "approve"
-          ? "✓ نسخه تأیید شد"
-          : action === "reject"
-            ? "نسخه رد شد"
-            : "برای اصلاح برگشت خورد",
-      );
-    } catch (error) {
-      setMessage(persianError(error, "ثبت تصمیم ناموفق بود"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const pendingCount = rows.filter(
-    (row) => row.approval.status === "pending",
-  ).length;
-
-  return (
-    <main className="workflow-page">
-      <header className="app-header">
-        <div className="brand-lockup">
-          <BrandLogo />
-
-          <span>مرکز تأیید</span>
-        </div>
-        <div className="header-actions">
-          <span className="save-status">{message}</span>
-          <Link className="ghost-link" href="/calendar">
-            تقویم انتشار
-          </Link>
-        </div>
-      </header>
-
-      <section className="workflow-approval-section"><div><h1>تأیید انسانی جریان‌ها</h1><p>خروجی‌های این کارت‌ها تا تصمیم شما در همین شاخه متوقف می‌مانند.</p></div>
-        {workflowError ? <p role="alert">{workflowError} <button className="ghost-button" onClick={() => setWorkflowRefresh((value) => value + 1)}>تلاش دوباره</button></p> : null}
-        {workflowUpdatedAt ? <p className="save-status">آخرین دریافت: {new Date(workflowUpdatedAt).toLocaleTimeString("fa-IR", { timeZone: "Asia/Tehran" })} · به وقت تهران</p> : null}
-        {workflowApprovals.length ? <div className="workflow-approval-grid">{workflowApprovals.map((item) =>
-          <WorkflowApprovalCard key={`${item.runId}-${item.stepKey}`} item={item} busy={busy || Boolean(workflowError)} resolve={resolveWorkflow} />)}</div> :
-          <p className="workflow-approval-empty">{workflowLoaded ? "در حال حاضر خروجی‌ای منتظر تأیید انسانی نیست." : "در حال دریافت صف تأیید…"}</p>}
-      </section>
-
-      <YoutubeApprovalQueue />
-      <section className="approval-shell">
-        <aside className="approval-queue">
-          <div className="approval-heading">
-            <span className="micro-label">مرحله ۹ · مرکز تأیید</span>
-            <h1>تأیید خروجی‌هایی که واقعاً به تصمیم تو نیاز دارند</h1>
-            <p>{faDigits(pendingCount)} مورد در انتظار تصمیم</p>
-          </div>
-
-          <div className="approval-list">
-            {rows.length === 0 ? (
-              <div className="empty-state">صف تأیید خالی است.</div>
-            ) : (
-              rows.map((row) => (
-                <button
-                  key={row.approval.id}
-                  className={
-                    row.approval.id === activeId
-                      ? "approval-list-item active"
-                      : "approval-list-item"
-                  }
-                  onClick={() => setActiveId(row.approval.id)}
-                >
-                  <div>
-                    <strong>
-                      {row.variant.title ?? row.content.title ?? "بدون عنوان"}
-                    </strong>
-                    <span>{channelLabels[row.variant.channel] ?? row.variant.channel}</span>
-                  </div>
-                  <small>{statusLabel(row.approval.status)}</small>
-                </button>
-              ))
-            )}
-          </div>
+  const saveContent=async(row:ApprovalRow,title:string,body:string)=>perform(()=>post(`/calendar/items/variant/${row.variant.id}`,{action:"edit",version:row.variant.calendarVersion,updatedAt:row.variant.updatedAt,title,body,timezone:"Asia/Tehran"}),"تغییرات ذخیره شد؛ محتوا را بررسی و تأیید کنید.");
+  const channels=[...new Set(entries.map(item=>item.channel))];
+  return <main className="workflow-page review-page" dir="rtl">
+    <header className="app-header review-page-header"><div className="brand-lockup"><BrandLogo/><h1>تأیید محتوا <span>{faDigits(entries.filter(item=>item.state==="pending").length)}</span></h1></div><Link className="ghost-link" href="/calendar">تقویم انتشار ←</Link></header>
+    <section className="review-workspace">
+      <div className="review-toolbar"><nav className="review-tabs" aria-label="وضعیت محتوا">{states.map(tab=><button type="button" key={tab.id} disabled={busy} aria-pressed={state===tab.id} onClick={()=>{setState(tab.id);setSelected(null);}}>{tab.label}<span>{faDigits(tab.id==="all"?entries.length:entries.filter(item=>item.state===tab.id).length)}</span></button>)}</nav>
+        <button type="button" className="ghost-button review-refresh" disabled={busy||inbox.refreshing} onClick={()=>void inbox.refresh(true)} title={inbox.updatedAt?`آخرین دریافت ${new Date(inbox.updatedAt).toLocaleTimeString("fa-IR",{timeZone:"Asia/Tehran"})}`:undefined}>{inbox.refreshing?"در حال دریافت…":"↻ به‌روزرسانی"}</button>
+      </div>
+      {notice ? <div className={`review-notice ${notice.error?"error":"success"}`} role={notice.error?"alert":"status"}>{notice.text}<button type="button" aria-label="بستن پیام" onClick={()=>setNotice(null)}>×</button></div> : null}
+      {Object.keys(inbox.errors).length ? <p className="review-notice error" role="alert">{Object.values(inbox.errors).join("، ")} به‌روز نیست؛ پیش از تصمیم، «به‌روزرسانی» را بزنید.</p> : null}
+      <div className={`review-layout${selected?" has-selection":""}`}>
+        <aside className="review-queue" aria-label="فهرست محتواها"><div className="review-search"><label><span className="sr-only">جست‌وجوی محتوا</span><input type="search" value={search} disabled={busy} placeholder="جست‌وجو در محتوا…" onChange={event=>{setSearch(event.target.value);setSelected(null);}}/></label><label><span className="sr-only">فیلتر شبکه</span><select value={channel} disabled={busy} onChange={event=>{setChannel(event.target.value);setSelected(null);}}><option value="">همهٔ شبکه‌ها</option>{channels.map(value=><option key={value} value={value}>{approvalChannels[value]??value}</option>)}</select></label></div>
+          <div className="review-queue-caption"><span>{faDigits(filtered.length)} محتوا</span><span>قدیمی‌ترها در ابتدا</span></div>
+          <div className="review-list">{inbox.loading?<div className="review-empty" role="status">در حال دریافت محتواها…</div>:filtered.length?filtered.map(item=><button type="button" key={item.key} className={`review-list-item${item.key===active?.key?" active":""}`} disabled={busy} aria-current={item.key===active?.key?"true":undefined} onClick={()=>setSelected(item.key)}>
+            <span className={`review-channel-icon ${item.channel}`} aria-hidden="true">{item.channel==="youtube"?"▶":item.channel==="workflow"?"◇":"▤"}</span><span className="review-list-copy"><strong>{item.title}</strong><span>{item.excerpt||"بدون توضیحات"}</span><small>{approvalChannels[item.channel]??item.channel} · {item.context}</small></span>{item.state==="attention"?<span className="review-attention-dot" aria-label="نیازمند رسیدگی"/>:null}
+          </button>):<div className="review-empty"><span aria-hidden="true">✓</span><strong>{search||channel?"محتوایی پیدا نشد":Object.keys(inbox.errors).length?"دریافت فهرست کامل نشد":state==="pending"?"محتوایی منتظر تأیید نیست":"این فهرست خالی است"}</strong>{search||channel?<button type="button" className="ghost-button" onClick={()=>{setSearch("");setChannel("");}}>پاک‌کردن فیلترها</button>:<p>محتواهای تازه اینجا نمایش داده می‌شوند.</p>}</div>}</div>
         </aside>
-
-        <section className="approval-detail">
-          {active ? (
-            <>
-              <div className="approval-meta">
-                <div>
-                  <span className="micro-label">کانال</span>
-                  <strong>
-                    {channelLabels[active.variant.channel] ?? active.variant.channel}
-                  </strong>
-                </div>
-                <div>
-                  <span className="micro-label">ریسک</span>
-                  <strong>نیازمند بررسی انسانی</strong>
-                </div>
-                <div>
-                  <span className="micro-label">منشأ محتوا</span>
-                  <strong>
-                    {active.content.runId
-                      ? `شناسه اجرا: ${active.content.runId.slice(0, 8)}`
-                      : "بدون اجرای مرتبط"}
-                  </strong>
-                </div>
-              </div>
-
-              <article className="approval-preview">
-                <h2>{active.variant.title ?? "بدون عنوان"}</h2>
-                <p>{active.variant.body}</p>
-              </article>
-
-              <div className="approval-agent-card">
-                <span className="micro-label">پیشنهاد دستیار</span>
-                <p>
-                  {active.approval.agentRecommendation ??
-                    "این نسخه را قبل از انتشار یک‌بار بررسی کن."}
-                </p>
-                <small>
-                  {active.approval.reason ?? "نیاز به بررسی انسانی"}
-                </small>
-              </div>
-
-              <div className="approval-actions">
-                <button
-                  className="danger-button"
-                  onClick={() => resolve("reject")}
-                  disabled={busy || active.approval.status !== "pending"}
-                >
-                  رد نسخه
-                </button>
-                <button
-                  className="ghost-button"
-                  onClick={() => resolve("changes_requested")}
-                  disabled={busy || active.approval.status !== "pending"}
-                >
-                  ✦ نیاز به اصلاح
-                </button>
-                <button
-                  className="success-button"
-                  onClick={() => resolve("approve")}
-                  disabled={busy || active.approval.status !== "pending"}
-                >
-                  ✓ تأیید این نسخه
-                </button>
-              </div>
-
-              {active.approval.status === "approved" ? (
-                <div className="approval-next-step">
-                  <strong>این نسخه تأیید شده و آماده زمان‌بندی است.</strong>
-                  <Link className="primary-link" href="/calendar">
-                    رفتن به تقویم انتشار
-                  </Link>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <div className="empty-state">یک مورد را از صف انتخاب کن.</div>
-          )}
+        <section ref={detail} tabIndex={-1} className="review-detail" aria-label="بررسی محتوای انتخاب‌شده"><button type="button" className="ghost-button review-back" disabled={busy} onClick={()=>setSelected(null)}>→ بازگشت به فهرست</button>
+          {active?<><header className="review-detail-header"><div><span>{approvalChannels[active.channel]??active.channel}</span><strong>{active.context}</strong></div><span className={`review-state ${active.state}`}>{states.find(tab=>tab.id===active.state)?.label}</span></header>
+            {active.kind==="workflow"?<WorkflowApprovalCard key={active.key} item={active.data} busy={busy||Boolean(unavailable)} resolve={resolveWorkflow}/>:active.kind==="youtube"?<YoutubeReview key={active.key} item={active.data} refresh={()=>void inbox.refresh(true)} reviewMode disabled={busy||Boolean(unavailable)} onBusyChange={setBusy} onActionResult={action=>setNotice({text:action==="reject"?"محتوا رد شد.":action==="retry"?"ادامهٔ کار درخواست شد.":active.data.scheduledAt?"انتشار در زمان تعیین‌شده تأیید شد.":"تأیید شد؛ ویدئو در صف انتشار است."})}/>:<ContentApprovalReview key={active.key} row={active.data} busy={busy||Boolean(unavailable)} resolve={resolveContent} save={saveContent}/>}</>:<div className="review-empty review-all-clear"><span aria-hidden="true">✓</span><h2>{inbox.loading?"در حال دریافت محتوا…":Object.keys(inbox.errors).length?"صف نیازمند به‌روزرسانی است":"موردی برای بررسی نیست"}</h2><p>انتشارهای زمان‌بندی‌شده را در تقویم ببینید.</p><Link className="ghost-link" href="/calendar">رفتن به تقویم</Link></div>}
         </section>
-      </section>
-    </main>
-  );
+      </div>
+    </section>
+  </main>;
 }

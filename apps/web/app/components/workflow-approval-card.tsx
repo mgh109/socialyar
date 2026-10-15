@@ -1,43 +1,20 @@
 "use client";
-
+import type {WorkflowApproval} from "../lib/approval-types";
 import Link from "next/link";
-import { useState } from "react";
-
-export type WorkflowApproval = { runId: string; workflowName: string; stepKey: string; stepName: string;
-  output: { images?: Array<{url:string}>; imageGeneration?:{error?:string}; title?: string | null; text?: string; imageUrl?: string | null; videoUrl?: string | null;
-    url?: string; sentiment?: string; commentId?: string; reply?: string; decision?: string; reason?: string } | null; createdAt: string | null };
-
-export function WorkflowApprovalCard({ item, busy, resolve }: { item: WorkflowApproval; busy: boolean;
-  resolve: (item: WorkflowApproval, action: "approve" | "reject", edit?: { title?: string; text?: string; reply?: string }) => Promise<void> }) {
-  const [title, setTitle] = useState(item.output?.title ?? "");
-  const [text, setText] = useState(item.output?.text ?? "");
-  const [reply, setReply] = useState(item.output?.reply ?? "");
-  const isReply = item.output?.decision === "reply";
-  const isComment = Boolean(item.output?.commentId);
-  return <article className="workflow-approval-card">
-    <small>{item.workflowName} · {item.stepName}</small>
-    {isComment ? <strong>{isReply ? "پاسخ پیشنهادی به" : "بررسی"} کامنت #{item.output?.commentId}</strong> : null}
-    {!isComment ? <label className="workflow-approval-field"><span>عنوان محتوا</span>
-      <input value={title} maxLength={300} onChange={(event) => setTitle(event.target.value)} /></label>
-      : null}
-    {item.output?.imageGeneration?.error ? <p role="status">{item.output.imageGeneration.error}</p> : null}
-    {item.output?.images?.slice(1).map(image=><img key={image.url} src={image.url} alt="خروجی دیگر تولید تصویر" loading="lazy" style={{objectFit:"contain"}}/>)}
-    {item.output?.imageUrl ? <img src={item.output.imageUrl} alt="تصویر محتوا برای بررسی" loading="lazy" style={{ objectFit: "contain" }} /> : null}
-    {item.output?.videoUrl ? <video src={item.output.videoUrl} controls preload="metadata" aria-label="ویدئوی خبر برای بررسی" /> : null}
-    {isComment ? <><p className="workflow-approval-comment" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>کامنت: {item.output?.text}</p>
-      {item.output?.url ? <a href={item.output.url} target="_blank" rel="noreferrer">دیدن کامنت در یوتیوب</a> : null}
-      {item.output?.reason ? <small>دلیل پیشنهاد: {item.output.reason}</small> : null}
-      {isReply ? <label className="workflow-approval-field"><span>متن پاسخی که بعد از تأیید ارسال می‌شود</span>
-        <textarea value={reply} maxLength={3000} onChange={(event) => setReply(event.target.value)} rows={5} /></label> : null}</> :
-      <label className="workflow-approval-field"><span>متن کامل محتوا</span>
-        <textarea value={text} maxLength={20000} onChange={(event) => setText(event.target.value)} rows={8} /></label>}
-    <div><button className="ghost-button" disabled={busy} onClick={() => void resolve(item, "reject")}>رد این شاخه</button>
-      <button className="primary-button" disabled={busy || !item.output || (!isComment && !text.trim()) || (isReply && !reply.trim())}
-        onClick={() => void resolve(item, "approve", isReply ? { reply: reply.trim() } : isComment ? undefined : { title: title.trim(), text: text.trim() })}>
-        {isReply ? "تأیید و ارسال پاسخ" : isComment ? "تأیید کامنت" : "تأیید و ادامه"}</button>
-      {item.output?.imageGeneration?.error ? <p role="status">{item.output.imageGeneration.error}</p> : null}
-    {item.output?.images?.slice(1).map(image=><img key={image.url} src={image.url} alt="خروجی دیگر تولید تصویر" loading="lazy" style={{objectFit:"contain"}}/>)}
-    {item.output?.imageUrl ? <a href={item.output.imageUrl} target="_blank" rel="noreferrer">دیدن تصویر کامل</a> : null}
-      <Link href={`/runs/${item.runId}`}>جزئیات اجرا</Link></div>
+import {useState} from "react";
+export type {WorkflowApproval} from "../lib/approval-types";
+export function WorkflowApprovalCard({item,busy,resolve}:{item:WorkflowApproval;busy:boolean;resolve:(item:WorkflowApproval,action:"approve"|"reject",edit?:{title?:string;text?:string;reply?:string})=>Promise<void>}){
+  const [title,setTitle]=useState(item.output?.title??""),[text,setText]=useState(item.output?.text??""),[reply,setReply]=useState(item.output?.reply??""),[editing,setEditing]=useState(false);
+  const isReply=item.output?.decision==="reply",isComment=Boolean(item.output?.commentId);
+  const images=[...new Set([item.output?.imageUrl,...(item.output?.images??[]).map(image=>image.url)].filter((url):url is string=>Boolean(url)))];
+  return <article className="workflow-approval-card review-reading-card">
+    <small className="review-card-context">{item.workflowName} · {item.stepName}</small>
+    {images.length||item.output?.videoUrl?<section className="review-media">{images.map((url,index)=><img key={url} src={url} alt={`تصویر محتوا ${index+1}`} loading="lazy"/>)}{item.output?.videoUrl?<details><summary>پخش ویدئو</summary><video src={item.output.videoUrl} controls preload="none" aria-label="ویدئوی محتوا"/></details>:null}</section>:null}
+    <div className="review-copy">{isComment?<><h2>{isReply?"پاسخ پیشنهادی":"بررسی کامنت"}</h2><blockquote className="workflow-approval-comment">{item.output?.text}</blockquote></>:null}
+      {editing?<>{!isComment?<label className="review-field">عنوان<input autoFocus value={title} maxLength={300} disabled={busy} onChange={event=>setTitle(event.target.value)}/></label>:null}<label className="review-field">{isReply?"متن پاسخ":"متن محتوا"}<textarea autoFocus={isReply} value={isReply?reply:text} maxLength={isReply?3000:20000} disabled={busy} rows={8} onChange={event=>isReply?setReply(event.target.value):setText(event.target.value)}/></label><button type="button" className="ghost-button review-edit" disabled={busy} onClick={()=>setEditing(false)}>پایان ویرایش</button></>:<>{!isComment?<h2>{title||"بدون عنوان"}</h2>:null}{!isComment||isReply?<p className="review-body">{isReply?reply:text}</p>:null}{!isComment||isReply?<button type="button" className="ghost-button review-edit" disabled={busy} onClick={()=>setEditing(true)}>{isReply?"ویرایش پاسخ":"ویرایش متن"}</button>:null}</>}
+    </div>
+    {item.output?.imageGeneration?.error?<p className="review-notice error" role="status">{item.output.imageGeneration.error}</p>:null}
+    <details className="review-extra"><summary>جزئیات بررسی</summary>{item.output?.reason?<p>{item.output.reason}</p>:null}{isComment?<p>شناسهٔ کامنت: <bdi>{item.output?.commentId}</bdi></p>:null}{item.output?.url?<a href={item.output.url} target="_blank" rel="noreferrer">مشاهدهٔ منبع ←</a>:null}<Link href={`/runs/${item.runId}`}>گزارش اجرا ←</Link></details>
+    <footer className="review-decision-actions"><button type="button" className="primary-button" disabled={busy||!item.output||(!isComment&&!text.trim())||(isReply&&!reply.trim())} onClick={()=>void resolve(item,"approve",isReply?{reply:reply.trim()}:isComment?undefined:{title:title.trim(),text:text.trim()})}>{busy?"در حال ثبت…":isReply?"تأیید و ارسال پاسخ":isComment?"تأیید کامنت":"تأیید و ادامه"}</button><button type="button" className="review-reject" disabled={busy} onClick={()=>void resolve(item,"reject")}>رد</button></footer>
   </article>;
 }

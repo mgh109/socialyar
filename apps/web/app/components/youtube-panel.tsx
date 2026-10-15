@@ -1,4 +1,5 @@
 "use client";
+import type {YoutubeItem} from "../lib/approval-types";
 import { youtubeCompletionLabel,youtubeFailureTitle,youtubePublicationStage } from "../lib/youtube-publication";
 import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { FieldHelp } from "./field-help";
@@ -9,9 +10,7 @@ import { ConnectionHistory } from "./connection-history";
 import { faDigits } from "../lib/persian-calendar";
 import { PersianDateTimeField } from "./persian-date-time-field";
 
-export type YoutubeItem = { id: string; runId: string | null; stepKey: string; status: string; title: string; description: string; channelName: string;
-  progress: number; videoId: string | null; actualPrivacy: string | null; error: string | null; updatedAt: string;
-  approvedAt?: string | null; scheduledAt: string | null; settings: Record<string, unknown>; logs: Array<Record<string, unknown>> };
+export type {YoutubeItem} from "../lib/approval-types";
 const preparationStageNames: Record<string,string> = {queued:"در صف آماده‌سازی",video_link:"در حال بررسی لینک ویدئو",cover_link:"در حال بررسی لینک کاور",video_download:"در حال دریافت ویدئو",video_inspection:"در حال بررسی ویدئو",image_generation:"در حال تولید کاور",cover_download:"در حال آماده‌سازی کاور",ready:"آماده تأیید"};
 const preparationStageLabels: Record<string,string> = {video_link:"بررسی لینک ویدئو ناموفق",cover_link:"بررسی لینک کاور ناموفق",cover_download:"دریافت کاور ناموفق",video_inspection:"بررسی ویدئو ناموفق",image_generation:"تولید تصویر ناموفق",video_download:"دریافت ویدئو ناموفق"};
 export const youtubeStatus = (item?: YoutubeItem) => !item ? "منتظر ویدئو" : ({ waiting_video: item.settings.collectionId ? "در صف آماده‌سازی" : "منتظر ویدئو", preparing: preparationStageNames[String(item.settings.preparationStage)] ?? "در حال آماده‌سازی", waiting_approval: "منتظر تأیید",
@@ -64,45 +63,49 @@ function DownloadProgress({item}:{item:YoutubeItem}) {
   return <div className="youtube-download-progress" role="status"><span>{mb(bytes)}{total ? ` از ${mb(total)}` : ""} مگابایت دریافت شد</span><progress aria-label="دریافت ویدئو" max={total || undefined} value={total ? bytes : undefined}/></div>;
 }
 
-export function YoutubeReview({ item, refresh }: { item: YoutubeItem; refresh: () => void }) {
+export function YoutubeReview({ item, refresh,reviewMode=false,disabled=false,onBusyChange,onActionResult }: { item: YoutubeItem; refresh: () => void;reviewMode?:boolean;disabled?:boolean;onBusyChange?:(busy:boolean)=>void;onActionResult?:(action:string)=>void }) {
   const [title, setTitle] = useState(item.title); const [description, setDescription] = useState(item.description);
+  const [editing,setEditing]=useState(!reviewMode);
+  const previousReviewVersion=useRef(item.updatedAt);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [actionResult,setActionResult] = useState("");
-  useEffect(()=>{setActionResult("");setError("");setTitle(item.title);setDescription(item.description);},[item.id,item.updatedAt]);
+  useEffect(()=>{setActionResult("");setError("");if(previousReviewVersion.current!==item.updatedAt && (!reviewMode||!editing)){setTitle(item.title);setDescription(item.description);}previousReviewVersion.current=item.updatedAt;},[item.id,item.updatedAt,editing,reviewMode]);
   const action = async (name: string) => {
-    setBusy(true); setError("");
+    if(disabled)return;
+    setBusy(true);onBusyChange?.(true);setError("");
     try {
       const response = await apiFetch(`/youtube/items/${item.id}/${["approve", "reject"].includes(name) ? "resolve" : name}`, {
         method: "POST", body: ["approve", "reject"].includes(name) ? JSON.stringify({ action: name, title, description }) : undefined });
       if (!response.ok) { const data = await response.json(); throw new Error(data.error ?? "ثبت تصمیم ناموفق بود"); }
-      setActionResult(name === "retry" ? "درخواست ثبت شد؛ وضعیت آماده‌سازی به‌روز می‌شود…" : "تصمیم ثبت شد؛ وضعیت به‌روز می‌شود…"); refresh();
-    } catch (err) { setError(persianError(err, "خطا")); } finally { setBusy(false); }
+      setActionResult(name === "retry" ? "درخواست ثبت شد؛ وضعیت آماده‌سازی به‌روز می‌شود…" : "تصمیم ثبت شد؛ وضعیت به‌روز می‌شود…"); onActionResult?.(name);refresh();
+    } catch (err) { setError(persianError(err, "خطا")); } finally { setBusy(false);onBusyChange?.(false); }
   };
-  return <article className="youtube-review">
-    <strong>{item.channelName} · {youtubeStatus(item)}</strong>
+  return <article className={`youtube-review${reviewMode?" review-reading-card":""}`}>
+    {!reviewMode?<strong>{item.channelName} · {youtubeStatus(item)}</strong>:null}
     {item.status === "waiting_video" && item.error ? <p role="status">{persianError(item.error)}</p> : null}
-    <PreparationProgress item={item} />
-    <DownloadProgress item={item} />
-    {item.settings.collectionId ? <p className="media-preview-note">پس از تأیید، ویدئو از لینک منبع به یوتیوب منتقل می‌شود؛ ویدئو و کاورِ لینک‌شده روی سرور ذخیره نمی‌شوند.</p> : null}
+    {!reviewMode?<><PreparationProgress item={item}/><DownloadProgress item={item}/></>:null}
+    {!reviewMode && item.settings.collectionId ? <p className="media-preview-note">پس از تأیید، ویدئو از لینک منبع به یوتیوب منتقل می‌شود؛ ویدئو و کاورِ لینک‌شده روی سرور ذخیره نمی‌شوند.</p> : null}
     {actionResult ? <p role="status" className="collection-feedback success">{actionResult}</p> : null}
     <details className="youtube-media-preview"><summary>پیش‌نمایش ویدئو</summary><MediaPreview video mediaId={item.settings.videoMediaId} url={item.settings.videoUrl} /></details>
     {item.settings.imageGeneration && (item.settings.imageGeneration as {error?:string}).error ? <p role="status">{String((item.settings.imageGeneration as {error?:string}).error)}</p> : null}
     <MediaPreview mediaId={item.settings.collectionId && !item.settings.imageStep ? undefined : item.settings.coverMediaId} url={item.settings.coverUrl} />
     {item.status === "waiting_approval" ? <>
-      <p>نوع محتوا: {item.settings.videoType === "shorts" ? "ویدئوی کوتاه / Shorts" : "ویدئوی معمولی"}{item.settings.playlist ? ` · پلی‌لیست: ${String(item.settings.playlist)}` : ""}</p>
-    <label>عنوان<input maxLength={100} value={title} onChange={(e) => setTitle(e.target.value)} /></label>
-      <label>توضیحات<textarea maxLength={5000} value={description} onChange={(e) => setDescription(e.target.value)} /></label>
-      <button type="button" className="primary-button" disabled={busy || !!actionResult || !title.trim()} onClick={() => void action("approve")}>{item.scheduledAt ? "تأیید انتشار در زمان تعیین‌شده" : "تأیید و انتشار اکنون"}</button>
-      <button type="button" disabled={busy} onClick={() => void action("reject")}>رد</button>
-    </> : <p>{item.title}</p>}
+      <div className="review-copy">
+      {editing?<><label className="review-field">عنوان<input autoFocus={reviewMode} maxLength={100} disabled={busy||disabled} value={title} onChange={event=>setTitle(event.target.value)}/></label><label className="review-field">توضیحات<textarea maxLength={5000} rows={8} disabled={busy||disabled} value={description} onChange={event=>setDescription(event.target.value)}/></label>{reviewMode?<button type="button" className="ghost-button review-edit" disabled={busy||disabled} onClick={()=>setEditing(false)}>پایان ویرایش</button>:null}</>:<><h2>{title}</h2><p className="review-body">{description||"بدون توضیحات"}</p><button type="button" className="ghost-button review-edit" disabled={busy||disabled} onClick={()=>setEditing(true)}>ویرایش متن</button></>}
+      </div>
+      <p className="review-content-meta">{item.settings.videoType === "shorts" ? "ویدئوی کوتاه / Shorts" : "ویدئوی معمولی"}{item.settings.playlist?` · پلی‌لیست: ${String(item.settings.playlist)}`:""}</p>
+      <footer className={reviewMode?"review-decision-actions":"youtube-review-actions"}><button type="button" className="primary-button" disabled={busy||disabled||!!actionResult||!title.trim()} onClick={()=>void action("approve")}>{busy?"در حال ثبت…":item.scheduledAt?"تأیید انتشار زمان‌بندی‌شده":"تأیید و انتشار اکنون"}</button><button type="button" className={reviewMode?"review-reject":"ghost-button"} disabled={busy||disabled} onClick={()=>void action("reject")}>رد</button></footer>
+    </> : <h2>{item.title}</h2>}
     {item.scheduledAt ? <p>زمان انتشار: {new Date(item.scheduledAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })}</p> : null}
-    {item.status === "queued" ? <button type="button" disabled={busy} onClick={() => void action("cancel")}>توقف پیش از آپلود</button> : null}
-    {item.status === "failed" ? <button type="button" className="primary-button" disabled={busy || !!actionResult} onClick={() => void action("retry")}>{busy || actionResult ? "در حال ثبت درخواست…" : item.videoId ? "تکمیل همین ویدئو" : item.settings.collectionId && !item.approvedAt ? "ادامه آماده‌سازی" : "تلاش مجدد"}</button> : null}
+    {item.status === "queued" ? <button type="button" disabled={busy||disabled} onClick={() => void action("cancel")}>توقف پیش از آپلود</button> : null}
+    {item.status === "failed" ? <button type="button" className="primary-button" disabled={busy || disabled || !!actionResult} onClick={() => void action("retry")}>{busy || actionResult ? "در حال ثبت درخواست…" : item.videoId ? "تکمیل همین ویدئو" : item.settings.collectionId && !item.approvedAt ? "ادامه آماده‌سازی" : "تلاش مجدد"}</button> : null}
     {item.videoId ? <a href={`https://www.youtube.com/watch?v=${item.videoId}`} target="_blank" rel="noreferrer">مشاهده در یوتیوب</a> : null}
     {item.actualPrivacy ? <p>وضعیت واقعی در یوتیوب: {({ public: "عمومی", private: "خصوصی", unlisted: "فهرست‌نشده" })[item.actualPrivacy] ?? item.actualPrivacy}
       {item.actualPrivacy !== item.settings.privacy ? " — محدودیت انتشار: وضعیت درخواستی اعمال نشده است." : ""}</p> : null}
     {(!actionResult && item.status === "failed" && item.error) || error ? <div className="collection-feedback error" role="alert"><strong>{error ? "عملیات انجام نشد" : item.videoId || item.settings.publicationFailureStage ? youtubeFailureTitle(item.settings,Boolean(item.videoId)) : ({video_link:"بررسی لینک ویدئو ناموفق بود",cover_link:"ویدئو بررسی شد؛ لینک کاور مشکل دارد",cover_download:"ویدئو دریافت شد؛ دریافت کاور ناموفق بود",video_inspection:"ویدئو دریافت شد؛ بررسی فایل ناموفق بود",image_generation:"ویدئو دریافت شد؛ تولید تصویر ناموفق بود",video_download:"دریافت ویدئو ناموفق بود"} as Record<string,string>)[String(item.settings.preparationFailureStage)] ?? "عملیات یوتیوب ناموفق بود"}</strong><span>{persianError(error || item.error)}</span>{diagnosticErrorCode(error || item.error) ? <code dir="ltr">{diagnosticErrorCode(error || item.error)}</code> : null}</div> : null}
+    {reviewMode?<details className="review-extra"><summary>جزئیات و گزارش‌ها</summary><p>{youtubeStatus(item)}</p><ConnectionHistory youtubeItemId={item.id}/>{item.runId?<a href={`/runs/${item.runId}`}>گزارش اجرای جریان ←</a>:null}</details>:<>
     <details><summary>مسیر اتصال</summary><ConnectionHistory youtubeItemId={item.id} /></details>
     <details><summary>گزارش اجرا</summary>{item.runId ? <a href={`/runs/${item.runId}`}>اجرای جریان {item.runId.slice(0,8)}</a> : <p>{item.settings.collectionId ? "ورود از مجموعه اکسل / گوگل‌شیت" : "بارگذاری دستی"}</p>}{item.logs.map((entry, i) => <p key={i}>{String(entry.channel ?? "یوتیوب")} · {new Date(String(entry.time)).toLocaleString("fa-IR", { timeZone: "Asia/Tehran" })} · {entry.result === "preparation_failed" ? preparationStageLabels[String(entry.stage)] ?? "آماده‌سازی ناموفق" : logLabels[String(entry.result)] ?? "تغییر وضعیت انتشار"}{entry.stage && entry.result!=="preparation_failed" ? ` · ${youtubePublicationStage({publicationStage:entry.stage})}` : ""}{entry.route ? ` · ${entry.route === "proxy" ? `پروکسی: ${entry.proxyName}` : "مستقیم"}` : ""}{entry.actualPrivacy ? ` · ${privacyLabels[String(entry.actualPrivacy)] ?? "نامشخص"}` : ""}{entry.error ? ` · ${persianError(entry.error)}` : ""}{typeof entry.code === "string" && /^[A-Z][A-Z0-9_]{1,40}$/.test(entry.code) ? <code dir="ltr"> · {entry.code}</code> : null}{entry.videoUrl ? <a href={String(entry.videoUrl)} target="_blank" rel="noreferrer"> لینک ویدئو</a> : null}</p>)}</details>
+    </>}
   </article>;
 }
 export function YoutubePanel({ workflowId, stepKey, accountId, config, update, items, refresh }: {
