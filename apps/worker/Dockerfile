@@ -42,6 +42,9 @@ COPY --from=prod-deps --chown=node:node /app ./
 COPY --chown=node:node tsconfig.base.json ./
 COPY --chown=node:node packages ./packages
 COPY --chown=node:node apps/worker ./apps/worker
+# Shared media must be writable before dropping root privileges.
+ENV YOUTUBE_MEDIA_DIR=/data/youtube
+RUN mkdir -p /data/youtube && chown node:node /data/youtube && chmod 750 /data/youtube
 USER node
 WORKDIR /app/apps/worker
 CMD ["./node_modules/.bin/tsx", "src/index.ts"]
