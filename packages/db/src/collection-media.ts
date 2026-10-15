@@ -1,4 +1,4 @@
-import { Agent, fetch as undiciFetch, type Dispatcher } from "undici";
+import { Agent, request as undiciRequest, type Dispatcher } from "undici";
 import { lookup } from "node:dns/promises";
 import { connectionPolicy, createProxyDispatcher, loadPublishingProxy, isConnectionError } from "./publishing-connection";
 import { dropboxDownloadUrl } from "@socialyar/shared";
@@ -11,6 +11,14 @@ export async function publicMediaAddress(raw: string) {
     throw new Error("هاست فایل باید آدرس IPv4 عمومی داشته باشد؛ شبکه داخلی مجاز نیست.");
   return { url,address:addresses[0].address };
 }
+/** Fetch strips Host headers. The low-level client must retain the virtual host
+ * while TLS and the TCP destination remain pinned to the validated address. */
+export function requestPinnedMedia(url: URL, address: string, dispatcher: Dispatcher, signal: AbortSignal, verifyOnly: boolean) {
+  const pinned = new URL(url); pinned.hostname = address;
+  return undiciRequest(pinned, { method:"GET", dispatcher,
+    headers:{ host:url.host, ...(verifyOnly ? { range:"bytes=0-4095" } : {}) },
+    signal });
+}
 /** Pin the checked destination IP for direct, HTTP proxy and SOCKS paths.
  * Keep the original HTTPS hostname for certificate validation and Host headers on every redirect. */
 export async function fetchCollectionMedia(workspaceId: string, raw: string, kind: "video" | "image", policyInput?: unknown, verifyOnly = false) {
@@ -22,19 +30,23 @@ export async function fetchCollectionMedia(workspaceId: string, raw: string, kin
       const { url,address } = await publicMediaAddress(current);
       dispatcher = proxy ? await createProxyDispatcher(await loadPublishingProxy(workspaceId,policy.proxyId!),undefined,url.hostname)
         : new Agent({ connect:{ servername:url.hostname,rejectUnauthorized:true } });
-      const pinned = new URL(url); pinned.hostname = address;
       try {
-        const response = await undiciFetch(pinned, { dispatcher, headers:{ Host:url.host, ...(verifyOnly ? { Range:"bytes=0-4095" } : {}) }, redirect:"manual",signal });
-        if ([301,302,303,307,308].includes(response.status)) {
-          const location = response.headers.get("location"); await response.body?.cancel();
-          if (!location) throw new Error("نشانی دانلود پیدا نشد."); current = new URL(location,url).toString(); continue;
+        const response = await requestPinnedMedia(url,address,dispatcher,signal,verifyOnly);
+        if ([301,302,303,307,308].includes(response.statusCode)) {
+          const location = response.headers.location; response.body.destroy();
+          if (typeof location !== "string") throw new Error("نشانی دانلود پیدا نشد."); current = new URL(location,url).toString(); continue;
         }
-        if (!response.ok) { await response.body?.cancel(); throw new Error(`دریافت فایل ناموفق بود (HTTP ${response.status}). لینک عمومی یا مجوز دانلود را بررسی کنید.`); }
-        if (!verifyOnly && Number(response.headers.get("content-length")) > limit) { await response.body?.cancel(); throw new Error("حجم فایل بیش از حد مجاز است."); }
-        const reader = response.body?.getReader(); if (!reader) throw new Error("فایل خالی است.");
+        if (response.statusCode < 200 || response.statusCode >= 300) { response.body.destroy(); throw new Error(`دریافت فایل ناموفق بود (HTTP ${response.statusCode}). لینک عمومی یا مجوز دانلود را بررسی کنید.`); }
+        if (!verifyOnly && Number(response.headers["content-length"]) > limit) { response.body.destroy(); throw new Error("حجم فایل بیش از حد مجاز است."); }
         let size = 0; const chunks: Uint8Array[] = [];
-        try { while (true) { const part = await reader.read(); if (part.done) break; size += part.value.length; if (size > limit && !verifyOnly) throw new Error("حجم فایل بیش از حد مجاز است."); chunks.push(verifyOnly ? part.value.subarray(0,4096) : part.value); if (verifyOnly && size >= 32) break; } }
-        finally { await reader.cancel().catch(()=>{}); }
+        try {
+          for await (const part of response.body) {
+            const value = Buffer.from(part); size += value.length;
+            if (size > limit && !verifyOnly) throw new Error("حجم فایل بیش از حد مجاز است.");
+            chunks.push(verifyOnly ? value.subarray(0,4096) : value);
+            if (verifyOnly && size >= 32) break;
+          }
+        } finally { response.body.destroy(); }
         const bytes = Buffer.concat(chunks); const type = youtubeMediaType(bytes);
         if (!type.startsWith(`${kind}/`)) throw new Error(kind === "video" ? "لینک به فایل ویدئو نمی‌رسد؛ صفحه دانلود یا ورود به حساب قابل استفاده نیست." : "کاور باید PNG یا JPEG باشد.");
         return { bytes,type };
