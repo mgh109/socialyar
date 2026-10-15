@@ -7,6 +7,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb } from "./client";
 import { publishingProxies } from "./schema";
 import { decryptSecret } from "./secrets";
+import { isYoutubeUploadSession } from "./youtube-upload-session";
 
 export type PublishingTarget = "youtube" | "telegram" | "instagram" | "dropbox";
 export type ConnectionPolicy = { mode: "direct" | "proxy" | "auto"; proxyId?: string };
@@ -53,6 +54,7 @@ export function connectionErrorReason(error: unknown) {
   if (error instanceof Error && ["احراز هویت پروکسی ناموفق بود؛ نام کاربری و رمز را بررسی کنید.", "اتصال شبکه برقرار نشد یا مهلت پاسخ پایان یافت.", "اعتبار گواهی اتصال امن تأیید نشد."].includes(error.message)) return error.message;
   if (codes.includes("DELIVERY_UNKNOWN") || error instanceof AmbiguousDeliveryError) return new AmbiguousDeliveryError().message;
   if (codes.includes("PROXY_UNAVAILABLE")) return "پروکسی انتخاب‌شده حذف شده یا غیرفعال است.";
+  if (codes.includes("DESTINATION_REDIRECT")) return "سرویس مقصد تغییر مسیر نامعتبر داد؛ ارسال متوقف شد.";
   if (/407|authentication|auth failed|username.*password/i.test(text)) return "احراز هویت پروکسی ناموفق بود؛ نام کاربری و رمز را بررسی کنید.";
   if (isConnectionError(error)) return "اتصال شبکه برقرار نشد یا مهلت پاسخ پایان یافت.";
   if (codes.some((c) => /CERT|TLS|SSL/.test(c))) return "اعتبار گواهی اتصال امن تأیید نشد.";
@@ -105,11 +107,21 @@ export function routedFetcher(input: {
     const url = new URL(typeof resource === "string" || resource instanceof URL ? resource : resource.url);
     if (url.protocol !== "https:" || url.username || url.password || url.port || !destinationHosts[input.target].includes(url.hostname)) throw new Error("Destination is not an official service endpoint");
     const method = (options.method ?? "GET").toUpperCase();
+    const resumable = input.target === "youtube" && method === "PUT" && isYoutubeUploadSession(url) &&
+      /^bytes (?:\d+-\d+|\*)\/\d+$/.test(new Headers(options.headers).get("Content-Range") ?? "");
+    // Google's 308 Resume Incomplete may carry a replacement Location. Fetch's
+    // redirect:error rejects that valid acknowledgment before the uploader sees it.
+    // Manual mode returns it without following Location or replaying the PUT body.
+    const redirect = resumable ? "manual" : "error";
     const replaySafe = ["GET", "HEAD"].includes(method) || input.target === "youtube" &&
       (method === "PUT" && new Headers(options.headers).get("Content-Range")?.startsWith("bytes */") ||
       (url.hostname === "oauth2.googleapis.com" || method === "POST" && (url.searchParams.get("uploadType") === "resumable" || url.pathname.endsWith("/thumbnails/set"))));
     const receive = async (send: typeof fetch, init: RequestInit) => {
       const response = await send(resource, init);
+      if (resumable && [301, 302, 303, 307].includes(response.status)) {
+        await response.body?.cancel();
+        throw Object.assign(new Error("Unexpected destination redirect"), { code: "DESTINATION_REDIRECT" });
+      }
       if (!response.body) return response;
       // Publication API responses are small JSON documents. Include body-read failures
       // in delivery classification, including a lost Telegram sendMessage response.
@@ -119,7 +131,7 @@ export function routedFetcher(input: {
     };
     try {
       let response: Response;
-      try { response = await receive(route === "direct" ? input.direct : input.proxied, { ...options, redirect: "error" }); }
+      try { response = await receive(route === "direct" ? input.direct : input.proxied, { ...options, redirect }); }
       catch (error) {
         await emit("network_error", connectionErrorReason(error));
         if (route !== "direct" || input.policy.mode !== "auto" || !isConnectionError(error) || options.signal?.aborted && options.signal.reason?.name !== "TimeoutError") {
@@ -129,9 +141,9 @@ export function routedFetcher(input: {
         route = "proxy"; await emit("fallback_selected");
         if (!replaySafe && !definitelyNotSent(error)) throw new AmbiguousDeliveryError();
         // The direct timeout must not leave the fallback with an already aborted signal.
-        response = await receive(input.proxied, { ...options, redirect: "error", signal: options.signal?.aborted ? AbortSignal.timeout(30000) : options.signal });
+        response = await receive(input.proxied, { ...options, redirect, signal: options.signal?.aborted ? AbortSignal.timeout(30000) : options.signal });
       }
-      await emit(response.ok ? "connected" : `destination_http_${response.status}`);
+      await emit(response.ok || resumable && response.status === 308 ? "connected" : `destination_http_${response.status}`);
       return response;
     } catch (error) {
       if (error instanceof AmbiguousDeliveryError) throw error;

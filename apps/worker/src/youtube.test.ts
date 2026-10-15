@@ -64,6 +64,42 @@ test("failed session persistence prevents sending video bytes", async () => {
     calls++; return new Response(null, { headers: { location: session } });
   }) as typeof fetch), /DB unavailable/); assert.equal(calls, 1);
 });
+test("a rotated session must be persisted before reading or sending the next bytes", async () => {
+  let calls = 0; let reads = 0;
+  await assert.rejects(uploadYoutubeVideo(input({ session, bytes: undefined,
+    source: { size: 16, read: async () => { reads++; return Buffer.alloc(16); } },
+    saveSession: async () => { throw new Error("DB unavailable"); },
+  }), (async () => {
+    calls++;
+    return new Response(null, { status: 308, headers: { location: `${session}-rotated` } });
+  }) as typeof fetch), /DB unavailable/);
+  assert.equal(calls, 1); assert.equal(reads, 0);
+});
+test("rotated upload locations cannot send credentials outside Google's upload endpoint", async () => {
+  for (const location of ["https://untrusted.example/steal", "http://www.googleapis.com/upload/youtube/v3/videos?upload_id=test",
+    "https://user:password@www.googleapis.com/upload/youtube/v3/videos?upload_id=test",
+    "https://www.googleapis.com:8443/upload/youtube/v3/videos?upload_id=test",
+    "https://www.googleapis.com/youtube/v3/videos?upload_id=test", `${session}#fragment`]) {
+    let calls = 0; let persisted = false;
+    await assert.rejects(uploadYoutubeVideo(input({ session, saveSession: async () => { persisted = true; } }), (async () => {
+      calls++; return new Response(null, { status: 308, headers: { location } });
+    }) as typeof fetch), /نشانی نشست/);
+    assert.equal(calls, 1); assert.equal(persisted, false);
+  }
+});
+test("a lost final response after session rotation probes the latest URI without a new upload", async () => {
+  const rotated = `${session}-rotated`; const calls: string[] = [];
+  const request = (async (url, options) => {
+    calls.push(`${String(url)} ${new Headers(options?.headers).get("Content-Range")}`);
+    if (calls.length === 1) return new Response(null, { status: 308, headers: { location: rotated, range: "bytes=0-7" } });
+    assert.equal(String(url), rotated);
+    if (calls.length === 2) throw Object.assign(new Error("Connection lost"), { code: "ECONNRESET" });
+    assert.equal(new Headers(options?.headers).get("Content-Range"), "bytes */16");
+    return json({ id: "confirmed-after-rotation" });
+  }) as typeof fetch;
+  assert.equal(await uploadYoutubeVideo(input({ session }), request), "confirmed-after-rotation");
+  assert.equal(calls.length, 3);
+});
 test("upload HTTP failure is surfaced and missing ids never count as success", async () => {
   await assert.rejects(uploadYoutubeVideo(input({ session }), (async () => json({ error: { message: "Quota exceeded" } }, 403)) as typeof fetch), /HTTP 403/);
   await assert.rejects(uploadYoutubeVideo(input({ session }), (async () => json({})) as typeof fetch), /lacks video id/);
