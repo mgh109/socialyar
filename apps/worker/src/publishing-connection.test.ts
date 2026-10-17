@@ -145,3 +145,33 @@ test("SOCKS5 authentication failure does not count as destination access", async
   } finally { await agent.destroy(); await new Promise<void>((resolve) => server.close(() => resolve()));
     if (previous === undefined) delete process.env.HOOR_SECRET_KEY; else process.env.HOOR_SECRET_KEY = previous; }
 });
+
+test("body timeouts and fetch failures retain safe recovery codes without leaking proxy details",async()=>{
+  for(const error of [Object.assign(new Error("secret proxy response"),{code:"UND_ERR_BODY_TIMEOUT"}),new TypeError("fetch failed")]){
+    let probes=0,posts=0;
+    const session="https://www.googleapis.com/upload/youtube/v3/videos?upload_id=timeout";
+    const transport=routedFetcher({target:"youtube",policy:{mode:"proxy",proxyId},direct:fetch,proxied:(async(_url,init)=>{
+      if(init?.method==="POST"){posts++;return new Response(null,{headers:{location:session}});}
+      if(new Headers(init?.headers).get("Content-Range")!.startsWith("bytes */")){probes++;return json({id:"confirmed"});}
+      throw error;
+    }) as typeof fetch});
+    assert.equal(await uploadYoutubeVideo({bytes:Buffer.alloc(16),type:"video/mp4",token:"fake",metadata:{},saveSession:async()=>{},saveProgress:async()=>{},wait:async()=>{}},transport.fetch),"confirmed");
+    assert.equal(probes,1);assert.equal(posts,1);
+  }
+});
+test("authentication, certificate and coding errors are not treated as retryable network failures",async()=>{
+  for(const error of [Object.assign(new Error("certificate expired"),{code:"CERT_HAS_EXPIRED"}),new TypeError("Cannot read properties of undefined"),new TypeError("fetch failed",{cause:Object.assign(new Error("bad length"),{code:"UND_ERR_REQ_CONTENT_LENGTH_MISMATCH"})}),new TypeError("fetch failed",{cause:new Error("Proxy response (407): http://secret-user:secret-pass@proxy.example")})]){
+    const transport=routedFetcher({target:"youtube",policy:{mode:"proxy",proxyId},direct:fetch,proxied:(async()=>{throw error;}) as typeof fetch});
+    let calls=0;
+    await assert.rejects(uploadYoutubeVideo({bytes:Buffer.alloc(16),type:"video/mp4",token:"fake",metadata:{},session:"https://www.googleapis.com/upload/youtube/v3/videos?upload_id=bad",saveSession:async()=>{},saveProgress:async()=>{},onRecovery:async()=>{calls++;},wait:async()=>{}},transport.fetch));
+    assert.equal(calls,0);
+  }
+});
+
+test("a lost upload-session creation response cannot create a second video through automatic proxy fallback",async()=>{
+  let direct=0,proxied=0;
+  const transport=routedFetcher({target:"youtube",policy:{mode:"auto",proxyId},direct:(async()=>{direct++;throw network("ECONNRESET");}) as typeof fetch,
+    proxied:(async()=>{proxied++;return json({});}) as typeof fetch});
+  await assert.rejects(transport.fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",{method:"POST",body:"{}"}),AmbiguousDeliveryError);
+  assert.equal(direct,1);assert.equal(proxied,0);
+});

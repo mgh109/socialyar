@@ -188,6 +188,8 @@ export async function youtubeRoutes(app: FastifyInstance, options: {database?:Re
     secured.post("/youtube/items/:id/:action", async (request, reply) => {
       const { id, action } = z.object({ id: z.string().uuid(), action: z.enum(["cancel", "retry"]) }).parse(request.params);
       const [current] = await db.select().from(youtubeItems).where(and(eq(youtubeItems.id, id), eq(youtubeItems.workspaceId, request.auth.workspaceId)));
+      if(action === "retry" && current?.settings.uploadSessionUnknown === true && !current.videoId && !current.sessionEnc)
+        return reply.code(409).send({error:"نتیجه شروع آپلود قبلی نامعلوم است؛ ابتدا رکورد مقصد را در یوتیوب بررسی کنید. برای جلوگیری از ویدئوی تکراری، شروع خودکار دوباره متوقف شد."});
       if (action === "retry" && current?.status === "failed" && current.settings.collectionId && (!current.approvedAt || current.settings.remoteVideoChanged===true) && !current.videoId && !current.sessionEnc) {
         const version=current.queueVersion+1;
         const [claimed]=await db.update(youtubeItems).set({status:"waiting_video",queueVersion:version,error:null,approvedAt:null,approvedBy:null,

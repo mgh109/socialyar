@@ -37,8 +37,10 @@ function errorText(error: unknown): string {
   return [e.message ?? "", errorText(e.cause), ...(e.errors ?? []).map(errorText)].join(" ");
 }
 export function isConnectionError(error: unknown) {
-  return errorCodes(error).some((code) => ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH",
-    "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET", "TimeoutError"].includes(code));
+  const codes=errorCodes(error).filter(code=>code && !["Error","TypeError","AggregateError"].includes(code));
+  if (/407|authentication|auth failed|certificate|self.signed/i.test(errorText(error))) return false;
+  return (codes.length===0 && error instanceof TypeError && /^(fetch failed|terminated)$/i.test(error.message)) || codes.some((code) => ["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH",
+    "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT", "UND_ERR_SOCKET", "FETCH_FAILED", "TimeoutError"].includes(code));
 }
 export function definitelyNotSent(error: unknown) {
   return errorCodes(error).some((code) => ["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "UND_ERR_CONNECT_TIMEOUT"].includes(code));
@@ -115,7 +117,7 @@ export function routedFetcher(input: {
     const redirect = resumable ? "manual" : "error";
     const replaySafe = ["GET", "HEAD"].includes(method) || input.target === "youtube" &&
       (method === "PUT" && new Headers(options.headers).get("Content-Range")?.startsWith("bytes */") ||
-      (url.hostname === "oauth2.googleapis.com" || method === "POST" && (url.searchParams.get("uploadType") === "resumable" || url.pathname.endsWith("/thumbnails/set"))));
+      (url.hostname === "oauth2.googleapis.com" || method === "POST" && url.pathname.endsWith("/thumbnails/set")));
     const receive = async (send: typeof fetch, init: RequestInit) => {
       const response = await send(resource, init);
       if (resumable && [301, 302, 303, 307].includes(response.status)) {
@@ -149,10 +151,11 @@ export function routedFetcher(input: {
       if (error instanceof AmbiguousDeliveryError) throw error;
       if (!replaySafe && isConnectionError(error) && !definitelyNotSent(error)) throw new AmbiguousDeliveryError();
       if (isConnectionError(error)) {
-        const code = errorCodes(error).find((c) => /^(?:E[A-Z_]+|UND_ERR_.*|TimeoutError)$/.test(c));
+        const code = errorCodes(error).find((c) => /^(?:E[A-Z_]+|UND_ERR_[A-Z_]+|FETCH_FAILED|TimeoutError)$/.test(c)) ?? "FETCH_FAILED";
         throw Object.assign(new Error(connectionErrorReason(error)), { code });
       }
-      throw new Error(connectionErrorReason(error));
+      const code=errorCodes(error).find(value=>["UND_ERR_REQ_CONTENT_LENGTH_MISMATCH","UND_ERR_RES_CONTENT_LENGTH_MISMATCH","DESTINATION_REDIRECT","PROXY_UNAVAILABLE","ERR_TLS_CERT_ALTNAME_INVALID","CERT_HAS_EXPIRED","DEPTH_ZERO_SELF_SIGNED_CERT","UNABLE_TO_VERIFY_LEAF_SIGNATURE"].includes(value));
+      throw Object.assign(new Error(connectionErrorReason(error)),code ? {code} : {});
     }
   };
   return { fetch: request, getRoute: () => ({ route, proxyName: route === "proxy" ? input.proxyName : undefined }) };

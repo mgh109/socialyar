@@ -1,7 +1,7 @@
 import { YOUTUBE_COVER_MAX_BYTES } from "@socialyar/shared";
 import { and, eq } from "drizzle-orm";
 import { setTimeout as pause } from "node:timers/promises";
-import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts, youtubeMediaFile, youtubeFileSource, openCollectionVideoSource, inspectRemoteVideo, fetchCollectionMedia, type RemoteVideoSnapshot, collectionVideoUrl, isConnectionError, connectionErrorReason } from "@socialyar/db";
+import { assertWorkspaceOperational, getDb, youtubeItems, youtubeToken, fetchYoutubeMedia, googleJson, encryptSecret, decryptSecret, readYoutubeMedia, uploadYoutubeVideo, publishingTransport, publicationConnectionEvents, inspectVideo, assertShorts, youtubeMediaFile, youtubeFileSource, openCollectionVideoSource, inspectRemoteVideo, fetchCollectionMedia, type RemoteVideoSnapshot, AmbiguousDeliveryError, collectionVideoUrl, isConnectionError, connectionErrorReason } from "@socialyar/db";
 
 import { attachYoutubePlaylist } from "./youtube-playlist";
 
@@ -61,6 +61,7 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
       return fetchYoutubeMedia(url, kind === "video" ? 250_000_000 : YOUTUBE_COVER_MAX_BYTES, kind);
     };
     if (!item.videoId) {
+      if(item.settings.uploadSessionUnknown===true)throw new Error("نتیجه شروع آپلود قبلی نامعلوم است؛ پیش از ساخت آیتم جدید، رکورد مقصد را در یوتیوب بررسی کنید. ساخت خودکار ویدئوی تکراری متوقف شد.");
       await checkpoint("source_check");
       if(item.settings.collectionId && item.sessionEnc && !item.settings.remoteVideo)throw new Error("نشست قبلی با فایل محلی آغاز شده است؛ پیش از تغییر روش انتقال، وضعیت همان آپلود در یوتیوب باید بررسی شود.");
       const remote=item.settings.collectionId ? await services.openVideo(item.workspaceId,collectionVideoUrl(item.settings),item.settings.mediaConnection,item.settings.remoteVideo as RemoteVideoSnapshot|undefined) : null;
@@ -81,7 +82,13 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
         metadata: { snippet: { title: item.title, description: item.description, tags: item.settings.tags ?? [], categoryId: "22" },
           status: { privacyStatus: privateOnly ? "private" : item.settings.privacy ?? "private", selfDeclaredMadeForKids: item.settings.madeForKids === true } },
         saveSession: async (session) => { item.sessionEnc=encryptSecret(session); await db.update(youtubeItems).set({ sessionEnc:item.sessionEnc }).where(eq(youtubeItems.id, id)); },
-        saveProgress: async (progress, videoId) => { if(videoId)item.videoId=String(videoId); await db.update(youtubeItems).set({ progress, ...(videoId ? { videoId } : {}), updatedAt: new Date() }).where(eq(youtubeItems.id, id)); },
+        onRecovery: async (event) => { await log("upload_recovery",event); },
+        saveProgress: async (progress, videoId, details) => {
+          item.progress=progress;if(videoId)item.videoId=String(videoId);
+          if(details)item.settings={...item.settings,uploadProgress:details};
+          await db.update(youtubeItems).set({ progress,settings:item.settings,...(videoId ? { videoId } : {}),updatedAt:new Date() }).where(eq(youtubeItems.id,id));
+          if(details?.confirmed)await log("upload_confirmed",{...details,videoUrl:`https://www.youtube.com/watch?v=${videoId}`});
+        },
       }, request);
       await db.update(youtubeItems).set({ status: "processing", progress: 100, videoId: item.videoId, updatedAt: new Date() }).where(eq(youtubeItems.id, id));
     }
@@ -94,11 +101,17 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
       await checkpoint("status_check",{coverUploaded:true});
     }
     await checkpoint("status_check");
+    let lastProcessingState="";
     for (let poll = 0; poll < 60; poll++) {
       const data = await googleJson(await request(`https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=${encodeURIComponent(item.videoId!)}`, {
         headers, signal: AbortSignal.timeout(15000) }));
       const result = data.items?.[0]; if (!result) throw new Error("Uploaded video is not visible to the connected channel");
       const status = result.status; const processing = result.processingDetails?.processingStatus;
+      const processingState=JSON.stringify([status.uploadStatus,processing,result.processingDetails?.processingFailureReason]);
+      if(processingState!==lastProcessingState){
+        lastProcessingState=processingState;
+        await log("processing_status",{uploadStatus:status.uploadStatus,processingStatus:processing??"unavailable",videoUrl:`https://www.youtube.com/watch?v=${item.videoId}`});
+      }
       await db.update(youtubeItems).set({ actualPrivacy: status.privacyStatus, updatedAt: new Date() }).where(eq(youtubeItems.id, id));
       if (["failed", "terminated"].includes(processing) || ["failed", "rejected", "deleted"].includes(status.uploadStatus))
         throw new Error(`YouTube processing failed: ${status.rejectionReason ?? status.failureReason ?? result.processingDetails?.processingFailureReason ?? processing}`);
@@ -116,9 +129,10 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
   } catch (error) {
     const message = error instanceof Error ? error.message : "YouTube publication failed";
     const changed=(error as NodeJS.ErrnoException)?.code==="REMOTE_VIDEO_CHANGED";
-    item.settings={...item.settings,publicationStage:stage,publicationFailureStage:stage,...(changed?{remoteVideoChanged:true}:{})};
+    item.settings={...item.settings,publicationStage:stage,publicationFailureStage:stage,...(stage==="upload" && !item.sessionEnc && !item.videoId && error instanceof AmbiguousDeliveryError ? {uploadSessionUnknown:true} : {}),...(changed?{remoteVideoChanged:true}:{})};
     await db.update(youtubeItems).set({ status: "failed", error: message,settings:item.settings,updatedAt: new Date() }).where(eq(youtubeItems.id, id));
-    await log("failed", { error: message,stage, videoUrl: item.videoId ? `https://www.youtube.com/watch?v=${item.videoId}` : null });
+    const code=(error as NodeJS.ErrnoException)?.code;
+    await log("failed", { error: message,stage,...(typeof code==="string" && /^[A-Z][A-Z0-9_]{1,40}$/.test(code) ? {code} : {}),progress:item.progress, videoUrl: item.videoId ? `https://www.youtube.com/watch?v=${item.videoId}` : null });
     throw error;
   } finally { await transport?.close(); }
 }

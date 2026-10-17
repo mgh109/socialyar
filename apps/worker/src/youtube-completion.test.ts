@@ -42,3 +42,12 @@ test("completion labels distinguish an uploaded video from a failed upload, incl
   assert.match(youtubeFailureTitle({publicationFailureStage:"cover_upload"},true),/ویدئو ارسال شد؛ تنظیم کاور/);
   assert.match(youtubeFailureTitle({},true),/ویدئو ارسال شد؛ تکمیل انتشار/);
 });
+
+test("unknown session creation is held before a later attempt can start another upload",async()=>{
+  const {AmbiguousDeliveryError}=await import("@socialyar/db");let posts=0;
+  const f=fixture((async(_url,init)=>{assert.equal(init?.method,"POST");posts++;throw new AmbiguousDeliveryError();}) as typeof fetch);
+  f.item.videoId=null;f.item.settings.videoUrl="https://files.example/video.mp4";
+  f.services.openVideo=async()=>({size:16,type:"video/mp4",snapshot:{size:16,type:"video/mp4",headHash:"hash",etag:'"etag"'},read:async(start:number,end:number)=>Buffer.alloc(end-start)});
+  await assert.rejects(f.run(),AmbiguousDeliveryError);assert.equal(f.item.settings.uploadSessionUnknown,true);assert.equal(posts,1);
+  f.retry();await assert.rejects(f.run(),/شروع آپلود قبلی نامعلوم/);assert.equal(posts,1);
+});

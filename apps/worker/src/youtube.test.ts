@@ -139,3 +139,36 @@ test("a large file source uploads in bounded chunks and resumes at the server ac
   assert.equal(await uploadYoutubeVideo({...input(),bytes:undefined,source,session},request),"large-video");
   assert.equal(reads[0][0],resumeAt);assert.equal(reads.at(-1)![1],total);
 });
+
+test("temporary upload and probe HTTP failures recover the same session from acknowledged bytes",async()=>{
+  const chunk=8*1024*1024,total=chunk+16;let calls=0,posts=0;const ranges:string[]=[],reads:number[]=[],recoveries:any[]=[],waits:number[]=[],progress:number[]=[];
+  const request=(async(_url,init)=>{
+    if(init?.method==="POST"){posts++;return new Response(null,{headers:{location:session}});}
+    const range=new Headers(init?.headers).get("Content-Range")!;ranges.push(range);calls++;
+    if(calls===1)return json({error:{message:"service unavailable"}},503);
+    if(calls===2)return json({error:{message:"upstream unavailable"}},502);
+    if(calls===3)return new Response(null,{status:308,headers:{range:`bytes=0-${chunk-1}`}});
+    assert.equal(range,`bytes ${chunk}-${total-1}/${total}`);return json({id:"resumed-same-session"},201);
+  }) as typeof fetch;
+  const id=await uploadYoutubeVideo({type:"video/mp4",token:"fake",metadata:{},source:{size:total,read:async(start,end)=>{reads.push(start);return Buffer.alloc(end-start);}},saveSession:async()=>{},saveProgress:async(p)=>{progress.push(p);},onRecovery:async(event)=>{recoveries.push(event);},wait:async(ms)=>{waits.push(ms);}},request);
+  assert.equal(id,"resumed-same-session");assert.equal(posts,1);assert.deepEqual(reads,[0,chunk]);assert.deepEqual(ranges,[`bytes 0-${chunk-1}/${total}`,`bytes */${total}`,`bytes */${total}`,`bytes ${chunk}-${total-1}/${total}`]);assert.deepEqual(waits,[1000,2000]);assert.deepEqual(recoveries.map(e=>e.httpStatus),[503,502]);assert.equal(progress.at(-1),100);
+});
+test("an upload acknowledged in full stays below 100 until Google returns the completed video",async()=>{
+  const progress:number[]=[];let calls=0;
+  const request=(async(_url,init)=>{
+    calls++;const range=new Headers(init?.headers).get("Content-Range");
+    if(calls===1){assert.equal(range,"bytes */16");return new Response(null,{status:308,headers:{range:"bytes=0-15"}});}
+    assert.equal(range,"bytes */16");assert.equal(init?.body,undefined);return json({id:"confirmed"},201);
+  }) as typeof fetch;
+  assert.equal(await uploadYoutubeVideo(input({session,wait:async()=>{},saveProgress:async(p:number)=>{progress.push(p);}}),request),"confirmed");assert.deepEqual(progress,[99,100]);
+});
+test("persistent transient upload outage is bounded and never starts another upload",async()=>{
+  let calls=0;
+  await assert.rejects(uploadYoutubeVideo(input({session,wait:async()=>{}}),(async(_url,init)=>{calls++;assert.equal(init?.method,"PUT");return json({},503);}) as typeof fetch),(error:any)=>error.code==="YOUTUBE_UPLOAD_INTERRUPTED");
+  assert.equal(calls,4);
+});
+test("early completion cannot confirm an unsent remainder",async()=>{
+  const total=8*1024*1024+16;let confirmed=false;
+  await assert.rejects(uploadYoutubeVideo(input({session,bytes:Buffer.alloc(total),saveProgress:async(_p:number,id?:string)=>{if(id)confirmed=true;}}),(async(_url,init)=>new Headers(init?.headers).get("Content-Range")!.startsWith("bytes */") ? new Response(null,{status:308}) : json({id:"premature"},201)) as typeof fetch),/پیش از دریافت همه/);
+  assert.equal(confirmed,false);
+});
