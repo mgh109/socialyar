@@ -14,7 +14,7 @@ type Edge = typeof workflowConnections.$inferSelect;
 type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
   videoUrl?: string | null; queuedForPublication?: boolean; commentId?: string; context?: string;
   decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string; approved?: boolean;
-  youtube?: { accountId: string; videoId: string }; replyStatus?: string; externalUrl?: string; sentiment?: string; comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
+  youtube?: { accountId: string; videoId: string; threadId?: string }; replyStatus?: string; externalUrl?: string; sentiment?: string; comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
 
 function transientAIError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -304,7 +304,8 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
             states.set(step.id, "waiting_approval"); waiting = true; continue;
           } else {
             output = { ...proposed, ...await sendReply({ workspaceId: workflow.workspaceId, workflowId: workflow.id, runId: run.id,
-              accountId: upstream.youtube.accountId, commentId: upstream.commentId, reply: proposed.reply, dailyLimit: Number(step.config.dailyLimit ?? 20) }, assertAllowed) };
+              accountId: upstream.youtube.accountId, videoId: upstream.youtube.videoId, threadId: upstream.youtube.threadId,
+              commentId: upstream.commentId, reply: proposed.reply, dailyLimit: Number(step.config.dailyLimit ?? 20) }, assertAllowed) };
           }
         } else if (step.type === "api_action") {
           if (!upstream?.commentId) throw new Error("شناسهٔ کامنت در ورودی اقدام نیست");

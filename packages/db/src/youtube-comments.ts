@@ -4,7 +4,8 @@ import { socialAccounts, youtubeCommentReplies } from "./schema";
 import { youtubeToken } from "./youtube";
 
 const api = "https://www.googleapis.com/youtube/v3";
-export type YoutubeComment = { id: string; text: string; videoId: string; authorChannelId: string; url: string };
+export type YoutubeComment = { id: string; threadId: string; text: string; videoId: string; authorChannelId: string; url: string };
+type YoutubeReplyContext = { videoId?: string; threadId?: string };
 export function youtubeDay(now = new Date()) { return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tehran", year: "numeric", month: "2-digit", day: "2-digit" }).format(now); }
 export function nextYoutubeDay(now = new Date()) {
   const day = youtubeDay(now);
@@ -22,14 +23,14 @@ export async function ensureYoutubeCommentStorage() {
     CONSTRAINT youtube_comment_replies_once UNIQUE(account_id, comment_id))`).then(() => undefined);
   try { await storage; } catch (error) { storage = undefined; throw error; }
 }
-class YoutubeCommentApiError extends Error { constructor(message:string, readonly status:number) { super(message); } }
+class YoutubeCommentApiError extends Error { constructor(message:string, readonly status:number, readonly reason?:string) { super(message); } }
 async function commentJson(response: Response) {
   let data: any;
   try { data = await response.json(); } catch { throw new Error("پاسخ یوتیوب قابل خواندن نیست؛ نتیجه ارسال را بررسی کنید."); }
   if (!response.ok) {
     const reason = data?.error?.errors?.[0]?.reason;
-    const messages: Record<string, string> = { commentsDisabled:"کامنت‌های این ویدئو غیرفعال است.", quotaExceeded:"سهمیه API یوتیوب تمام شده؛ تنظیم سهمیه را بررسی کنید.", forbidden:"مجوز خواندن یا پاسخ به کامنت موجود نیست؛ اتصال کانال را دوباره برقرار کنید.", insufficientPermissions:"مجوز پاسخ به کامنت موجود نیست؛ اتصال کانال را دوباره برقرار کنید.", commentNotFound:"کامنت پیدا نشد یا حذف شده است.", videoNotFound:"ویدئو پیدا نشد.", channelNotFound:"کانال پیدا نشد.", operationNotSupported:"این کامنت قابل پاسخ نیست." };
-    throw new YoutubeCommentApiError(messages[reason] ?? `درخواست یوتیوب ناموفق بود (کد ${response.status})؛ اتصال و مجوزهای کانال را بررسی کنید.`, response.status);
+    const messages: Record<string, string> = { commentsDisabled:"کامنت‌های این ویدئو غیرفعال است.", quotaExceeded:"سهمیه API یوتیوب تمام شده؛ تنظیم سهمیه را بررسی کنید.", forbidden:"مجوز خواندن یا پاسخ به کامنت موجود نیست؛ اتصال کانال را دوباره برقرار کنید.", insufficientPermissions:"مجوز پاسخ به کامنت موجود نیست؛ اتصال کانال را دوباره برقرار کنید.", commentNotFound:"کامنت پیدا نشد یا حذف شده است.", commentThreadNotFound:"کامنت پیدا نشد یا حذف شده است.", videoNotFound:"ویدئو پیدا نشد.", channelNotFound:"کانال پیدا نشد.", operationNotSupported:"این کامنت قابل پاسخ نیست." };
+    throw new YoutubeCommentApiError(messages[reason] ?? `درخواست یوتیوب ناموفق بود (کد ${response.status})؛ اتصال و مجوزهای کانال را بررسی کنید.`, response.status, reason);
   }
   if (!data || typeof data !== "object") throw new Error("پاسخ یوتیوب معتبر نیست؛ نتیجه ارسال را بررسی کنید.");
   return data;
@@ -50,32 +51,58 @@ export async function readYoutubeComments(token: string, channelId: string, opti
     pages++;
     for (const thread of data.items ?? []) {
       rawCount++;
-      const top = thread.snippet?.topLevelComment, snippet = top?.snippet;
-      if (!top?.id || !snippet?.videoId || !snippet.textOriginal || thread.snippet?.canReply === false || snippet.authorChannelId?.value === channelId || seen.has(top.id)) continue;
+      const top = thread.snippet?.topLevelComment, snippet = top?.snippet, videoId = thread.snippet?.videoId;
+      // videoId belongs to the thread; textOriginal is only guaranteed to the comment's author.
+      const text = typeof snippet?.textOriginal === "string" && snippet.textOriginal.trim() ? snippet.textOriginal : snippet?.textDisplay;
+      if (!thread.id || !top?.id || !videoId || typeof text !== "string" || !text.trim() || thread.snippet?.canReply === false || snippet.authorChannelId?.value === channelId || seen.has(top.id)) continue;
       if (options.after && new Date(snippet.publishedAt).getTime() < new Date(options.after).getTime()) continue;
-      seen.add(top.id); comments.push({ id: top.id, text: snippet.textOriginal, videoId: snippet.videoId,
-        authorChannelId: snippet.authorChannelId?.value ?? "", url: `https://www.youtube.com/watch?v=${encodeURIComponent(snippet.videoId)}&lc=${encodeURIComponent(top.id)}` });
+      seen.add(top.id); comments.push({ id: top.id, threadId: thread.id, text, videoId,
+        authorChannelId: snippet.authorChannelId?.value ?? "", url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&lc=${encodeURIComponent(top.id)}` });
     }
     pageToken = data.nextPageToken ?? "";
   } while (pageToken && rawCount < options.limit && pages < 10);
   return { comments, rawCount, pagesFetched: pages, capped: Boolean(pageToken) };
 }
-export async function inspectYoutubeReply(token: string, channelId: string, commentId: string, request: typeof fetch = fetch) {
-  const parent = await get(token, "comments", { part: "snippet", id: commentId, textFormat: "plainText" }, request);
-  const snippet = parent.items?.[0]?.snippet;
-  if (!snippet?.videoId || snippet.parentId) throw new Error("کامنت اصلی پیدا نشد یا قابل پاسخ نیست.");
-  const video = await get(token, "videos", { part: "snippet", id: snippet.videoId }, request);
+async function findYoutubeReplyThread(token: string, commentId: string, context: YoutubeReplyContext, request: typeof fetch) {
+  try {
+    const data = await get(token, "commentThreads", { part: "snippet", id: context.threadId || commentId, textFormat: "plainText" }, request);
+    const thread = data.items?.find((item: any) => item.snippet?.topLevelComment?.id === commentId);
+    if (thread) return thread;
+  } catch (error) {
+    // Some threads do not support lookup by ID. Only a definite lookup miss may fall back to listing.
+    if (!(error instanceof YoutubeCommentApiError) || !["commentThreadNotFound", "operationNotSupported"].includes(error.reason ?? "")) throw error;
+  }
+  // Older queued runs store videoId but not threadId. Recover the actual thread without trusting the saved association.
+  if (context.videoId) {
+    let pageToken = "", pages = 0;
+    do {
+      const data = await get(token, "commentThreads", { part: "snippet", videoId: context.videoId, textFormat: "plainText", maxResults: "100", order: "time", ...(pageToken ? { pageToken } : {}) }, request);
+      const thread = data.items?.find((item: any) => item.snippet?.topLevelComment?.id === commentId);
+      if (thread) return thread;
+      pageToken = data.nextPageToken ?? ""; pages++;
+    } while (pageToken && pages < 20);
+    if (pageToken) throw new Error("تعداد کامنت‌های ویدئو بیش از سقف بررسی است؛ کامنت مقصد را دستی بررسی کنید.");
+  }
+  throw new Error("کامنت اصلی پیدا نشد یا قابل پاسخ نیست.");
+}
+export async function inspectYoutubeReply(token: string, channelId: string, commentId: string, context: YoutubeReplyContext = {}, request: typeof fetch = fetch) {
+  const thread = await findYoutubeReplyThread(token, commentId, context, request);
+  const videoId = thread.snippet?.videoId, snippet = thread.snippet?.topLevelComment?.snippet;
+  if (typeof videoId !== "string" || !videoId || !snippet || snippet.parentId) throw new Error("کامنت اصلی پیدا نشد یا قابل پاسخ نیست.");
+  if (context.videoId && context.videoId !== videoId) throw new Error("کامنت متعلق به ویدئوی انتخاب‌شده نیست.");
+  const video = await get(token, "videos", { part: "snippet", id: videoId }, request);
   if (video.items?.[0]?.snippet?.channelId !== channelId) throw new Error("کامنت متعلق به ویدئوی این کانال نیست.");
-  if (snippet.authorChannelId?.value === channelId) return { videoId: snippet.videoId as string, existingId: "own-comment" };
+  if (snippet.authorChannelId?.value === channelId) return { videoId, existingId: "own-comment" };
   let pageToken = ""; let pages = 0;
   do {
     const data = await get(token, "comments", { part: "snippet", parentId: commentId, maxResults: "100", ...(pageToken ? { pageToken } : {}) }, request);
     const own = data.items?.find((item: any) => item.snippet?.authorChannelId?.value === channelId);
-    if (own) return { videoId: snippet.videoId as string, existingId: String(own.id) };
+    if (own) return { videoId, existingId: String(own.id) };
     pageToken = data.nextPageToken ?? ""; pages++;
   } while (pageToken && pages < 20);
   if (pageToken) throw new Error("پاسخ‌های این کامنت بیش از سقف بررسی است؛ مقصد را دستی بررسی کنید.");
-  return { videoId: snippet.videoId as string, existingId: null };
+  if (thread.snippet.canReply === false) throw new Error("امکان پاسخ به این کامنت در یوتیوب غیرفعال است.");
+  return { videoId, existingId: null };
 }
 export async function insertYoutubeReply(token: string, commentId: string, reply: string, request: typeof fetch = fetch) {
   if (!reply.trim() || reply.length > 3000) throw new Error("پاسخ باید بین ۱ تا ۳۰۰۰ نویسه باشد.");
@@ -99,14 +126,15 @@ export async function claimYoutubeReply(db: ReturnType<typeof getDb>, input: { w
     return { claim, fresh: true };
   });
 }
-export async function sendYoutubeCommentReply(input: { workspaceId: string; accountId: string; workflowId: string; runId: string; commentId: string; reply: string; dailyLimit: number }, assertAllowed: () => Promise<void>) {
+export async function sendYoutubeCommentReply(input: { workspaceId: string; accountId: string; workflowId: string; runId: string; commentId: string; reply: string; dailyLimit: number } & YoutubeReplyContext, assertAllowed: () => Promise<void>) {
   await ensureYoutubeCommentStorage();
   const db = getDb();
   const { token, account } = await youtubeToken(input.accountId, input.workspaceId);
-  const inspected = await inspectYoutubeReply(token, account.externalAccountId, input.commentId);
+  const { videoId, threadId, ...replyInput } = input;
+  const inspected = await inspectYoutubeReply(token, account.externalAccountId, input.commentId, { videoId, threadId });
   if (inspected.existingId) return { replyStatus: "already_replied", externalUrl: `https://www.youtube.com/watch?v=${inspected.videoId}&lc=${encodeURIComponent(inspected.existingId === "own-comment" ? input.commentId : inspected.existingId)}` };
   await assertAllowed();
-  const { claim, fresh } = await claimYoutubeReply(db, { ...input, videoId: inspected.videoId });
+  const { claim, fresh } = await claimYoutubeReply(db, { ...replyInput, videoId: inspected.videoId });
   if (!fresh) {
     if (claim.status !== "succeeded") throw new Error("نتیجه ارسال قبلی نامعلوم است؛ پیش از تلاش دوباره کامنت مقصد را بررسی کنید.");
     return { replyStatus: "succeeded", externalUrl: `https://www.youtube.com/watch?v=${claim.videoId}&lc=${encodeURIComponent(claim.externalId!)}` };

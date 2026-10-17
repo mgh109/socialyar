@@ -55,7 +55,7 @@ function publicFeedUrl(value: string) {
 async function queueItem(workflowId: string, versionId: string, title: string, summary: string,
   link: string, imageUrl: string | null, legacyId?: string, uniqueId?: string, sourceKey?: string,
   videoUrl?: string | null, videoUnavailable?: boolean, commentId?: string, context?: string,
-  comments?: Array<{ id: string; text: string }>, youtube?: { accountId: string; videoId: string }): Promise<boolean> {
+  comments?: Array<{ id: string; text: string }>, youtube?: { accountId: string; videoId: string; threadId?: string }): Promise<boolean> {
   const db = getDb();
   const itemKey = createHash("sha256").update(uniqueId ?? link).digest("hex");
   const legacyKey = createHash("sha256").update(legacyId || link).digest("hex");
@@ -85,7 +85,7 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
 
 type NewsCandidate = { title: string; text: string; url: string; imageUrl: string | null;
   videoUrl?: string | null; videoUnavailable?: boolean; legacyId?: string; uniqueId?: string;
-  youtube?: { accountId: string; videoId: string }; commentId?: string; context?: string; comments?: Array<{ id: string; text: string }> };
+  youtube?: { accountId: string; videoId: string; threadId?: string }; commentId?: string; context?: string; comments?: Array<{ id: string; text: string }> };
 
 type SourceStats = { rawCount: number; matchedCount: number; selectedCount: number; validCount: number;
   pagesFetched?: number; capped?: boolean };
@@ -94,7 +94,7 @@ async function sourceCandidates(source: typeof workflowSteps.$inferSelect, works
     const { token, account } = await youtubeToken(String(source.config.accountId), workspaceId);
     const inspected = await readYoutubeComments(token, account.externalAccountId, { videoId: String(source.config.videoId || ""), limit: Number(source.config.batchLimit ?? 50), after: typeof source.config.after === "string" && source.config.after ? source.config.after : undefined });
     return { items: inspected.comments.map(item => ({ title: "کامنت یوتیوب", text: item.text, url: item.url, imageUrl: null,
-      uniqueId: `youtube-comment:${account.id}:${item.id}`, commentId: item.id, context: String(source.config.context || ""), youtube: { accountId: account.id, videoId: item.videoId } })),
+      uniqueId: `youtube-comment:${account.id}:${item.id}`, commentId: item.id, context: String(source.config.context || ""), youtube: { accountId: account.id, videoId: item.videoId, threadId: item.threadId } })),
       stats: { rawCount: inspected.rawCount, matchedCount: inspected.comments.length, selectedCount: inspected.comments.length, validCount: inspected.comments.length, pagesFetched: inspected.pagesFetched, capped: inspected.capped } };
   }
   if (source.type === "api_source") {

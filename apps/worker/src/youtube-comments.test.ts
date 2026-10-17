@@ -9,18 +9,47 @@ import * as tables from "@socialyar/db/schema";
 import { claimYoutubeReply, readYoutubeComments, inspectYoutubeReply, insertYoutubeReply, youtubeDay, nextYoutubeDay, YoutubeDailyLimitError, getDb } from "@socialyar/db";
 import { executeClaimedRun } from "@socialyar/workflow";
 const json = (data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{"Content-Type":"application/json"}});
-const top=(id:string,author="viewer",date="2026-10-10T12:00:00Z")=>({id:`thread-${id}`,snippet:{canReply:true,topLevelComment:{id,snippet:{textOriginal:`نظر ${id}`,videoId:"video123456",authorChannelId:{value:author},publishedAt:date}}}});
+// Match the public API: videoId is on the thread, and other users' comments may only expose textDisplay.
+const top=(id:string,author="viewer",date="2026-10-10T12:00:00Z")=>({id:`thread-${id}`,snippet:{videoId:"video123456",channelId:"channel",canReply:true,topLevelComment:{id,snippet:{textDisplay:`نظر ${id}`,channelId:"channel",authorChannelId:{value:author},publishedAt:date}}}});
 test("read pagination uses top-level comment IDs, excludes own and old comments, and scopes video ownership",async()=>{
  const calls:string[]=[];
  const request=(async(url:any)=>{calls.push(String(url));const u=new URL(url);if(u.pathname.endsWith('/videos'))return json({items:[{snippet:{channelId:"channel"}}]});return u.searchParams.has('pageToken')?json({items:[top("fresh"),top("old","viewer","2025-01-01T00:00:00Z")]}):json({items:[top("own","channel")],nextPageToken:"p2"});}) as typeof fetch;
  const result=await readYoutubeComments("token","channel",{videoId:"video123456",limit:5,after:"2026-01-01T00:00:00Z"},request);
- assert.deepEqual(result.comments.map(c=>c.id),["fresh"]);assert.equal(result.pagesFetched,2);assert.ok(calls.some(url=>url.includes("pageToken=p2")));
+ assert.deepEqual(result.comments.map(c=>({id:c.id,threadId:c.threadId,videoId:c.videoId,text:c.text})),[{id:"fresh",threadId:"thread-fresh",videoId:"video123456",text:"نظر fresh"}]);assert.equal(result.pagesFetched,2);assert.ok(calls.some(url=>url.includes("pageToken=p2")));
  await assert.rejects(()=>readYoutubeComments("token","other",{videoId:"video123456",limit:5},request),/متعلق/);
 });
 test("reconciliation examines all reply pages before concluding the channel has not replied",async()=>{
  let reads=0;
- const request=(async(url:any)=>{const u=new URL(url);if(u.pathname.endsWith('/videos'))return json({items:[{snippet:{channelId:"channel"}}]});if(u.searchParams.has('id'))return json({items:[{snippet:{videoId:"video123456",authorChannelId:{value:"viewer"}}}]});reads++;return reads===1?json({items:[],nextPageToken:"p2"}):json({items:[{id:"prior-reply",snippet:{authorChannelId:{value:"channel"}}}]});}) as typeof fetch;
- assert.equal((await inspectYoutubeReply("token","channel","parent",request)).existingId,"prior-reply");assert.equal(reads,2);
+ const request=(async(url:any)=>{const u=new URL(url);if(u.pathname.endsWith('/videos'))return json({items:[{snippet:{channelId:"channel"}}]});if(u.pathname.endsWith('/commentThreads')){assert.equal(u.searchParams.get('id'),"thread-parent");assert.equal(u.searchParams.has('maxResults'),false);return json({items:[top("parent")]});}assert.equal(u.searchParams.get('parentId'),"parent");reads++;return reads===1?json({items:[],nextPageToken:"p2"}):json({items:[{id:"prior-reply",snippet:{authorChannelId:{value:"channel"}}}]});}) as typeof fetch;
+ assert.equal((await inspectYoutubeReply("token","channel","parent",{videoId:"video123456",threadId:"thread-parent"},request)).existingId,"prior-reply");assert.equal(reads,2);
+});
+test("official thread shape passes preflight and posts to the top-level comment, not the thread ID",async()=>{
+ let posts=0;
+ const request=(async(url:any,options:any)=>{const u=new URL(url);if(options?.method==="POST"){posts++;assert.deepEqual(JSON.parse(options.body),{snippet:{parentId:"parent",textOriginal:"پاسخ آماده"}});return json({id:"new-reply"});}if(u.pathname.endsWith('/videos'))return json({items:[{snippet:{channelId:"channel"}}]});if(u.pathname.endsWith('/commentThreads'))return json({items:[top("parent")]});assert.equal(u.searchParams.get('parentId'),"parent");return json({items:[]});}) as typeof fetch;
+ const inspected=await inspectYoutubeReply("token","channel","parent",{threadId:"thread-parent",videoId:"video123456"},request);
+ assert.deepEqual(inspected,{videoId:"video123456",existingId:null});
+ assert.equal(await insertYoutubeReply("token","parent","پاسخ آماده",request),"new-reply");assert.equal(posts,1);
+});
+test("old queued replies recover the real thread by video, including unsupported ID filters and lookup misses",async()=>{
+ for(const failure of [null,{reason:"commentThreadNotFound",status:404},{reason:"operationNotSupported",status:400}]){
+  let pages=0;
+  const request=(async(url:any)=>{const u=new URL(url);if(u.pathname.endsWith('/videos'))return json({items:[{snippet:{channelId:"channel"}}]});if(u.pathname.endsWith('/comments'))return json({items:[]});if(u.searchParams.has('id')){assert.equal(u.searchParams.get('id'),"parent");return failure?json({error:{errors:[{reason:failure.reason}]}},failure.status):json({items:[top("other")]});}assert.equal(u.searchParams.get('videoId'),"video123456");pages++;return u.searchParams.has('pageToken')?json({items:[top("parent")]}):json({items:[top("other")],nextPageToken:"p2"});}) as typeof fetch;
+  assert.deepEqual(await inspectYoutubeReply("token","channel","parent",{videoId:"video123456"},request),{videoId:"video123456",existingId:null});assert.equal(pages,2);
+ }
+});
+test("preflight rejects another video, another channel, closed replies and missing top-level parents",async()=>{
+ for(const scenario of ["video","channel","closed","missing"]){
+  const request=(async(url:any)=>{const u=new URL(url);if(u.pathname.endsWith('/videos'))return json({items:[{snippet:{channelId:scenario==="channel"?"other":"channel"}}]});if(u.pathname.endsWith('/comments'))return json({items:[]});const thread=top(scenario==="missing"?"other":"parent");if(scenario==="closed")thread.snippet.canReply=false;return json({items:[thread]});}) as typeof fetch;
+  await assert.rejects(()=>inspectYoutubeReply("token","channel","parent",{videoId:scenario==="video"?"wrong-video":"video123456",threadId:"thread-parent"},request),scenario==="closed"?/غیرفعال/:scenario==="missing"?/پیدا نشد/:/متعلق/);
+ }
+});
+test("preflight preserves authorization errors and never treats truncated replies as safe to resend",async()=>{
+ let calls=0;
+ const forbidden=(async()=>{calls++;return json({error:{errors:[{reason:"forbidden"}]}},403);}) as typeof fetch;
+ await assert.rejects(()=>inspectYoutubeReply("token","channel","parent",{videoId:"video123456"},forbidden),/مجوز/);assert.equal(calls,1);
+ let pages=0;
+ const truncated=(async(url:any)=>{const u=new URL(url);if(u.pathname.endsWith('/commentThreads'))return json({items:[top("parent")]});if(u.pathname.endsWith('/videos'))return json({items:[{snippet:{channelId:"channel"}}]});pages++;return json({items:[],nextPageToken:`p${pages}`});}) as typeof fetch;
+ await assert.rejects(()=>inspectYoutubeReply("token","channel","parent",{threadId:"thread-parent"},truncated),/بیش از سقف/);assert.equal(pages,20);
 });
 test("insert posts reply text to the actual parent, rejects missing response IDs and excessive text",async()=>{
  let posts=0;
@@ -41,9 +70,9 @@ before(async()=>{
  await db.insert(tables.workflowSteps).values([{id:sourceId,workflowVersionId:versionId,key:"comments",type:"youtube_comments",name:"کامنت",config:{accountId},order:0},{id:replyId,workflowVersionId:versionId,key:"reply",type:"youtube_reply",name:"پاسخ",config:{accountId,requireApproval:true,dailyLimit:20},order:1}]);
  await db.insert(tables.workflowConnections).values({workflowVersionId:versionId,sourceStepId:sourceId,targetStepId:replyId});
 });after(async()=>{await engine.close();});
-async function makeRun(requireApproval=true){const id=randomUUID();const input={text:"سؤال",commentId:id,sourceKey:"comments",youtube:{accountId,videoId:"video123456"}};await db.insert(tables.runs).values({id,workflowId,workflowVersionId:versionId,status:"queued",input});await db.update(tables.workflowSteps).set({config:{accountId,requireApproval,dailyLimit:20}}).where(eq(tables.workflowSteps.id,replyId));await db.insert(tables.runSteps).values({runId:id,workflowStepId:replyId,status:"retrying",output:{...input,reply:"پاسخ پیشنهادی",decision:"reply",sentiment:"neutral"}});return id;}
+async function makeRun(requireApproval=true,threadId?:string){const id=randomUUID();const input={text:"سؤال",commentId:id,sourceKey:"comments",youtube:{accountId,videoId:"video123456",...(threadId?{threadId}:{})}};await db.insert(tables.runs).values({id,workflowId,workflowVersionId:versionId,status:"queued",input});await db.update(tables.workflowSteps).set({config:{accountId,requireApproval,dailyLimit:20}}).where(eq(tables.workflowSteps.id,replyId));await db.insert(tables.runSteps).values({runId:id,workflowStepId:replyId,status:"retrying",output:{...input,reply:"پاسخ پیشنهادی",decision:"reply",sentiment:"neutral"}});return id;}
 test("review sends nothing, approved retry preserves edited text and completed execution never duplicates",async()=>{
- const id=await makeRun();let sends=0;let text="";const send=(async(input:any,guard:any)=>{await guard();sends++;text=input.reply;return {replyStatus:"succeeded",externalUrl:"https://youtube.com/reply"};}) as any;
+ const id=await makeRun();let sends=0;let text="";const send=(async(input:any,guard:any)=>{await guard();sends++;text=input.reply;assert.equal(input.videoId,"video123456");assert.equal(input.threadId,undefined);assert.equal(input.commentId,id);return {replyStatus:"succeeded",externalUrl:"https://youtube.com/reply"};}) as any;
  const input={runId:id,workflowId,workflowVersionId:versionId};const first=await executeClaimedRun(input,async()=>{},database,send);assert.equal(first?.status,"waiting_approval");assert.equal(sends,0);
  const [record]=await db.select().from(tables.runSteps).where(eq(tables.runSteps.workflowStepId,replyId));await db.update(tables.runSteps).set({status:"queued",output:{...record.output,approved:true,reply:"پاسخ ویرایش‌شده"}}).where(eq(tables.runSteps.id,record.id));await db.update(tables.runs).set({status:"queued"}).where(eq(tables.runs.id,id));
  assert.equal((await executeClaimedRun(input,async()=>{},database,send))?.status,"completed");assert.equal(text,"پاسخ ویرایش‌شده");await executeClaimedRun(input,async()=>{},database,send);assert.equal(sends,1);
@@ -64,7 +93,7 @@ test("daily claim is channel-wide, idempotent across workflows, keeps uncertain 
 });
 
 test("automatic replies complete with no approval gate",async()=>{
- const id=await makeRun(false);let sends=0;const send=(async(_input:any,guard:any)=>{await guard();sends++;return {replyStatus:"succeeded",externalUrl:"https://youtube.com/success"};}) as any;
+ const id=await makeRun(false,"thread-new");let sends=0;const send=(async(input:any,guard:any)=>{await guard();assert.equal(input.threadId,"thread-new");assert.equal(input.videoId,"video123456");assert.equal(input.commentId,id);sends++;return {replyStatus:"succeeded",externalUrl:"https://youtube.com/success"};}) as any;
  const result=await executeClaimedRun({runId:id,workflowId,workflowVersionId:versionId},async()=>{},database,send);assert.equal(result?.status,"completed");assert.equal(sends,1);
 });
 
