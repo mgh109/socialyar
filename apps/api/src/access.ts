@@ -132,7 +132,7 @@ export async function enforceAccess(db: Db, request: FastifyRequest, reply: Fast
     if(path.startsWith("/calendar/items/")&&params.id){if(params.kind==="youtube")await video(params.id);else if(params.kind==="variant")await variant(params.id);else deny();}
     if (restricted) {
       // These handlers return workspace-wide data or have no ownership link for media blobs.
-      if (/^\/(analytics|calendar|approvals|publications)(\/|$)/.test(path) && read && !params.id && !params.publicationId && !params.approvalId && !["/calendar/items","/approvals"].includes(path)) deny();
+      if (/^\/(analytics|calendar|approvals|publications)(\/|$)/.test(path) && read && !params.id && !params.publicationId && !params.approvalId && !["/calendar/items","/approvals","/analytics/youtube-comments"].includes(path)) deny();
       
       if(path.startsWith("/youtube/media/"))deny();
       if(path.startsWith("/content-collections") && !body.workflowId && !(request.query as any)?.workflowId)deny();

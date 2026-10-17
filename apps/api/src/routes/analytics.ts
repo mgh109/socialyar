@@ -3,41 +3,24 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
   aiUsageEvents, ensureAIUsageStorage, workflows, workflowSteps, runSteps, analyticsEvents,
-  contentItems,
-  contentVariants,
   getDb,
   publications,
   schedules,
 } from "@socialyar/db";
 import { publicationQueue } from "../queue";
+import { publicationReport, publicationSummary } from "../publication-report";
+import { youtubeCommentReportRoutes } from "./comment-reports";
 
 const rangeQuery = z.object({
-  workspaceId: z.string().uuid(),
+  workspaceId: z.string().uuid().optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
 });
 
-function rangeCondition(
-  workspaceId: string,
-  from?: string,
-  to?: string,
-) {
-  const conditions = [eq(publications.workspaceId, workspaceId)];
-
-  if (from) {
-    conditions.push(gte(publications.createdAt, new Date(from)));
-  }
-
-  if (to) {
-    conditions.push(lte(publications.createdAt, new Date(to)));
-  }
-
-  return and(...conditions);
-}
-
-export async function analyticsRoutes(app: FastifyInstance) {
-  const db = getDb();
+export async function analyticsRoutes(app: FastifyInstance, options: { database?: ReturnType<typeof getDb> } = {}) {
+  const db = options.database ?? getDb();
   app.addHook("onRequest", app.authenticate);
+  await app.register(youtubeCommentReportRoutes, { database: db });
 
   app.get("/analytics/ai-usage", async (request) => {
     const query = z.object({ period: z.enum(["7d", "30d", "90d", "all"]).default("30d"),
@@ -81,78 +64,10 @@ export async function analyticsRoutes(app: FastifyInstance) {
   app.get("/analytics/summary", async (request) => {
     const query = rangeQuery.parse(request.query);
 
-    const publicationRows = await db
-      .select({
-        publication: publications,
-        variant: contentVariants,
-      })
-      .from(publications)
-      .innerJoin(
-        contentVariants,
-        eq(publications.contentVariantId, contentVariants.id),
-      )
-      .where(rangeCondition(request.auth.workspaceId, query.from, query.to))
-      .orderBy(desc(publications.createdAt));
-
-    const eventRows = await db
-      .select()
-      .from(analyticsEvents)
-      .where(eq(analyticsEvents.workspaceId, request.auth.workspaceId));
-
-    const total = publicationRows.length;
-    const published = publicationRows.filter(
-      (row) => row.publication.status === "published",
-    ).length;
-    const failed = publicationRows.filter(
-      (row) => row.publication.status === "failed",
-    ).length;
-    const queued = publicationRows.filter(
-      (row) =>
-        row.publication.status === "queued" ||
-        row.publication.status === "publishing",
-    ).length;
-
-    const byChannel = Object.values(
-      publicationRows.reduce<
-        Record<
-          string,
-          {
-            channel: string;
-            total: number;
-            published: number;
-            failed: number;
-            attempts: number;
-          }
-        >
-      >((acc, row) => {
-        const key = row.variant.channel;
-        acc[key] ??= {
-          channel: key,
-          total: 0,
-          published: 0,
-          failed: 0,
-          attempts: 0,
-        };
-
-        acc[key].total += 1;
-        acc[key].attempts += row.publication.attempt ?? 0;
-
-        if (row.publication.status === "published") {
-          acc[key].published += 1;
-        }
-
-        if (row.publication.status === "failed") {
-          acc[key].failed += 1;
-        }
-
-        return acc;
-      }, {}),
-    ).map((item) => ({
-      ...item,
-      successRate:
-        item.total > 0 ? Math.round((item.published / item.total) * 100) : 0,
-    }));
-
+    const publicationRows = await publicationReport(db, request.auth.workspaceId, query.from, query.to);
+    const eventRows = await db.select().from(analyticsEvents).where(and(eq(analyticsEvents.workspaceId, request.auth.workspaceId),
+      query.from ? gte(analyticsEvents.recordedAt, new Date(query.from)) : undefined,
+      query.to ? lte(analyticsEvents.recordedAt, new Date(query.to)) : undefined));
     const eventTotals = Object.values(
       eventRows.reduce<Record<string, { type: string; value: number }>>(
         (acc, event) => {
@@ -164,54 +79,13 @@ export async function analyticsRoutes(app: FastifyInstance) {
       ),
     );
 
-    return {
-      totals: {
-        total,
-        published,
-        failed,
-        queued,
-        successRate:
-          total > 0 ? Math.round((published / total) * 100) : 0,
-        totalAttempts: publicationRows.reduce(
-          (sum, row) => sum + (row.publication.attempt ?? 0),
-          0,
-        ),
-      },
-      byChannel,
-      events: eventTotals,
-    };
+    return { ...publicationSummary(publicationRows), events: eventTotals };
   });
 
   app.get("/publications", async (request) => {
-    const query = rangeQuery
-      .extend({
-        status: z
-          .enum(["queued", "publishing", "published", "failed", "cancelled"])
-          .optional(),
-      })
-      .parse(request.query);
-
-    const rows = await db
-      .select({
-        publication: publications,
-        variant: contentVariants,
-        content: contentItems,
-      })
-      .from(publications)
-      .innerJoin(
-        contentVariants,
-        eq(publications.contentVariantId, contentVariants.id),
-      )
-      .innerJoin(
-        contentItems,
-        eq(contentVariants.contentItemId, contentItems.id),
-      )
-      .where(rangeCondition(request.auth.workspaceId, query.from, query.to))
-      .orderBy(desc(publications.createdAt));
-
-    return query.status
-      ? rows.filter((row) => row.publication.status === query.status)
-      : rows;
+    const query = rangeQuery.extend({ status: z.enum(["queued", "publishing", "published", "failed", "cancelled"]).optional() }).parse(request.query);
+    const rows = await publicationReport(db, request.auth.workspaceId, query.from, query.to);
+    return query.status ? rows.filter(row => row.publication.status === query.status) : rows;
   });
 
   app.post("/analytics/events", async (request, reply) => {

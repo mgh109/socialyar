@@ -1901,3 +1901,37 @@ body:has(.review-page) .app-navigation a,body:has(.review-page) .app-navigation 
   .review-list-item { min-height:96px; } .review-state { font-size:10px; }
 }
 @media(max-width:420px) { .review-tabs button { padding-inline:6px; } .review-tabs button span { display:none; } .review-state { padding-inline:5px; } }
+
+/* Reports share navigation while publication, conversations and AI usage stay independently readable. */
+.report-tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:22px; padding:5px; width:fit-content; max-width:100%; border:1px solid var(--border); border-radius:12px; background:var(--panel); }
+.report-tabs a { padding:10px 16px; border-radius:8px; color:var(--muted); font-size:13px; text-decoration:none; }
+.report-tabs a[aria-current=page] { background:var(--accent-soft); color:var(--accent-text); font-weight:700; }
+.report-tabs a:focus-visible { outline:2px solid var(--green); outline-offset:2px; }
+.report-filters { display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin:20px 0 14px; }
+.report-filters label { display:grid; gap:7px; min-width:0; color:var(--muted); font-size:12px; }
+.report-filters input,.report-filters select { width:100%; min-width:0; padding:10px 12px; border:1px solid var(--border); border-radius:9px; background:var(--panel); color:var(--text); font:inherit; }
+.report-error { color:var(--red); white-space:pre-wrap; overflow-wrap:anywhere; font-size:13px; }
+.report-note { font-size:12px; color:var(--muted); }
+.analytics-shell .history-row { background:var(--panel); grid-template-columns:150px minmax(0,1fr) 145px 220px; }
+.analytics-shell .history-main { min-width:0; overflow-wrap:anywhere; }
+.analytics-shell .history-main p { margin:3px 0; }
+.analytics-shell .history-time { font-size:12px; color:var(--muted); line-height:1.9; }
+.analytics-shell .history-action { flex-wrap:wrap; }
+.comment-report-filters { grid-template-columns:2fr 1fr 1fr 1fr 1fr; }
+.comment-report-metrics { grid-template-columns:repeat(5,minmax(0,1fr)); margin-bottom:22px; }
+.comment-report-list { display:grid; gap:14px; }
+.comment-report-item { padding:20px; border:1px solid var(--border); border-radius:14px; background:var(--panel); min-width:0; }
+.comment-report-item header,.comment-report-item footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
+.comment-report-item header>div { display:grid; gap:5px; }
+.comment-report-item header span:not(.publication-state),.comment-report-item small,.comment-report-item footer { color:var(--muted); font-size:12px; }
+.comment-conversation { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:18px 0; }
+.comment-conversation section { min-width:0; padding:14px; border-radius:10px; background:var(--panel2); }
+.comment-conversation section.sent { background:var(--accent-soft); }
+.comment-conversation p { margin:8px 0 0; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.95; font-size:14px; }
+.report-row-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:16px; }
+.report-row-actions details { font-size:12px; color:var(--muted); }
+.report-row-actions summary { cursor:pointer; }
+.report-row-actions details p { white-space:pre-wrap; max-width:700px; }
+.report-pagination { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:16px; margin-top:22px; font-size:12px; }
+@media(max-width:1100px) { .comment-report-filters { grid-template-columns:repeat(3,minmax(0,1fr)); } .comment-report-filters label:first-child { grid-column:span 2; } .analytics-shell .history-row { grid-template-columns:130px minmax(0,1fr) 150px; } .analytics-shell .history-action { grid-column:2/-1; justify-content:flex-start; } }
+@media(max-width:700px) { .report-tabs { width:100%; } .report-tabs a { flex:1; padding:9px 6px; text-align:center; font-size:12px; } .report-filters,.comment-report-filters { grid-template-columns:1fr 1fr; } .report-filters label:first-child { grid-column:1/-1; } .comment-report-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .comment-conversation { grid-template-columns:1fr; } .comment-report-item { padding:14px; } .analytics-shell .history-row { grid-template-columns:1fr; } .analytics-shell .history-action { grid-column:auto; } }

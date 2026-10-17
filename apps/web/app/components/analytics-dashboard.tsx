@@ -1,11 +1,15 @@
 "use client";
-import { ImageUsageSummary } from "./image-usage-summary";
-import { apiFetch, getWorkspaceId } from "../lib/session";
-
-import { BrandLogo } from "./brand-logo";
-import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-
+import { useEffect, useState } from "react";
+import { apiFetch } from "../lib/session";
+import { persianError } from "../lib/persian";
+import {
+  publicationActionPath,
+  publicationStates,
+  reportChannels,
+  type PublicationRow,
+} from "../lib/reports";
+import { ReportsShell } from "./reports-shell";
+import { PublicationReportRow } from "./publication-report-row";
 type Summary = {
   totals: {
     total: number;
@@ -25,391 +29,254 @@ type Summary = {
   }>;
   events: Array<{ type: string; value: number }>;
 };
-
-type UsageMetrics = { requests: number; inputTokens: number | string; outputTokens: number | string;
-  costMicros: number | string; unreportedTokens: number; unreportedCost: number };
-type AIUsageReport = { period: string; totals: UsageMetrics;
-  byWorkflow: Array<UsageMetrics & { workflowId: string | null; workflowName: string | null }>;
-  byModel: Array<UsageMetrics & { provider: string; model: string }> };
-const usageNumber = (value: number | string) => Number(value).toLocaleString("fa-IR");
-const usageCost = (value: number | string) => (Number(value) / 1_000_000).toLocaleString("fa-IR", { maximumFractionDigits: 4 });
-
-type PublicationRow = {
-  publication: {
-    id: string;
-    status: string;
-    attempt: number;
-    externalUrl: string | null;
-    error: Record<string, unknown> | null;
-    createdAt: string;
-    publishedAt: string | null;
-  };
-  variant: {
-    id: string;
-    channel: string;
-    title: string | null;
-  };
-  content: {
-    id: string;
-    title: string | null;
-    metadata: { sourceUrl?: unknown; routePath?: unknown };
-  };
-};
-
-const channelLabels: Record<string, string> = {
-  instagram: "اینستاگرام",
-  telegram: "تلگرام",
-  eitaa: "ایتا",
-  website: "وب‌سایت",
-  x: "ایکس",
-  linkedin: "لینکدین",
-};
-const statusLabels: Record<string, string> = {
-  queued: "در صف", publishing: "در حال انتشار", published: "منتشرشده", failed: "ناموفق", cancelled: "لغوشده",
-};
-
 export function AnalyticsDashboard() {
-  const workspaceId = getWorkspaceId();
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [publications, setPublications] = useState<PublicationRow[]>([]);
-  const [usage, setUsage] = useState<AIUsageReport | null>(null);
-  const [usagePeriod, setUsagePeriod] = useState("30d");
-  const [usageError, setUsageError] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [message, setMessage] = useState("در حال دریافت آمار...");
-  const [retrying, setRetrying] = useState<string | null>(null);
-
-  const cancel = async (id: string) => {
-    if (!window.confirm("این خبر از صف انتشار حذف شود؟")) return;
-    setRetrying(id);
-    try {
-      const response = await apiFetch(`/publications/${id}/cancel`, { method: "POST" });
-      if (!response.ok) throw new Error(response.status === 409 ? "انتشار شروع شده یا قبلاً لغو شده است" : "لغو انتشار ناموفق بود");
-      await load(); setMessage("انتشار این خبر لغو شد");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "لغو انتشار ناموفق بود"); }
-    finally { setRetrying(null); }
-  };
-
-  const retry = async (id: string) => {
-    setRetrying(id);
-    try {
-      const response = await apiFetch(`/publications/${id}/retry`, { method: "POST" });
-      if (!response.ok) throw new Error("ثبت تلاش دوباره ناموفق بود");
-      await load();
-      setMessage("انتشار دوباره در صف قرار گرفت");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "خطا در تلاش دوباره"); }
-    finally { setRetrying(null); }
-  };
-
-  const load = async () => {
-    if (!workspaceId) {
-      setMessage("ابتدا وارد حساب کاربری شوید");
+  const [summary, setSummary] = useState<Summary | null>(null),
+    [rows, setRows] = useState<PublicationRow[]>([]);
+  const [status, setStatus] = useState(""),
+    [channel, setChannel] = useState(""),
+    [search, setSearch] = useState("");
+  const [error, setError] = useState(""),
+    [message, setMessage] = useState(""),
+    [refresh, setRefresh] = useState(0),
+    [busy, setBusy] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    let loading = false;
+    const load = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const [a, b] = await Promise.all([
+          apiFetch("/analytics/summary", { signal: controller.signal }),
+          apiFetch("/publications", { signal: controller.signal }),
+        ]);
+        if (!a.ok || !b.ok) throw new Error();
+        const [nextSummary, nextRows] = await Promise.all([a.json(), b.json()]);
+        if (!controller.signal.aborted) {
+          setSummary(nextSummary);
+          setRows(nextRows);
+          setError("");
+        }
+      } catch {
+        if (!controller.signal.aborted)
+          setError("گزارش انتشار دریافت نشد؛ دوباره تلاش کنید.");
+      } finally {
+        loading = false;
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 15000);
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [refresh]);
+  const act = async (row: PublicationRow, action: "retry" | "cancel") => {
+    if (
+      action === "cancel" &&
+      !window.confirm("این محتوا از صف انتشار خارج شود؟")
+    )
       return;
+    setBusy(row.publication.id);
+    setMessage("");
+    try {
+      const response = await apiFetch(publicationActionPath(row, action), {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!response.ok)
+        throw new Error(
+          persianError(data.error, "تغییر وضعیت انتشار انجام نشد."),
+        );
+      setRefresh((value) => value + 1);
+      setMessage(
+        action === "retry"
+          ? "بررسی و ادامهٔ همین محتوا در صف قرار گرفت."
+          : "انتشار لغو شد.",
+      );
+    } catch (e) {
+      setMessage(persianError(e));
+    } finally {
+      setBusy("");
     }
-
-    const [summaryResponse, historyResponse] = await Promise.all([
-      apiFetch(`/analytics/summary?workspaceId=${workspaceId}`),
-      apiFetch(`/publications?workspaceId=${workspaceId}`),
-    ]);
-
-    if (!summaryResponse.ok || !historyResponse.ok) {
-      throw new Error("دریافت آمار و تاریخچه انتشار ناموفق بود");
-    }
-
-    setSummary(await summaryResponse.json());
-    setPublications(await historyResponse.json());
-    setMessage("آخرین وضعیت انتشارها");
   };
-
-  useEffect(() => {
-    if (!workspaceId) return;
-    let active = true;
-    const refresh = () => void apiFetch(`/analytics/ai-usage?period=${usagePeriod}`)
-      .then(async (response) => {
-        if (!response.ok) throw new Error("دریافت مصرف هوش مصنوعی ناموفق بود");
-        if (active) { setUsage(await response.json()); setUsageError(""); }
-      }).catch(() => { if (active) setUsageError("دریافت مصرف هوش مصنوعی ناموفق بود"); });
-    refresh();
-    const timer = window.setInterval(refresh, 30_000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [workspaceId, usagePeriod]);
-
-  useEffect(() => {
-    void load().catch((error) =>
-      setMessage(error instanceof Error ? error.message : "خطا در دریافت آمار"),
-    );
-  }, [workspaceId]);
-
-  const filtered = useMemo(
-    () =>
-      statusFilter === "all"
-        ? publications
-        : publications.filter(
-            (row) => row.publication.status === statusFilter,
-          ),
-    [publications, statusFilter],
+  const query = search.trim().toLocaleLowerCase();
+  const filtered = rows.filter(
+    (row) =>
+      (!status || row.publication.status === status) &&
+      (!channel || row.variant.channel === channel) &&
+      (!query ||
+        `${row.variant.title} ${row.content.title} ${row.youtube?.accountName ?? ""} ${row.youtube?.workflowName ?? ""}`
+          .toLocaleLowerCase()
+          .includes(query)),
   );
-
-  if (!summary) {
-    return (
-      <main className="workflow-page">
-        <header className="app-header">
-          <div className="brand-lockup">
-            <BrandLogo />
-
-            <span>آمار انتشار</span>
-          </div>
-        </header>
-        <div className="studio-loading">{message}</div>
-      </main>
-    );
-  }
-
   return (
-    <main className="workflow-page">
-      <header className="app-header">
-        <div className="brand-lockup">
-          <BrandLogo />
-
-          <span>آمار و تاریخچه انتشار</span>
-        </div>
-        <div className="header-actions">
-          <span className="save-status">{message}</span>
-          <Link className="ghost-link" href="/connections">
-            اتصال کانال‌ها
-          </Link>
-          <Link className="ghost-link" href="/calendar">
-            تقویم
-          </Link>
-        </div>
-      </header>
-
-      <section className="analytics-shell">
-        <div className="analytics-heading">
-          <span className="micro-label">عملکرد انتشار</span>
-          <h1>داشبورد انتشار و سلامت کانال‌ها</h1>
-          <p>
-            آمار این صفحه از انتشارها و رویدادهای ثبت‌شده محاسبه می‌شود.
-          </p>
-        </div>
-
-        <div className="metric-grid">
-          <article className="metric-card">
-            <span>کل انتشارها</span>
-            <strong>{summary.totals.total}</strong>
-          </article>
-          <article className="metric-card success">
-            <span>موفق</span>
-            <strong>{summary.totals.published}</strong>
-          </article>
-          <article className="metric-card danger">
-            <span>ناموفق</span>
-            <strong>{summary.totals.failed}</strong>
-          </article>
-          <article className="metric-card">
-            <span>در صف / در حال انتشار</span>
-            <strong>{summary.totals.queued}</strong>
-          </article>
-          <article className="metric-card">
-            <span>نرخ موفقیت</span>
-            <strong>{summary.totals.successRate}%</strong>
-          </article>
-          <article className="metric-card">
-            <span>کل تلاش‌ها</span>
-            <strong>{summary.totals.totalAttempts}</strong>
-          </article>
-        </div>
-
-        <section className="channel-performance ai-usage-section">
-          <div className="section-title-row">
-            <div><h2>مصرف هوش مصنوعی</h2><p>بر پایهٔ پاسخ واقعی سرویس؛ هر درخواست پس از پاسخ ثبت می‌شود و این بخش هر ۳۰ ثانیه تازه می‌شود.</p></div>
-            <select className="history-filter" aria-label="بازهٔ مصرف هوش مصنوعی" value={usagePeriod}
-              onChange={(event) => setUsagePeriod(event.target.value)}>
-              <option value="7d">۷ روز اخیر</option><option value="30d">۳۰ روز اخیر</option>
-              <option value="90d">۹۰ روز اخیر</option><option value="all">همهٔ زمان‌ها</option>
-            </select>
+    <ReportsShell
+      active="publications"
+      title="گزارش انتشار ویدئو و محتوا"
+      description="انتشارهای همهٔ کانال‌ها، شامل ویدئوهای یوتیوب؛ وضعیت‌ها هر ۱۵ ثانیه تازه می‌شوند."
+      actions={
+        <button
+          className="ghost-button"
+          onClick={() => setRefresh((value) => value + 1)}
+        >
+          تازه‌سازی
+        </button>
+      }
+    >
+      {error ? (
+        <p role="alert" className="report-error">
+          {error}
+        </p>
+      ) : null}
+      {message ? <p role="status">{message}</p> : null}
+      {summary ? (
+        <>
+          <div className="metric-grid">
+            {[
+              ["کل انتشارها", summary.totals.total],
+              ["موفق", summary.totals.published],
+              ["ناموفق", summary.totals.failed],
+              ["در صف / در حال انتشار", summary.totals.queued],
+              [
+                "نرخ موفقیت",
+                `${summary.totals.successRate.toLocaleString("fa-IR")}٪`,
+              ],
+              ["کل تلاش‌ها", summary.totals.totalAttempts],
+            ].map(([label, value], index) => (
+              <article
+                className={`metric-card ${index === 1 ? "success" : index === 2 ? "danger" : ""}`}
+                key={label}
+              >
+                <span>{label}</span>
+                <strong>
+                  {typeof value === "number"
+                    ? value.toLocaleString("fa-IR")
+                    : value}
+                </strong>
+              </article>
+            ))}
           </div>
-          <ImageUsageSummary period={usagePeriod}/>{usageError && <p role="alert">{usageError}</p>}
-          {usage && <>
-            <div className="metric-grid ai-usage-grid">
-              <article className="metric-card"><span>درخواست‌های AI</span><strong>{usageNumber(usage.totals.requests)}</strong></article>
-              <article className="metric-card"><span>توکن ورودی</span><strong>{usageNumber(usage.totals.inputTokens)}</strong></article>
-              <article className="metric-card"><span>توکن خروجی</span><strong>{usageNumber(usage.totals.outputTokens)}</strong></article>
-              <article className="metric-card"><span>هزینهٔ گزارش‌شده (دلار)</span><strong>${usageCost(usage.totals.costMicros)}</strong></article>
+          <section className="history-section">
+            <div className="section-title-row">
+              <h2>تاریخچه انتشار</h2>
+              <small>{filtered.length.toLocaleString("fa-IR")} مورد</small>
             </div>
-            {(usage.totals.unreportedTokens > 0 || usage.totals.unreportedCost > 0) &&
-              <p className="usage-caveat">{usageNumber(usage.totals.unreportedTokens)} درخواست بدون آمار کامل توکن و {usageNumber(usage.totals.unreportedCost)} درخواست بدون هزینهٔ گزارش‌شده است؛ مبلغ بالا کل هزینهٔ قطعی نیست.</p>}
-            <div className="usage-breakdown">
-              <div><h3>مصرف هر جریان</h3>
-                {usage.byWorkflow.length ? usage.byWorkflow.map((row) => <div className="usage-row" key={row.workflowId ?? "preview"}>
-                  <span>{row.workflowName ?? (row.workflowId ? "جریان حذف‌شده" : "آزمون اتصال AI")}</span>
-                  <span>{usageNumber(row.requests)} درخواست · {usageNumber(Number(row.inputTokens) + Number(row.outputTokens))} توکن</span>
-                  <span>{row.unreportedCost ? "هزینهٔ ناقص · " : ""}${usageCost(row.costMicros)}</span>
-                </div>) : <p>هنوز مصرفی ثبت نشده است.</p>}
-              </div>
-              <div><h3>مصرف هر مدل</h3>
-                {usage.byModel.length ? usage.byModel.map((row) => <div className="usage-row" key={`${row.provider}:${row.model}`}>
-                  <span dir="ltr">{row.provider} / {row.model}</span>
-                  <span>{usageNumber(row.requests)} درخواست · {usageNumber(Number(row.inputTokens) + Number(row.outputTokens))} توکن</span>
-                  <span>{row.unreportedCost ? "هزینهٔ ناقص · " : ""}${usageCost(row.costMicros)}</span>
-                </div>) : <p>هنوز مصرفی ثبت نشده است.</p>}
-              </div>
+            <div className="report-filters">
+              <label>
+                جست‌وجو
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="عنوان ویدئو، کانال یا جریان"
+                />
+              </label>
+              <label>
+                کانال
+                <select
+                  value={channel}
+                  onChange={(e) => setChannel(e.target.value)}
+                >
+                  <option value="">همه کانال‌ها</option>
+                  {Object.entries(reportChannels).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                وضعیت
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                >
+                  <option value="">همه وضعیت‌ها</option>
+                  {Object.entries(publicationStates).map(([key, label]) => (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-          </>}
-        </section>
-
-        <section className="channel-performance">
-          <div className="section-title-row">
-            <div>
+            <div className="history-list">
+              {filtered.length ? (
+                filtered.map((row) => (
+                  <PublicationReportRow
+                    key={`${row.kind}:${row.publication.id}`}
+                    row={row}
+                    busy={busy === row.publication.id}
+                    act={(item, action) => void act(item, action)}
+                  />
+                ))
+              ) : (
+                <p className="empty-state">
+                  انتشاری با این فیلترها وجود ندارد.
+                </p>
+              )}
+            </div>
+          </section>
+          <section className="channel-performance">
+            <div className="section-title-row">
               <h2>عملکرد کانال‌ها</h2>
-              <p>نرخ موفقیت، خطا و تعداد تلاش انتشار برای هر کانال</p>
             </div>
-          </div>
-
-          <div className="channel-performance-grid">
-            {summary.byChannel.length === 0 ? (
-              <div className="empty-state">هنوز داده‌ای برای کانال‌ها نداریم.</div>
-            ) : (
-              summary.byChannel.map((channel) => (
-                <article className="channel-performance-card" key={channel.channel}>
+            <div className="channel-performance-grid">
+              {summary.byChannel.map((item) => (
+                <article
+                  key={item.channel}
+                  className="channel-performance-card"
+                >
                   <div className="channel-performance-head">
                     <strong>
-                      {channelLabels[channel.channel] ?? channel.channel}
+                      {reportChannels[item.channel] ?? item.channel}
                     </strong>
-                    <span>{channel.successRate}% موفق</span>
+                    <span>
+                      {item.successRate.toLocaleString("fa-IR")}٪ موفق
+                    </span>
                   </div>
                   <div className="performance-bar">
-                    <span style={{ width: `${channel.successRate}%` }} />
+                    <span style={{ width: `${item.successRate}%` }} />
                   </div>
                   <dl>
-                    <div><dt>کل</dt><dd>{channel.total}</dd></div>
-                    <div><dt>موفق</dt><dd>{channel.published}</dd></div>
-                    <div><dt>خطا</dt><dd>{channel.failed}</dd></div>
-                    <div><dt>تلاش‌ها</dt><dd>{channel.attempts}</dd></div>
+                    {[
+                      ["کل", item.total],
+                      ["موفق", item.published],
+                      ["ناموفق", item.failed],
+                      ["تلاش‌ها", item.attempts],
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <dt>{label}</dt>
+                        <dd>{Number(value).toLocaleString("fa-IR")}</dd>
+                      </div>
+                    ))}
                   </dl>
                 </article>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="history-section">
-          <div className="section-title-row">
-            <div>
-              <h2>تاریخچه انتشار</h2>
-              <p>وضعیت صف، انتشار و تلاش‌های دوباره</p>
+              ))}
             </div>
-
-            <select
-              className="history-filter"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value)}
-            >
-              <option value="all">همه وضعیت‌ها</option>
-              {Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </div>
-
-          <div className="history-list">
-            {filtered.length === 0 ? (
-              <div className="empty-state">انتشاری با این وضعیت وجود ندارد.</div>
-            ) : (
-              filtered.map((row) => (
-                <article className="history-row" key={row.publication.id}>
-                  <div className="history-status">
-                    <span className={`publication-state ${row.publication.status}`}>
-                      {statusLabels[row.publication.status] ?? row.publication.status}
-                    </span>
-                  </div>
-
-                  <div className="history-main">
-                    <strong>
-                      {row.variant.title ??
-                        row.content.title ??
-                        "بدون عنوان"}
-                    </strong>
-                    <span>
-                      {channelLabels[row.variant.channel] ?? row.variant.channel}
-                      {" · "}
-                      {`تلاش ${row.publication.attempt || 0}`}
-                    </span>
-                    {Array.isArray(row.content.metadata?.routePath) && row.content.metadata.routePath.length > 0 ? (
-                      <details>
-                        <summary>مسیر این خبر</summary>
-                        <span>{row.content.metadata.routePath.filter((part): part is string => typeof part === "string").join(" ← ")}</span>
-                        {typeof row.content.metadata.sourceUrl === "string" ? (
-                          <a href={row.content.metadata.sourceUrl} target="_blank" rel="noreferrer">مشاهده منبع</a>
-                        ) : null}
-                      </details>
-                    ) : null}
-                  </div>
-
-                  <div className="history-time">
-                    <strong>
-                      {new Date(row.publication.createdAt).toLocaleDateString("fa-IR")}
-                    </strong>
-                    <span>
-                      {new Date(row.publication.createdAt).toLocaleTimeString("fa-IR", {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-
-                  <div className="history-action">
-                    {row.publication.status === "failed" ? <button className="ghost-button" disabled={retrying === row.publication.id}
-                      onClick={() => void retry(row.publication.id)}>تلاش دوباره</button> : null}
-                    {row.publication.status === "queued" ? <button className="danger-button" disabled={retrying === row.publication.id}
-                      onClick={() => void cancel(row.publication.id)}>لغو انتشار</button> : null}
-                    {row.publication.externalUrl ? (
-                      <a
-                        className="ghost-link"
-                        href={row.publication.externalUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        مشاهده خروجی
-                      </a>
-                    ) : row.publication.error ? (
-                      <span className="history-error">
-                        {String(
-                          (row.publication.error as { message?: unknown }).message ??
-                            "انتشار ناموفق بود",
-                        )}
-                      </span>
-                    ) : (
-                      <span className="history-muted">بدون خروجی خارجی</span>
-                    )}
-                  </div>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="event-summary">
-          <div className="section-title-row">
-            <div>
-              <h2>رویدادهای تعامل</h2>
-              <p>رویدادهایی که از کانال‌ها یا وب‌هوک‌های تحلیل ثبت شده‌اند</p>
-            </div>
-          </div>
-          <div className="event-metric-grid">
-            {summary.events.length === 0 ? (
-              <div className="empty-state">
-                هنوز رویدادی از کانال‌ها ثبت نشده است.
+          </section>
+          {summary.events.length ? (
+            <section className="event-summary">
+              <div className="section-title-row">
+                <h2>رویدادهای تعامل</h2>
               </div>
-            ) : (
-              summary.events.map((event) => (
-                <article className="event-metric-card" key={event.type}>
-                  <span>{event.type}</span>
-                  <strong>{event.value}</strong>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-      </section>
-    </main>
+              <div className="event-metric-grid">
+                {summary.events.map((event) => (
+                  <article key={event.type} className="event-metric-card">
+                    <span>{event.type}</span>
+                    <strong>{event.value.toLocaleString("fa-IR")}</strong>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </>
+      ) : !error ? (
+        <p className="empty-state" role="status">
+          در حال دریافت گزارش انتشار…
+        </p>
+      ) : null}
+    </ReportsShell>
   );
 }

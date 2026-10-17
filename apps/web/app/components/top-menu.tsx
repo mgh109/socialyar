@@ -10,7 +10,7 @@ const workLinks = [
   { href: "/", label: "جریان‌ها", prefix: "/workflows" },
   { href: "/approvals", label: "تأیید محتوا" },
   { href: "/calendar", label: "تقویم انتشار" },
-  { href: "/analytics", label: "گزارش‌ها" },
+  { href: "/analytics", label: "گزارش‌ها", prefix: "/analytics" },
   { href: "/connections", label: "کانال‌ها" },
 ];
 const settingsLinks = [
