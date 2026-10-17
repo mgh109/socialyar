@@ -46,14 +46,14 @@ export async function contentCollectionRoutes(app: FastifyInstance, options: { d
         if (!item || !change.remoteEligible || item.queueVersion!==input.version || item.updatedAt.toISOString()!==input.updatedAt) throw new ImportConflict("این ویرایش برای محتوای منتشرشده مجاز نیست یا وضعیت آن تغییر کرده است.");
         const transport = await publishingTransport(item.workspaceId,item.settings.connection,"youtube");
         try {
-          const { token,privateOnly } = await youtubeToken(item.accountId,item.workspaceId,transport.fetch);
+          const { token } = await youtubeToken(item.accountId,item.workspaceId,transport.fetch);
           const headers = { Authorization:`Bearer ${token}`,"Content-Type":"application/json" };
           const current = await googleJson(await transport.fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet,status&id=${encodeURIComponent(item.videoId!)}`,{ headers,signal:AbortSignal.timeout(15000) }));
           const video = current.items?.[0]; if (!video) throw new Error("ویدئوی منتشرشده در کانال پیدا نشد.");
           const fields = change.fields; const title=fields.includes("title") ? input.row.title : video.snippet.title;
           const description=collectionTextChanged(fields,"youtube") ? collectionBody(input.row,"youtube") : video.snippet.description;
           const tags=fields.includes("tags") ? input.row.tags : video.snippet.tags ?? [];
-          const privacy=fields.includes("privacy") ? privateOnly ? "private" : input.row.privacy : video.status.privacyStatus;
+          const privacy=fields.includes("privacy") ? input.row.privacy : video.status.privacyStatus;
           const madeForKids=fields.includes("madeForKids") ? input.row.madeForKids : video.status.selfDeclaredMadeForKids ?? false;
           if (fields.includes("coverUrl")) {
             const cover = await fetchCollectionMedia(item.workspaceId,input.row.coverUrl,"image",item.settings.mediaConnection);

@@ -87,7 +87,8 @@ export function youtubeConfig() {
   const clientSecret = process.env.YOUTUBE_CLIENT_SECRET;
   const redirectUri = process.env.YOUTUBE_REDIRECT_URI;
   if (!clientId || !clientSecret || !redirectUri) throw new Error("YouTube OAuth is not configured on the server");
-  return { clientId, clientSecret, redirectUri, privateOnly: process.env.YOUTUBE_PROJECT_VERIFIED !== "true" };
+  // Kept for older clients; project verification must not override the user's chosen visibility.
+  return { clientId, clientSecret, redirectUri, privateOnly: false };
 }
 
 export async function googleJson(response: Response): Promise<any> {

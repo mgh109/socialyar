@@ -60,7 +60,7 @@ export async function youtubeRoutes(app: FastifyInstance, options: {database?:Re
   app.register(async (secured) => {
     secured.addHook("onRequest", secured.authenticate);
     secured.get("/youtube/config", async () => ({ configured: Boolean(process.env.YOUTUBE_CLIENT_ID && process.env.YOUTUBE_CLIENT_SECRET && process.env.YOUTUBE_REDIRECT_URI),
-      privateOnly: process.env.YOUTUBE_PROJECT_VERIFIED !== "true", maxUploadBytes: 250_000_000 }));
+      privateOnly: false, maxUploadBytes: 250_000_000 }));
     secured.post("/youtube/health", async () => {
       const checks = await Promise.all([
         ["google", "https://oauth2.googleapis.com/token"],

@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { getDb, getPool, youtubeItems, googleJson } from "@socialyar/db";
-export async function attachYoutubePlaylist(item: typeof youtubeItems.$inferSelect, token: string, request: typeof fetch, privateOnly: boolean) {
+export async function attachYoutubePlaylist(item: typeof youtubeItems.$inferSelect, token: string, request: typeof fetch) {
   const name = String(item.settings.playlist ?? "").trim(); if (!name || !item.videoId) return;
   // Serialize playlist creation and ordering across all workers for this channel.
   const client = await getPool().connect();
@@ -21,7 +21,7 @@ export async function attachYoutubePlaylist(item: typeof youtubeItems.$inferSele
       playlistId = name;
     } else {
       const found = (await list("playlists?part=snippet&mine=true&maxResults=50")).find((p) => p.snippet?.title === name);
-      playlistId = found?.id ?? (await api("playlists?part=snippet,status",{ method:"POST", body:JSON.stringify({ snippet:{ title:name },status:{ privacyStatus:privateOnly ? "private" : item.settings.privacy ?? "private" } }) })).id;
+      playlistId = found?.id ?? (await api("playlists?part=snippet,status",{ method:"POST", body:JSON.stringify({ snippet:{ title:name },status:{ privacyStatus:item.settings.privacy ?? "private" } }) })).id;
     }
     if (!playlistId) throw new Error("پلی‌لیست ساخته نشد.");
     const entries = await list(`playlistItems?part=snippet&playlistId=${encodeURIComponent(playlistId)}&maxResults=50`);

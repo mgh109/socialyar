@@ -51,3 +51,43 @@ test("unknown session creation is held before a later attempt can start another 
   await assert.rejects(f.run(),AmbiguousDeliveryError);assert.equal(f.item.settings.uploadSessionUnknown,true);assert.equal(posts,1);
   f.retry();await assert.rejects(f.run(),/شروع آپلود قبلی نامعلوم/);assert.equal(posts,1);
 });
+
+test("publication sends the selected visibility even when a legacy token service returns privateOnly",async(t)=>{
+  const previous=process.env.HOOR_SECRET_KEY;process.env.HOOR_SECRET_KEY=Buffer.alloc(32,9).toString("base64");
+  t.after(()=>{if(previous===undefined)delete process.env.HOOR_SECRET_KEY;else process.env.HOOR_SECRET_KEY=previous;});
+  for(const privacy of ["public","unlisted","private"]){
+    let sessions=0;
+    const f=fixture((async(url,init)=>{
+      if(init?.method==="POST"){
+        sessions++;assert.equal(JSON.parse(String(init.body)).status.privacyStatus,privacy);
+        return new Response(null,{headers:{location:"https://www.googleapis.com/upload/youtube/v3/videos?upload_id=visibility"}});
+      }
+      if(init?.method==="PUT")return Response.json({id:"new-video"});
+      assert.match(String(url),/id=new-video/);
+      return Response.json({items:[{status:{privacyStatus:privacy,uploadStatus:"processed"},processingDetails:{processingStatus:"succeeded"}}]});
+    }) as typeof fetch);
+    f.item.videoId=null;delete f.item.settings.coverUrl;f.item.settings.privacy=privacy;f.item.settings.videoUrl="https://files.example/video.mp4";
+    f.services.openVideo=async()=>({size:16,type:"video/mp4",snapshot:{size:16,type:"video/mp4",headHash:"hash"},read:async(start:number,end:number)=>Buffer.alloc(end-start)});
+    await f.run();assert.equal(sessions,1);assert.equal(f.item.status,"published");assert.equal(f.item.actualPrivacy,privacy);
+    assert.ok(f.item.logs.some((log:any)=>log.result==="upload_started" && log.requestedPrivacy===privacy && log.submittedPrivacy===privacy));
+    assert.ok(f.item.logs.some((log:any)=>log.result==="published" && log.privacyRestricted===false));
+  }
+});
+test("actual YouTube visibility is preserved when the provider returns a different value",async()=>{
+  const f=fixture((async()=>processed()) as typeof fetch);
+  delete f.item.settings.coverUrl;f.item.settings.privacy="public";
+  await f.run();assert.equal(f.item.actualPrivacy,"private");assert.equal(f.item.videoId,"already-uploaded");
+  assert.ok(f.item.logs.some((log:any)=>log.result==="published" && log.requestedPrivacy==="public" && log.actualPrivacy==="private" && log.privacyRestricted===true));
+});
+test("legacy project verification flags no longer force private visibility",async()=>{
+  const {youtubeConfig}=await import("@socialyar/db");
+  const names=["YOUTUBE_CLIENT_ID","YOUTUBE_CLIENT_SECRET","YOUTUBE_REDIRECT_URI","YOUTUBE_PROJECT_VERIFIED"];
+  const saved=names.map(name=>process.env[name]);
+  try{
+    process.env.YOUTUBE_CLIENT_ID="test-client";process.env.YOUTUBE_CLIENT_SECRET="test-secret";process.env.YOUTUBE_REDIRECT_URI="https://api.example.com/youtube/oauth/callback";
+    for(const value of [undefined,"false","true"]){
+      if(value===undefined)delete process.env.YOUTUBE_PROJECT_VERIFIED;else process.env.YOUTUBE_PROJECT_VERIFIED=value;
+      assert.equal(youtubeConfig().privateOnly,false);
+    }
+  }finally{names.forEach((name,index)=>{if(saved[index]===undefined)delete process.env[name];else process.env[name]=saved[index];});}
+});

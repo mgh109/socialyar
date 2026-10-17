@@ -48,7 +48,8 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
         await response.body?.cancel();await log("read_retry",{stage,attempt:attempt+1,httpStatus:response.status});await services.pause(1000*(attempt+1));
       }
     };
-    const { token, privateOnly } = await services.token(item.accountId, item.workspaceId, request);
+    const { token } = await services.token(item.accountId, item.workspaceId, request);
+    const requestedPrivacy = item.settings.privacy ?? "private";
     const headers = { Authorization: `Bearer ${token}` };
     const media = async (kind: "video" | "image") => {
       if(kind === "image" && item.settings.collectionId && !(item.settings.imageStep && Array.isArray(item.settings.images) && item.settings.images.some(image=>image?.mediaId===item.settings.coverMediaId))) {
@@ -76,11 +77,11 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
       const video = remote || stored ? null : await media("video");
       if (item.settings.videoType === "shorts") assertShorts(remote ? await services.inspectRemote(remote) : await inspectVideo(stored ? stored.path : video!.bytes));
       await checkpoint("upload");
-      await log("upload_started", { privateOnly, requestedPrivacy: item.settings.privacy });
+      await log("upload_started", { requestedPrivacy, submittedPrivacy: requestedPrivacy });
       item.videoId = await uploadYoutubeVideo({ bytes: video?.bytes, source: remote ?? (stored ? youtubeFileSource(stored) : undefined), type: remote?.type ?? stored?.type ?? video!.type, token,
         session: item.sessionEnc ? decryptSecret(item.sessionEnc) : undefined,
         metadata: { snippet: { title: item.title, description: item.description, tags: item.settings.tags ?? [], categoryId: "22" },
-          status: { privacyStatus: privateOnly ? "private" : item.settings.privacy ?? "private", selfDeclaredMadeForKids: item.settings.madeForKids === true } },
+          status: { privacyStatus: requestedPrivacy, selfDeclaredMadeForKids: item.settings.madeForKids === true } },
         saveSession: async (session) => { item.sessionEnc=encryptSecret(session); await db.update(youtubeItems).set({ sessionEnc:item.sessionEnc }).where(eq(youtubeItems.id, id)); },
         onRecovery: async (event) => { await log("upload_recovery",event); },
         saveProgress: async (progress, videoId, details) => {
@@ -117,11 +118,11 @@ export async function executeYoutube(id: string, db = getDb(), queueVersion = 0,
         throw new Error(`YouTube processing failed: ${status.rejectionReason ?? status.failureReason ?? result.processingDetails?.processingFailureReason ?? processing}`);
       if (status.uploadStatus === "processed" && processing !== "processing") {
         await checkpoint("playlist",{videoProcessingConfirmed:true});
-        const playlistId=await services.playlist(item,token,request,privateOnly);
+        const playlistId=await services.playlist(item,token,request);
         await checkpoint("complete",playlistId ? {playlistId} : {});
         await db.update(youtubeItems).set({ status: "published", actualPrivacy: status.privacyStatus, error: null, updatedAt: new Date() }).where(eq(youtubeItems.id, id));
         await log("published", { videoUrl: `https://www.youtube.com/watch?v=${item.videoId}`, actualPrivacy: status.privacyStatus,
-          privateOnly, privacyRestricted: status.privacyStatus !== item.settings.privacy }); return;
+          requestedPrivacy, privacyRestricted: status.privacyStatus !== requestedPrivacy }); return;
       }
       await services.pause(10000);
     }

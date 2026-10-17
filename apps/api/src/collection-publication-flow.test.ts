@@ -44,15 +44,16 @@ test("real XLSX → remote inspection → approval without shared disk → resum
     await db.insert(schema.workflowConnections).values({workflowVersionId:versionId,sourceStepId:sourceId,targetStepId:targetId});
     const require=createRequire(new URL("../../web/package.json",import.meta.url));const ExcelJS=require("exceljs");
     const workbook=new ExcelJS.Workbook();const sheet=workbook.addWorksheet("محتوا");
-    sheet.addRow(["شناسه محتوا","عنوان","لینک ویدئو","لینک کاور"]);
-    sheet.addRow(["MH-001","آموزش حفظ سوره ناس",{text:"دانلود ویدئو",hyperlink:"https://files.example.com/01%20nas.mp4"},"https://files.example.com/MH-001.png"]);
+    sheet.addRow(["شناسه محتوا","عنوان","لینک ویدئو","لینک کاور","وضعیت نمایش"]);
+    sheet.addRow(["MH-001","آموزش حفظ سوره ناس",{text:"دانلود ویدئو",hyperlink:"https://files.example.com/01%20nas.mp4"},"https://files.example.com/MH-001.png","public"]);
     const data=await readCollectionSheet(new File([new Uint8Array(await workbook.xlsx.writeBuffer())],"course.xlsx"));
-    const {rows,errors}=mapCollectionRows(data,inferMapping(data.headers));assert.deepEqual(errors,[]);
+    const {rows,errors}=mapCollectionRows(data,inferMapping(data.headers));assert.deepEqual(errors,[]);assert.equal(rows[0].privacy,"public");
     app.decorate("authenticate",async(request:any)=>{request.auth={userId,workspaceId:request.headers["x-other"] ? randomUUID() : workspaceId};});
     app.setErrorHandler((error,_request,reply)=>reply.code(400).send({error:error instanceof Error ? error.message : "خطا"}));
     await app.register(contentCollectionRoutes,{database:db,queue,sheetFetcher:async()=>data});
     await app.register(youtubeRoutes,{database:db,queue});
     await app.register(workflowRoutes,{database:db});
+    assert.equal((await app.inject({method:"GET",url:"/youtube/config"})).json().privateOnly,false);
     const disconnected=await app.inject({method:"PUT",url:`/workflows/${workflowId}`,payload:{status:"active",autonomyMode:"full_auto",steps:[{key:"sheet",type:"collection_source",name:"شیت"},{key:"youtube",type:"publish",name:"یوتیوب",config:{accountId}}],connections:[]}});
     assert.equal(disconnected.statusCode,409);assert.equal(disconnected.json().error,"graph_missing_input");
     const activation=await app.inject({method:"PUT",url:`/workflows/${workflowId}`,payload:{status:"active",autonomyMode:"full_auto",steps:[{key:"sheet",type:"collection_source",name:"شیت",config:{collectionSource:"google_sheet"}},{key:"youtube",type:"publish",name:"یوتیوب",config:{accountId}}],connections:[{sourceKey:"sheet",targetKey:"youtube"}]}});
@@ -65,7 +66,7 @@ test("real XLSX → remote inspection → approval without shared disk → resum
     const preview=await app.inject({method:"POST",url:"/content-collections/preview",payload:scope});assert.equal(preview.statusCode,200,preview.body);
     const p=preview.json();const applied=await app.inject({method:"POST",url:"/content-collections/apply",payload:{...scope,revision:p.revision,selected:p.changes.map(({id,version,updatedAt}:any)=>({id,version,updatedAt}))}});
     assert.equal(applied.statusCode,200,applied.body);assert.equal(jobs[0].name,"youtube-prepare");
-    let [item]=await db.select().from(schema.youtubeItems);assert.equal(item.approvedAt,null);
+    let [item]=await db.select().from(schema.youtubeItems);assert.equal(item.approvedAt,null);assert.equal(item.settings.privacy,"public");
     const video=execFileSync("ffmpeg",["-v","error","-f","lavfi","-i","color=c=black:s=192x108:r=1","-t","1","-c:v","libx264","-movflags","frag_keyframe+empty_moov","-f","mp4","pipe:1"]);
     const cover=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6VfoAAAAASUVORK5CYII=","base64");
     let checks=0,coverFails=true,sourceChanged=false;
@@ -113,10 +114,10 @@ test("real XLSX → remote inspection → approval without shared disk → resum
     let uploadSessions=0,thumbnailFails=true;const uploads:Uint8Array[]=[];
     const request=(async(url:unknown,init:RequestInit={})=>{
       const path=String(url);
-      if(path.includes("uploadType=resumable")){uploadSessions++;return new Response(null,{headers:{location:"https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test"}});}
+      if(path.includes("uploadType=resumable")){uploadSessions++;assert.equal(JSON.parse(String(init.body)).status.privacyStatus,"public");return new Response(null,{headers:{location:"https://www.googleapis.com/upload/youtube/v3/videos?upload_id=test"}});}
       if(init.method==="PUT"){uploads.push(init.body as Uint8Array);return json({id:"confirmed-video"});}
       if(path.includes("thumbnails/set")){if(thumbnailFails)return new Response(JSON.stringify({error:{message:"thumbnail temporarily failed"}}),{status:503,headers:{"Content-Type":"application/json"}});return json({items:[]});}
-      if(path.includes("processingDetails"))return json({items:[{status:{privacyStatus:"private",uploadStatus:"processed"},processingDetails:{processingStatus:"succeeded"}}]});
+      if(path.includes("processingDetails"))return json({items:[{status:{privacyStatus:"public",uploadStatus:"processed"},processingDetails:{processingStatus:"succeeded"}}]});
       throw new Error(`Unexpected request: ${path}`);
     }) as typeof fetch;
     const publishServices:Parameters<typeof executeYoutube>[3]={operational:assertWorkspaceOperational,transport:async()=>({fetch:request,close:async()=>{}} as any),token:async()=>({token:"test-token",privateOnly:true,account:{} as any}),openVideo,inspectRemote:inspectRemoteVideo,fetchMedia,pause:async()=>{},playlist:async()=>undefined};
@@ -135,7 +136,7 @@ test("real XLSX → remote inspection → approval without shared disk → resum
     thumbnailFails=false;
     assert.equal((await app.inject({method:"POST",url:`/youtube/items/${item.id}/retry`})).statusCode,200);
     await executeYoutube(item.id,db,item.queueVersion,publishServices);
-    [item]=await db.select().from(schema.youtubeItems);assert.equal(item.status,"published");assert.equal(item.videoId,"confirmed-video");assert.equal(item.actualPrivacy,"private");
+    [item]=await db.select().from(schema.youtubeItems);assert.equal(item.status,"published");assert.equal(item.videoId,"confirmed-video");assert.equal(item.actualPrivacy,"public");
     assert.equal(uploadSessions,1);assert.deepEqual(Buffer.concat(uploads),video);
     await executeYoutube(item.id,db,item.queueVersion,publishServices);assert.equal(uploadSessions,1);
     const again=await app.inject({method:"POST",url:"/content-collections/preview",payload:scope});assert.equal(again.json().changes[0].kind,"unchanged");assert.equal((await db.select().from(schema.youtubeItems)).length,1);
