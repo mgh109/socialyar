@@ -15,3 +15,5 @@ export * from "./image-generation";
 
 // YouTube Data API thumbnails.set: maximum uploaded image size is 50 MB.
 export const YOUTUBE_COVER_MAX_BYTES = 50_000_000;
+
+export * from "./youtube-analysis";

@@ -1,17 +1,17 @@
 import { generateContentImages } from "./image-generation";
-import { imageConfigSchema } from "@socialyar/shared";
+import { youtubeAnalysisConfig, imageConfigSchema, type YoutubeGrowthPlan, type AnalysisFollowUp } from "@socialyar/shared";
 import { ImageLimitError } from "@socialyar/db";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { generateYoutubeCommentReply, analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIRequestUsage, type AIConnection } from "@socialyar/ai";
+import { analyzeYoutubeChannel, generateYoutubeCommentReply, analyzeCommentFeedback, decideComment, generateNewsDraft, generateNewsTitle, type AIRequestUsage, type AIConnection } from "@socialyar/ai";
 import { apiRequest } from "./api-client";
 import {
-  sendYoutubeCommentReply, YoutubeDailyLimitError, nextYoutubeDay, assertWorkspaceOperational, createTenantAIQuota, ExecutionOwnershipError, withExecutionLock, aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
+  youtubeAnalysisFollowUps, readYoutubeAnalysis, sendYoutubeCommentReply, YoutubeDailyLimitError, nextYoutubeDay, assertWorkspaceOperational, createTenantAIQuota, ExecutionOwnershipError, withExecutionLock, aiUsageEvents, ensureAIUsageStorage, aiProfiles, aiSettings, apiConnections, commentActions, decryptSecret, ensureCommentStorage, getDb, runEvents, runs, runSteps, workflowConnections, workflowSteps, workflows,
 } from "@socialyar/db";
 
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
 type Step = typeof workflowSteps.$inferSelect;
 type Edge = typeof workflowConnections.$inferSelect;
-type News = { text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
+type News = { growthPlan?: YoutubeGrowthPlan; followUps?:AnalysisFollowUp[]; youtubeAnalysis?: Awaited<ReturnType<typeof readYoutubeAnalysis>>; text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
   videoUrl?: string | null; queuedForPublication?: boolean; commentId?: string; context?: string;
   decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string; approved?: boolean;
   youtube?: { accountId: string; videoId: string; threadId?: string }; replyStatus?: string; externalUrl?: string; sentiment?: string; comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
@@ -83,7 +83,7 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
     delete outputs.retryAt;
     const states = new Map<string, string>();
     const selectedSource = typeof run.input.sourceKey === "string" ? run.input.sourceKey :
-      ordered.find((step) => ["manual_input", "rss_source", "api_source", "youtube_comments", "source"].includes(step.type))?.key;
+      ordered.find((step) => ["manual_input", "rss_source", "api_source", "youtube_analysis", "youtube_comments", "source"].includes(step.type))?.key;
     let waiting = false;
     let failed = false;
 
@@ -106,7 +106,7 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
         states.set(step.id, "waiting_approval"); waiting = true;
         continue;
       }
-      if (["rss_source", "api_source", "youtube_comments", "manual_input", "source"].includes(step.type) && step.key !== selectedSource) {
+      if (["rss_source", "api_source", "youtube_analysis", "youtube_comments", "manual_input", "source"].includes(step.type) && step.key !== selectedSource) {
         states.set(step.id, "skipped");
         continue;
       }
@@ -166,7 +166,19 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
           continue;
         }
         let output: News;
-        if (["source", "manual_input", "rss_source", "api_source", "youtube_comments"].includes(step.type)) {
+        if (step.type === "youtube_analysis") {
+          const config = youtubeAnalysisConfig.parse(step.config);
+          const report = await readYoutubeAnalysis(tenant.workspaceId,config);
+          const [settings] = config.profileId !== "default" ? await db.select().from(aiProfiles).where(and(eq(aiProfiles.id,config.profileId),eq(aiProfiles.workspaceId,tenant.workspaceId))).limit(1) : await db.select().from(aiSettings).where(eq(aiSettings.workspaceId,tenant.workspaceId)).limit(1);
+          if(!settings)throw new Error("مدل هوش مصنوعی انتخاب‌شده در دسترس نیست.");
+          const quota = createTenantAIQuota(db,tenant.workspaceId);
+          const connection = {provider:settings.provider as AIConnection["provider"],model:settings.model,token:decryptSecret(settings.encryptedToken),beforeRequest:quota.beforeRequest,onRequestRejected:quota.onRequestRejected,
+            onUsage:async(usage:AIRequestUsage)=>{await quota.onUsage(usage);await accountUsage(usage);}};
+          const followUps=await youtubeAnalysisFollowUps(db,tenant.workspaceId,run.workflowId,step.key,report);
+          const growthPlan = await retryAI(()=>analyzeYoutubeChannel(connection,{...report,followUps},config.instructions),async()=>{});
+          const text=[growthPlan.summary,...growthPlan.actions.map((a,i)=>`${i+1}. ${a.title}\n${a.evidence}\nمعیار سنجش: ${a.metric}`),...growthPlan.ideas.map(i=>`ایده: ${i.title}\n${i.outline}\nکاور: ${i.cover}`)].join("\n\n");
+          output={title:`تحلیل کانال ${report.channel.title}`,text,growthPlan,youtubeAnalysis:report,followUps};
+        } else if (["source", "manual_input", "rss_source", "api_source", "youtube_comments"].includes(step.type)) {
           if (run.input.videoUnavailable === true) {
             throw new Error("این پست ویدیو دارد، اما صفحهٔ عمومی ایتا فایل ویدیو را در اختیار نمی‌گذارد. انتشار بدون ویدیو متوقف شد.");
           }

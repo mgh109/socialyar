@@ -90,6 +90,11 @@ type NewsCandidate = { title: string; text: string; url: string; imageUrl: strin
 type SourceStats = { rawCount: number; matchedCount: number; selectedCount: number; validCount: number;
   pagesFetched?: number; capped?: boolean };
 async function sourceCandidates(source: typeof workflowSteps.$inferSelect, workspaceId: string): Promise<{ items: NewsCandidate[]; stats?: SourceStats }> {
+  if (source.type === "youtube_analysis") {
+    const day = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Tehran",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+    return {items:[{title:"تحلیل کانال یوتیوب",text:"تهیه گزارش روزانه",url:"",imageUrl:null,
+      uniqueId:`youtube-analysis:${source.key}:${day}`} ]};
+  }
   if (source.type === "youtube_comments") {
     const { token, account } = await youtubeToken(String(source.config.accountId), workspaceId);
     const inspected = await readYoutubeComments(token, account.externalAccountId, { videoId: String(source.config.videoId || ""), limit: Number(source.config.batchLimit ?? 50), after: typeof source.config.after === "string" && source.config.after ? source.config.after : undefined });
@@ -197,7 +202,7 @@ async function poll() {
           .where(and(eq(workflowVersions.workflowId, workflow.id), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
         if (!version) continue;
         const sources = await db.select().from(workflowSteps)
-          .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source", "youtube_comments"])));
+          .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source", "youtube_analysis", "youtube_comments"])));
         if (!sources.length) continue;
         const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
         const intervalMinutes = Number.isInteger(configured) && configured >= 1 && configured <= 10080 ? configured : 5;

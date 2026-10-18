@@ -83,7 +83,7 @@ export async function youtubeRoutes(app: FastifyInstance, options: {database?:Re
       await db.insert(youtubeOAuthStates).values({ id: state, workspaceId: request.auth.workspaceId,
         verifierEnc: encryptSecret(verifier), expiresAt: new Date(Date.now() + 600000) });
       const params = new URLSearchParams({ client_id: config.clientId, redirect_uri: config.redirectUri, response_type: "code",
-        access_type: "offline", prompt: "consent", state, scope: "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl",
+        access_type: "offline", prompt: "consent", state, scope: "https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/youtube.force-ssl",
         code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256" });
       return { url: `https://accounts.google.com/o/oauth2/v2/auth?${params}` };
     });

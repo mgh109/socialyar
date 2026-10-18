@@ -1935,3 +1935,49 @@ body:has(.review-page) .app-navigation a,body:has(.review-page) .app-navigation 
 .report-pagination { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:16px; margin-top:22px; font-size:12px; }
 @media(max-width:1100px) { .comment-report-filters { grid-template-columns:repeat(3,minmax(0,1fr)); } .comment-report-filters label:first-child { grid-column:span 2; } .analytics-shell .history-row { grid-template-columns:130px minmax(0,1fr) 150px; } .analytics-shell .history-action { grid-column:2/-1; justify-content:flex-start; } }
 @media(max-width:700px) { .report-tabs { width:100%; } .report-tabs a { flex:1; padding:9px 6px; text-align:center; font-size:12px; } .report-filters,.comment-report-filters { grid-template-columns:1fr 1fr; } .report-filters label:first-child { grid-column:1/-1; } .comment-report-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); } .comment-conversation { grid-template-columns:1fr; } .comment-report-item { padding:14px; } .analytics-shell .history-row { grid-template-columns:1fr; } .analytics-shell .history-action { grid-column:auto; } }
+
+.youtube-analysis-panel {display:grid;gap:12px;min-width:0;}
+.youtube-analysis-panel p,.youtube-analysis-panel a {overflow-wrap:anywhere;}
+.youtube-analysis-text {white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.9;}
+
+/* YouTube channel analysis: compact inspector, shared light/dark tokens. */
+.ya-heading,.ya-toolbar,.ya-report-title { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+.ya-heading>div,.ya-report-title { display:grid; gap:4px; }
+.ya-heading strong { font-size:16px; }
+.ya-heading small,.ya-report-title small,.ya-muted,.ya-settings small,.ya-details { color:var(--muted); font-size:11px; line-height:1.9; }
+.ya-badge { padding:5px 10px; border-radius:20px; background:var(--accent-soft); color:var(--accent-text); font-size:11px; }
+.ya-settings,.ya-details { border:1px solid var(--border); border-radius:12px; padding:12px; }
+.ya-settings summary,.ya-details summary { cursor:pointer; font-size:12px; font-weight:600; }
+.ya-settings summary span { color:var(--muted); font-weight:400; margin-inline-start:8px; }
+.ya-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin:14px 0; }
+.ya-fields label,.ya-history { display:grid; gap:6px; font-size:12px; min-width:0; }
+.ya-full { grid-column:1/-1; }
+.ya-toolbar .primary-button { min-height:40px; flex:1; }
+.ya-toolbar a { font-size:12px; }
+.ya-empty { border:1px dashed var(--border); border-radius:12px; padding:24px 16px; text-align:center; color:var(--muted); font-size:12px; line-height:1.9; }
+.ya-empty p { margin:8px 0 0; }
+.ya-metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.ya-metrics>div { display:grid; gap:8px; padding:12px; border-radius:12px; background:var(--panel2); border:1px solid var(--border); }
+.ya-metrics small { color:var(--muted); font-size:11px; }
+.ya-metrics strong { font-size:20px; font-variant-numeric:tabular-nums; }
+.ya-summary { margin:0; line-height:1.9; font-size:12px; }
+.ya-tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); padding-bottom:6px; flex-wrap:wrap; }
+.ya-tabs button { flex:1; min-height:36px; border:0; background:transparent; color:var(--muted); border-radius:8px; padding:8px 5px; cursor:pointer; font:inherit; font-size:11px; white-space:nowrap; }
+.ya-tabs button[aria-pressed=true] { background:var(--accent-soft); color:var(--accent-text); font-weight:700; }
+.ya-stack { display:grid; gap:10px; }
+.ya-stack h4 { font-size:13px; margin:3px 0; }
+.ya-action,.ya-video { border:1px solid var(--border); background:var(--panel); border-radius:12px; padding:14px; display:grid; gap:10px; min-width:0; }
+.ya-action header { display:flex; align-items:flex-start; gap:8px; }
+.ya-action strong,.ya-video>a { font-size:13px; line-height:1.9; }
+.ya-action p { font-size:12px; line-height:1.9; margin:0; }
+.ya-action small,.ya-video small { color:var(--muted); font-size:11px; line-height:1.8; }
+.ya-rank { display:grid; place-items:center; min-width:25px; height:25px; border-radius:8px; color:var(--accent-text); background:var(--accent-soft); font-size:12px; }
+.ya-action.is-done { border-color:var(--accent-text); }
+.ya-action .ghost-button { justify-self:start; min-height:34px; font-size:11px; }
+.ya-links { display:flex; gap:8px; flex-wrap:wrap; font-size:11px; }
+.ya-video>div { display:flex; flex-wrap:wrap; gap:8px 16px; font-size:11px; color:var(--muted); }
+.ya-action blockquote { margin:0; padding:8px 12px; border-inline-start:2px solid var(--accent); background:var(--panel2); font-size:11px; line-height:1.8; }
+.ya-action a { font-size:12px; }
+.ya-alert { color:var(--danger,#d85252); background:var(--panel2); border-radius:8px; padding:10px; font-size:12px; }
+.ya-tabs button:focus-visible,.ya-settings summary:focus-visible { outline:2px solid var(--accent-text); outline-offset:2px; }
+@media(max-width:480px) { .ya-fields { grid-template-columns:1fr; } .ya-tabs button { flex-basis:40%; } .ya-metrics strong { font-size:17px; } }

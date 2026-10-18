@@ -126,7 +126,11 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  packages/ai: {}
+  packages/ai:
+    dependencies:
+      '@socialyar/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/channels:
     dependencies:

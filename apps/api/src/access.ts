@@ -92,6 +92,7 @@ export async function enforceAccess(db: Db, request: FastifyRequest, reply: Fast
       if (role==="reviewer" && !approvalAction) deny();
       if (role==="editor") {
         const edit = /^(\/workflows(?:\/[^/]+)?|\/runs\/[^/]+\/content|\/content\/[^/]+|\/content-variants\/[^/]+|\/content-variants\/[^/]+\/approval|\/content-collections\/(preview|apply|google-sheet|test-media)|\/youtube\/media|\/youtube\/items(?:\/[^/]+\/media)?)$/.test(path)
+          || /^\/workflows\/[^/]+\/youtube-analysis\/[^/]+\/actions$/.test(path)
           || (path.startsWith("/calendar/items/") && body.action==="edit");
         if (!edit || approvalAction || method==="DELETE") deny();
         if (path.startsWith("/workflows") && (body.status==="active" || body.autonomyMode==="full_auto" || body.autonomyMode==="automatic")) deny();

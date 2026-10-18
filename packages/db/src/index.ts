@@ -19,3 +19,5 @@ export * from "./youtube-comments";
 
 export * from "./image-generation";
 export * from "./remote-video";
+export * from "./youtube-analysis";
+export * from "./youtube-analysis-actions";

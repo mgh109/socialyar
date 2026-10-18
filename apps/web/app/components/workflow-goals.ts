@@ -7,12 +7,14 @@ export const workflowGoalOptions = [
   { id: "collection", title: "انتشار محتوای آماده", description: "محتوا را از اکسل یا گوگل‌شیت وارد کن، برای هر مقصد بررسی کن و زمان انتشار را تعیین کن." },
   { id: "news", title: "پایش و بازنویسی خبر", description: "خبر را از خوراک RSS بگیر، با هوش مصنوعی بازنویسی کن و پیش از ادامه بررسی کن." },
   { id: "comments", title: "تحلیل کامنت‌ها", description: "کامنت‌ها را از API سایت بخوان و گزارش بازخورد بگیر؛ این مسیر پاسخی ارسال نمی‌کند." },
+  {id:"youtube-analysis",title:"تحلیل و رشد کانال یوتیوب",description:"آمار ویدئوها و کامنت‌ها را بررسی کن و راهکار عملی برای افزایش بازدید بگیر."},
 ] as const;
 
 export function getWorkflowGoal(goal: string | null): WorkflowGoal | null {
   const step = (key: string, type: string, name: string, config: Record<string, unknown>, index: number): GoalStep =>
     ({ key, type, name, config, position: { x: 800 - index * 250, y: 120 } });
   const connect = (keys: string[]): GoalConnection[] => keys.slice(1).map((key, index) => ({ sourceKey: keys[index], targetKey: key }));
+  if (goal === "youtube-analysis") return {name:"تحلیل کانال یوتیوب",description:"تحلیل عملکرد و راهکار رشد",hint:"کانال و مدل را انتخاب کن و تحلیل را اجرا کن. گزارش داخل کارت دیده می‌شود؛ در حالت خودکار روزی یک گزارش تهیه می‌شود.",steps:[step("analysis","youtube_analysis","تحلیل کانال یوتیوب",{accountId:"",profileId:"default",days:28,videoLimit:20,commentLimit:50,instructions:""},0),step("report","draft","گزارش تحلیل",{},1)],connections:connect(["analysis","report"])};
   if (goal === "youtube-comments") return {
     name:"پاسخگویی کامنت‌های یوتیوب",description:workflowGoalOptions[0].description,
     hint:"در هر دو کارت همان حساب یوتیوب را انتخاب کن؛ لحن، اطلاعات و حالت ارسال را تنظیم و جریان را فعال کن. نتیجه در گزارش کارت و پاسخ‌های نیازمند بررسی در تأییدها دیده می‌شوند.",

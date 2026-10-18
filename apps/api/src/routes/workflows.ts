@@ -1,5 +1,6 @@
+import { youtubeAnalysisRoutes } from "./youtube-analysis";
 import { imageGenerationJobs } from "@socialyar/db";
-import { imageConfigSchema } from "@socialyar/shared";
+import { youtubeAnalysisConfig, imageConfigSchema } from "@socialyar/shared";
 import { and, asc, count, desc, eq, gte, inArray, or } from "drizzle-orm";
 import { isIP } from "node:net";
 import type { FastifyInstance } from "fastify";
@@ -80,7 +81,7 @@ const updateWorkflowSchema = z.object({
 const blueprintSchema = z.object({
   name: z.string().trim().min(1).max(80),
   nodes: z.array(z.object({ id: z.string().min(1).max(40), type: z.enum([
-    "rss_source", "api_source", "manual_input", "collection_source", "youtube_comments", "youtube_reply", "filter", "ai", "image_generate", "comment_decision", "human_approval", "draft", "publish", "api_action",
+    "rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments", "youtube_reply", "filter", "ai", "image_generate", "comment_decision", "human_approval", "draft", "publish", "api_action",
   ]), name: z.string().trim().min(1).max(70), config: z.record(z.unknown()).default({}) })).min(2).max(12),
   edges: z.array(z.object({ from: z.string(), to: z.string(), decision: z.enum(["approve", "reject", "reply", "review"]).optional() })).min(1).max(24),
 });
@@ -165,10 +166,15 @@ async function insertGraph(
 
 async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connections: z.infer<typeof connectionSchema>[], workspaceId: string, db=getDb()): Promise<string | null> {
   const sorted = [...steps].sort((a, b) => a.order - b.order);
-  const source = sorted.find((step) => ["rss_source", "api_source", "youtube_comments", "collection_source"].includes(step.type));
+  const source = sorted.find((step) => ["rss_source", "api_source", "youtube_analysis", "youtube_comments", "collection_source"].includes(step.type));
   const graphError = graphProblem(steps, connections, true);
   if (graphError) return graphError;
   if (!source || steps.some((step) => step.type === "manual_input")) return "graph_missing_input";
+  for (const step of sorted.filter(item => item.type === "youtube_analysis")) {
+    if (!youtubeAnalysisConfig.safeParse(step.config).success) return "youtube_analysis_settings_invalid";
+    const [account] = await db.select().from(socialAccounts).where(and(eq(socialAccounts.id,String(step.config.accountId)),eq(socialAccounts.workspaceId,workspaceId),eq(socialAccounts.channel,"youtube"),eq(socialAccounts.isActive,true)));
+    if (!account) return "youtube_comment_account_required";
+  }
   for (const step of sorted.filter(item => ["youtube_comments", "youtube_reply"].includes(item.type))) {
     const config = step.config;
     if (!z.string().uuid().safeParse(config.accountId).success) return "youtube_comment_account_required";
@@ -179,7 +185,7 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     if (step.type === "youtube_reply") {
       const ancestors = new Set<string>(), queue = [step.key];
       while (queue.length) { const key = queue.shift()!; if (ancestors.has(key)) continue; ancestors.add(key); queue.push(...connections.filter(edge => edge.targetKey === key).map(edge => edge.sourceKey)); }
-      const sources = sorted.filter(item => ancestors.has(item.key) && ["youtube_comments","rss_source","api_source","manual_input","collection_source"].includes(item.type));
+      const sources = sorted.filter(item => ancestors.has(item.key) && ["youtube_analysis","youtube_comments","rss_source","api_source","manual_input","collection_source"].includes(item.type));
       if (!sources.length || sources.some(source => source.type !== "youtube_comments" || source.config.accountId !== config.accountId)) return "youtube_reply_source_invalid";
     }
   }
@@ -284,7 +290,7 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     if (!["has_image","no_image"].includes(String(filter.config.condition)) && (typeof filter.config.keywords !== "string" || !filter.config.keywords.trim() ||
       !["include", "exclude"].includes(String(filter.config.mode ?? "include")))) return "graph_invalid_filter";
   }
-  for (const step of sorted.filter((item) => ["ai", "youtube_reply"].includes(item.type))) {
+  for (const step of sorted.filter((item) => ["ai", "youtube_analysis", "youtube_reply"].includes(item.type))) {
     if (step.type === "ai" && !["rewrite", "feedback"].includes(String(step.config.aiMode ?? "rewrite"))) return "ai_output_invalid";
     const titleMode = String(step.config.titleMode ?? "keep");
     const imageMode = String(step.config.imageMode ?? "keep");
@@ -322,6 +328,7 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
 export async function workflowRoutes(app: FastifyInstance, options:{database?:ReturnType<typeof getDb>}={}) {
   const db = options.database ?? getDb();
   app.addHook("onRequest", app.authenticate);
+  await youtubeAnalysisRoutes(app,db);
 
   app.post("/workflows/generate", async (request, reply) => {
     const input = generatorInputSchema.parse(request.body);
@@ -376,7 +383,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
     if (graphProblem(blueprint.nodes.map((node) => ({ key: node.id, type: node.type })), connections, true) ||
       blueprint.edges.some((edge) => edge.decision && blueprint.nodes.find((node) => node.id === edge.from)?.type !== "comment_decision"))
       return reply.code(502).send({ error: "ai_graph_invalid", usage: usageReport.value });
-    const depths = new Map(blueprint.nodes.filter((node) => ["rss_source", "api_source", "manual_input", "collection_source", "youtube_comments"].includes(node.type))
+    const depths = new Map(blueprint.nodes.filter((node) => ["rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments"].includes(node.type))
       .map((node) => [node.id, 0]));
     for (let i = 0; i < blueprint.nodes.length; i++) for (const edge of blueprint.edges) {
       const depth = depths.get(edge.from);
@@ -405,6 +412,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
       } : node.type === "rss_source" ?
         kind === "rss" ? { sourceKind: kind, feedUrl: input.request.includes(suppliedFeed) && suppliedFeed ? suppliedFeed : "" } :
           { sourceKind: kind, channel: input.request.includes(suppliedChannel) && suppliedChannel ? suppliedChannel : "" } :
+        node.type === "youtube_analysis" ? {accountId,profileId:input.profileId??"default",days:Math.max(7,Math.min(90,Math.round(Number(config.days)||28))),videoLimit:Math.max(1,Math.min(50,Math.round(Number(config.videoLimit)||20))),commentLimit:Math.max(0,Math.min(200,Math.round(Number(config.commentLimit??50)))),instructions:text("instructions",4000)} :
         node.type === "youtube_comments" ? { accountId, videoId: text("videoId",11) && input.request.includes(text("videoId",11)) ? text("videoId",11) : "", batchLimit: Math.max(1,Math.min(500,Number(config.batchLimit)||50)), context:text("context",4000), after: z.string().datetime().safeParse(config.after).success ? config.after : "" } :
         node.type === "youtube_reply" ? { accountId, profileId:input.profileId ?? "default", dailyLimit:Math.max(1,Math.min(100,Number(config.dailyLimit)||20)), requireApproval:config.requireApproval !== false, tone:text("tone",200), instructions:text("instructions",4000), context:text("context",4000) } :
         node.type === "image_generate" ? { ...config, profileId: input.profileId ?? "default", model:"", referenceUrl:text("referenceUrl",1000) && input.request.includes(text("referenceUrl",1000)) ? text("referenceUrl",1000) : "", logoUrl:text("logoUrl",1000) && input.request.includes(text("logoUrl",1000)) ? text("logoUrl",1000) : "" } :
@@ -425,7 +433,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
         warnings.push(`ستون‌ها و زمان انتشار مجموعهٔ «${node.name}» را تطبیق بده و ورود محتوا را تأیید کن.`);
         if (mapped.collectionSource === "google_sheet" && !mapped.sheetUrl) warnings.push(`لینک گوگل‌شیت «${node.name}» را وارد کن.`);
       }
-      if (["youtube_comments","youtube_reply"].includes(node.type) && !accountId) warnings.push(`حساب یوتیوب کارت «${node.name}» را انتخاب کن.`);
+      if (["youtube_analysis","youtube_comments","youtube_reply"].includes(node.type) && !accountId) warnings.push(`حساب یوتیوب کارت «${node.name}» را انتخاب کن.`);
       if (node.type === "publish" && !accountId) warnings.push(`مقصد انتشار کارت «${node.name}» را انتخاب کن.`);
       if (["api_source", "api_action"].includes(node.type) && !connectionId) warnings.push(`اتصال کارت «${node.name}» را انتخاب کن.`);
       if (node.type === "rss_source" && !(mapped.feedUrl || mapped.channel)) warnings.push(`نشانی کارت «${node.name}» را وارد کن.`);
@@ -449,7 +457,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
       .where(and(eq(workflowVersions.workflowId, workflowId), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
     if (!version) return { events: [], active: [], sources: [], publications: [], filters: [], nextPollAt: null };
     const sourceSteps = await db.select({ key: workflowSteps.key }).from(workflowSteps)
-      .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source", "youtube_comments"])));
+      .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source", "youtube_analysis", "youtube_comments"])));
     const markerKeys = sourceSteps.map((step) => `source-live:${workflowId}:${version.id}:${step.key}`);
     const pollKey = `news-poll:${workflowId}:${version.id}`;
     const [markers, events, active, publicationRows, filterRows] = await Promise.all([
