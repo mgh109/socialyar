@@ -1,3 +1,4 @@
+import { latestWorkflowStepStates } from "../workflow-step-status";
 import { instagramCards, instagramSources, instagramAITypes, isInstagramCard, parseInstagramConfig, defaultInstagramConfig } from "@socialyar/shared";
 import { instagramWorkflowRoutes } from "./instagram";
 import { youtubeAnalysisRoutes } from "./youtube-analysis";
@@ -485,7 +486,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
       .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, [...instagramSources,"rss_source", "api_source", "youtube_analysis", "youtube_comments"])));
     const markerKeys = sourceSteps.map((step) => `source-live:${workflowId}:${version.id}:${step.key}`);
     const pollKey = `news-poll:${workflowId}:${version.id}`;
-    const [markers, events, active, publicationRows, filterRows] = await Promise.all([
+    const [markers, events, active, publicationRows, filterRows, stepStates] = await Promise.all([
       redis.mget(...markerKeys, pollKey),
       db.select({ id: runEvents.id, type: runEvents.type, createdAt: runEvents.createdAt,
         stepKey: workflowSteps.key, decision: runEvents.payload })
@@ -517,6 +518,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
         .where(and(eq(runs.workflowId, workflowId), eq(workflowSteps.type, "filter"),
           inArray(runSteps.status, ["completed", "skipped"])))
         .orderBy(desc(runSteps.finishedAt)).limit(100),
+      latestWorkflowStepStates(db,workflowId,version.id),
     ]);
     const connectionRows = await db.select({ metadata: contentItems.metadata, route: publicationConnectionEvents.route, proxyName: publicationConnectionEvents.proxyName })
       .from(publicationConnectionEvents).innerJoin(publications, eq(publicationConnectionEvents.publicationId, publications.id))
@@ -543,6 +545,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
         createdAt: event.createdAt, stepKey: event.stepKey,
         decision: typeof event.decision?.decision === "string" ? event.decision.decision : null })),
       active,
+      steps: stepStates,
       imageJobs,
       filters: [...latestFilters.values()],
       connections: connectionRows.flatMap((row) => typeof row.metadata.publishStepKey === "string" ? [{ stepKey: row.metadata.publishStepKey, route: row.route, proxyName: row.proxyName }] : []),

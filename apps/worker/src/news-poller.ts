@@ -231,7 +231,7 @@ async function poll() {
             return { source, ...result, queued: 0, queueError: "", polled: true }; }
           catch (error) {
             console.error(`Source poll failed for ${source.key}`, error);
-            await connection.set(liveKey, JSON.stringify({ status: "error", at: new Date().toISOString() }), "EX", 12);
+            await connection.set(liveKey, JSON.stringify({ status: "error", at: new Date().toISOString() }), "EX", 604800);
             if (["api_source", "youtube_comments"].includes(source.type)) await connection.set(`source-health:${workflow.id}:${version.id}:${source.key}`,
               JSON.stringify({ checkedAt: new Date().toISOString(), status: "error",
                 error: error instanceof Error ? error.message : String(error) }), "EX", 604800);

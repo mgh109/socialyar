@@ -41,6 +41,7 @@ type UsageTotals = { requests: number; inputTokens: number | string; outputToken
   costMicros: number | string; unreportedTokens: number; unreportedCost: number };
 type WorkflowUsage = { totals: UsageTotals; byStep: Array<UsageTotals & { stepKey: string }> };
 type LiveState = {
+  steps?: Array<{stepKey:string;status:string;startedAt:string|null}>;
   imageJobs?:Array<{stepKey:string;status:string;error:string|null;createdAt:string}>;
   connections?: Array<{ stepKey: string; route: string; proxyName: string | null }>;
   nextPollAt: string | null;
@@ -284,6 +285,13 @@ export function WorkflowBuilder() {
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
   const stepActivity = (step: Step) => {
+    const lastExecution = live?.steps?.find(item => item.stepKey === step.key);
+    const activeExecution = live?.active?.find(item => item.stepKey === step.key);
+    const sourceState = live?.sources?.find(item => item.stepKey === step.key);
+    // A live retry supersedes the saved error; an old failure must not disappear with the event window.
+    if (!liveStale && !activeExecution && sourceState?.status !== "reading" &&
+      (lastExecution?.status === "failed" || sourceState?.status === "error"))
+      return {label: sourceState?.status === "error" ? "خواندن منبع ناموفق بود" : "خطا؛ جزئیات در آخرین اجرا",state:"failed"};
     if(step.type === "image_generate"){
       const job=live?.imageJobs?.find(j=>j.stepKey===step.key);
       const active=live?.active?.find(j=>j.stepKey===step.key);
