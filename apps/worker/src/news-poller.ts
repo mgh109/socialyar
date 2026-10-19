@@ -1,3 +1,5 @@
+import { instagramSources } from "@socialyar/shared";
+import { instagramConnection, publishingTransport, readInstagramComments, readInstagramInbox } from "@socialyar/db";
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { and, eq, inArray } from "drizzle-orm";
@@ -55,7 +57,7 @@ function publicFeedUrl(value: string) {
 async function queueItem(workflowId: string, versionId: string, title: string, summary: string,
   link: string, imageUrl: string | null, legacyId?: string, uniqueId?: string, sourceKey?: string,
   videoUrl?: string | null, videoUnavailable?: boolean, commentId?: string, context?: string,
-  comments?: Array<{ id: string; text: string }>, youtube?: { accountId: string; videoId: string; threadId?: string }): Promise<boolean> {
+  comments?: Array<{ id: string; text: string }>, youtube?: { accountId: string; videoId: string; threadId?: string }, instagram?: Record<string,unknown>): Promise<boolean> {
   const db = getDb();
   const itemKey = createHash("sha256").update(uniqueId ?? link).digest("hex");
   const legacyKey = createHash("sha256").update(legacyId || link).digest("hex");
@@ -67,8 +69,8 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
   const [claimed] = await db.insert(newsItems).values({ workflowId, itemKey }).onConflictDoNothing().returning();
   if (!claimed) return false;
   const [run] = await db.insert(runs).values({ workflowId, workflowVersionId: versionId,
-    trigger: youtube ? "youtube_comments" : comments ? "api_feedback" : commentId ? "api_comments" : "rss", input: { title, text: summary || title, url: link, imageUrl, videoUrl,
-      videoUnavailable: videoUnavailable === true, sourceKey, commentId, context, comments, youtube }, status: "queued" }).returning();
+    trigger: instagram ? "instagram" : youtube ? "youtube_comments" : comments ? "api_feedback" : commentId ? "api_comments" : "rss", input: { title, text: summary || title, url: link, imageUrl, videoUrl,
+      videoUnavailable: videoUnavailable === true, sourceKey, commentId, context, comments, youtube, instagram }, status: "queued" }).returning();
   await db.update(newsItems).set({ runId: run.id }).where(eq(newsItems.id, claimed.id));
   await db.insert(runEvents).values({ runId: run.id, type: "run_started", message: youtube ? "کامنت یوتیوب وارد صف شد." : "Source item queued" });
   try {
@@ -83,13 +85,24 @@ async function queueItem(workflowId: string, versionId: string, title: string, s
   return true;
 }
 
-type NewsCandidate = { title: string; text: string; url: string; imageUrl: string | null;
+type NewsCandidate = { instagram?:Record<string,unknown>; title: string; text: string; url: string; imageUrl: string | null;
   videoUrl?: string | null; videoUnavailable?: boolean; legacyId?: string; uniqueId?: string;
   youtube?: { accountId: string; videoId: string; threadId?: string }; commentId?: string; context?: string; comments?: Array<{ id: string; text: string }> };
 
 type SourceStats = { rawCount: number; matchedCount: number; selectedCount: number; validCount: number;
   pagesFetched?: number; capped?: boolean };
 async function sourceCandidates(source: typeof workflowSteps.$inferSelect, workspaceId: string): Promise<{ items: NewsCandidate[]; stats?: SourceStats }> {
+  if (["instagram_analysis","instagram_trends"].includes(source.type)) {
+    const period=source.type==="instagram_trends"?new Date().toISOString().slice(0,13):new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Tehran",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+    return {items:[{title:source.name,text:"دریافت و بررسی منابع اینستاگرام",url:"",imageUrl:null,uniqueId:`${source.type}:${source.key}:${period}`}]};
+  }
+  if (["instagram_comments","instagram_inbox"].includes(source.type)) {
+    const c=await instagramConnection(workspaceId,String(source.config.accountId)),transport=await publishingTransport(workspaceId,source.config.connection,"instagram");
+    try {
+      const items=source.type==="instagram_comments"?(await readInstagramComments(c,source.config,transport.fetch)).items:await readInstagramInbox(c,Number(source.config.batchLimit??20),transport.fetch);
+      return {items:items.map(item=>({title:source.name,text:item.text,url:"url" in item?item.url:"",imageUrl:null,commentId:item.id,uniqueId:`${source.type}:${c.id}:${item.id}`,instagram:{accountId:c.id,...("mediaId" in item?{mediaId:item.mediaId}:{conversationId:item.conversationId,senderId:item.senderId}),timestamp:item.timestamp}}))};
+    }finally{await transport.close();}
+  }
   if (source.type === "youtube_analysis") {
     const day = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Tehran",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
     return {items:[{title:"تحلیل کانال یوتیوب",text:"تهیه گزارش روزانه",url:"",imageUrl:null,
@@ -202,7 +215,7 @@ async function poll() {
           .where(and(eq(workflowVersions.workflowId, workflow.id), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
         if (!version) continue;
         const sources = await db.select().from(workflowSteps)
-          .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source", "youtube_analysis", "youtube_comments"])));
+          .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, [...instagramSources,"rss_source", "api_source", "youtube_analysis", "youtube_comments"])));
         if (!sources.length) continue;
         const configured = Number(version.snapshot.pollIntervalMinutes ?? 5);
         const intervalMinutes = Number.isInteger(configured) && configured >= 1 && configured <= 10080 ? configured : 5;
@@ -235,7 +248,7 @@ async function poll() {
             try {
               if (await queueItem(workflow.id, version.id, item.title, item.text, item.url,
                 item.imageUrl, item.legacyId, item.uniqueId, batch.source.key,
-                item.videoUrl, item.videoUnavailable, item.commentId, item.context, item.comments, item.youtube)) {
+                item.videoUrl, item.videoUnavailable, item.commentId, item.context, item.comments, item.youtube, item.instagram)) {
                 queuedCount++; batch.queued++;
               }
             } catch (error) {

@@ -6,7 +6,7 @@ const mediaUrl = z.string().trim().url().refine((value) => {
 export const collectionRowSchema = z.object({
   id: z.string().trim().min(1).max(100), order: z.number().int().min(1).max(10000),
   title: z.string().trim().min(1).max(100), description: z.string().max(5000).default(""),
-  instagramType:z.enum(["image","reel","carousel"]).optional(), instagramImages:z.array(mediaUrl).max(10).optional(),
+  instagramType:z.enum(["image","reel","carousel","story"]).optional(), instagramImages:z.array(mediaUrl).max(10).optional(),
   youtubeDescription:z.string().max(5000).optional(),instagramCaption:z.string().max(2200).optional(),
   telegramText:z.string().max(4096).optional(),eitaaText:z.string().max(5000).optional(),baleText:z.string().max(4096).optional(),
   videoUrl: z.union([mediaUrl, z.literal("")]).default(""), coverUrl: z.union([mediaUrl, z.literal("")]).default(""),

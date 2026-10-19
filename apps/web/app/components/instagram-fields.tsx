@@ -18,18 +18,20 @@ export function InstagramFields({settings, caption, setSetting, setCaption, disa
   const problems = instagramProblems(settings, caption);
   return <section className="instagram-fields" aria-label="تنظیمات انتشار اینستاگرام">
     <label><span>نوع انتشار<FieldHelp>لینک فایل‌ها باید عمومی و HTTPS باشد؛ تصویر پست و آلبوم را با فرمت JPEG آماده کنید.</FieldHelp></span><select disabled={disabled} value={type} onChange={(e) => setSetting("instagramType", e.target.value)}>
-      <option value="image">پست تصویری</option><option value="reel">ریلز</option><option value="carousel">آلبوم چندتصویری</option>
+      <option value="image">پست تصویری</option><option value="reel">ریلز</option><option value="carousel">آلبوم چندتصویری</option><option value="story">استوری</option>
     </select></label>
+    {type==="story"?<small>انتشار استوری به حساب Business نیاز دارد. کپشن روی استوری نمایش داده نمی‌شود؛ نوشته را داخل تصویر آماده کنید.</small>:null}
     <label>کپشن<textarea rows={5} disabled={disabled} value={caption} onChange={(e) => setCaption(e.target.value)} placeholder={inherited ? "خالی بگذارید تا متن منبع استفاده شود" : "کپشن پست"} /></label>
     <small>{caption.length.toLocaleString("fa-IR")} از ۲۲۰۰ نویسه{inherited ? " · متن اختصاصی شیت بر کپشن پیش‌فرض اولویت دارد." : ""}</small>
     {type === "carousel" ? <label>تصاویر آلبوم؛ هر لینک در یک خط<textarea dir="ltr" rows={5} disabled={disabled} value={albumDraft} onChange={(e) => { setAlbumDraft(e.target.value); setSetting("instagramImages", e.target.value.split("\n").map((s) => s.trim()).filter(Boolean)); }} /></label> : <>
       <label>{type === "reel" ? "لینک ویدئوی ریلز" : "لینک تصویر"}<input dir="ltr" disabled={disabled} value={String(settings[type === "reel" ? "videoUrl" : "imageUrl"] ?? "")} onChange={(e) => setSetting(type === "reel" ? "videoUrl" : "imageUrl", e.target.value || null)} /></label>
+      {type === "story" ? <label>لینک ویدئوی استوری؛ برای تصویر خالی بگذارید<input dir="ltr" disabled={disabled} value={String(settings.videoUrl??"")} onChange={e=>setSetting("videoUrl",e.target.value||null)}/></label>:null}
       {type === "reel" ? <label><span>لینک کاور ریلز (اختیاری)<FieldHelp>ساختار محتوا آماده است؛ پذیرش فایل و مجوز انتشار هنگام ارتباط با اینستاگرام بررسی می‌شود.</FieldHelp></span><input dir="ltr" disabled={disabled} value={String(settings.imageUrl ?? "")} onChange={(e) => setSetting("imageUrl", e.target.value || null)} /></label> : null}
     </>}
 
     <div className="instagram-preview"><strong>پیش‌نمایش محتوا</strong>
       {type === "carousel" ? images.map((url, index) => <div key={`${index}-${url}`}><small>تصویر {(index + 1).toLocaleString("fa-IR")}</small><MediaPreview url={url} /></div>) : <>
-        {type === "reel" ? <MediaPreview video url={String(settings.videoUrl ?? "")} /> : null}
+        {type === "reel" || type === "story" && Boolean(settings.videoUrl) ? <MediaPreview video url={String(settings.videoUrl ?? "")} /> : null}
         <MediaPreview url={String(settings.imageUrl ?? "")} />
       </>}
       <p>{caption || (inherited ? "کپشن از منبع دریافت می‌شود." : "بدون کپشن")}</p>

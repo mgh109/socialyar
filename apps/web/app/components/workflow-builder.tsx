@@ -1,4 +1,6 @@
 "use client";
+import { instagramCards, instagramSources, instagramAITypes, isInstagramCard, defaultInstagramConfig } from "@socialyar/shared";
+import { InstagramCardPanel } from "./instagram-card-panel";
 import { FieldHelp } from "./field-help";
 import { ImageUsageSummary } from "./image-usage-summary";
 
@@ -51,8 +53,8 @@ type LiveState = {
 const faNumber = (value: number | string) => Number(value).toLocaleString("fa-IR");
 const dollarCost = (usage: UsageTotals) => (Number(usage.costMicros) / 1_000_000)
   .toLocaleString("fa-IR", { maximumFractionDigits: 4 });
-const isSource = (step: Step) => ["rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments"].includes(step.type);
-const isTerminal = (step: Step) => ["publish", "draft", "api_action", "youtube_reply"].includes(step.type);
+const isSource = (step: Step) => [...instagramSources,"rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments"].includes(step.type);
+const isTerminal = (step: Step) => ["instagram_action","publish", "draft", "api_action", "youtube_reply"].includes(step.type);
 const sourceNames: Record<string, string> = { rss: "خبرخوان", eitaa: "ایتا", bale: "بله" };
 const publishNames: Record<string, string> = { youtube: "یوتیوب", eitaa: "ایتا", bale: "بله", instagram: "اینستاگرام", telegram: "تلگرام", website: "وب‌سایت" };
 const pollPresets = [1, 5, 15, 60, 1440];
@@ -62,6 +64,7 @@ function durationLabel(minutes: number) {
     minutes % 60 === 0 ? `هر ${minutes / 60} ساعت` : `هر ${minutes} دقیقه`;
 }
 const types = [
+  ...instagramCards.map(({type,label})=>({type,label})),
   { type: "source", label: "منبع" },
   { type: "youtube_analysis", label: "تحلیل کانال یوتیوب" },
   { type: "youtube_comments", label: "کامنت‌های یوتیوب" },
@@ -76,6 +79,7 @@ const types = [
   { type: "api_action", label: "اقدام سرویس" },
 ];
 const errors: Record<string, string> = {
+ instagram_config_invalid:"تنظیمات کارت اینستاگرام را کامل و معتبر وارد کنید.",instagram_account_required:"حساب فعال اینستاگرام را از همین فضای کاری انتخاب کنید.",instagram_action_source_invalid:"اقدام کامنت باید از منبع کامنت اینستاگرام با همان حساب ورودی بگیرد.",instagram_trend_source_required:"برای رصد، حساب‌های منتخب همراه اتصال یا نمونه‌های دستی را وارد کنید.",instagram_inbox_login_required:"دایرکت به اتصال Instagram Login نیاز دارد.",instagram_discovery_login_required:"رصد حساب‌ها به اتصال Facebook Login نیاز دارد.",
   youtube_analysis_settings_invalid:"بازه ۷ تا ۹۰ روز، ویدئو ۱ تا ۵۰ و کامنت ۰ تا ۲۰۰ انتخاب کنید.",
   youtube_comment_account_required:"حساب فعال یوتیوب را انتخاب کنید.",youtube_comment_settings_invalid:"تعداد، تاریخ یا تنظیمات پاسخ کامنت معتبر نیست.",youtube_reply_source_invalid:"کارت پاسخ باید از منبع کامنت یوتیوب با همان حساب ورودی بگیرد.",
   graph_invalid_step: "یک کارت نامعتبر است.", graph_invalid_connection: "اتصال نامعتبر یا تکراری است.",
@@ -276,7 +280,7 @@ export function WorkflowBuilder() {
   };
   const selected = steps.find((step) => step.key === selectedKey);
   const selectedUsage = usage?.byStep.find((item) => item.stepKey === selectedKey);
-  const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => ["rss_source", "api_source", "youtube_analysis", "youtube_comments"].includes(step.type));
+  const manual = steps.some((step) => step.type === "manual_input") && !steps.some((step) => [...instagramSources,"rss_source", "api_source", "youtube_analysis", "youtube_comments"].includes(step.type));
   const publishAccounts = accounts.filter((account) => account.isActive && account.channel in publishNames);
   const edgeId = (edge: Edge) => `${edge.sourceKey}→${edge.targetKey}`;
   const stepActivity = (step: Step) => {
@@ -552,10 +556,10 @@ export function WorkflowBuilder() {
   }, [connecting]);
 
   const add = (requestedType: string) => {
-    const type = requestedType === "source" ? "rss_source" : requestedType;
+    const type = requestedType === "instagram_publish" ? "publish" : requestedType === "source" ? "rss_source" : requestedType;
     const key = freshKey();
     const count = steps.length;
-    const config = type === "youtube_analysis" ? {accountId:"",profileId:aiProfiles[0]?.id??"default",days:28,videoLimit:20,commentLimit:50,instructions:""} : type === "youtube_comments" ? {accountId:"",videoId:"",batchLimit:50,after:""} : type === "youtube_reply" ? {accountId:"",profileId:"default",requireApproval:true,dailyLimit:20,tone:"محترمانه و صمیمی",context:"",instructions:""} : type === "rss_source" ? { sourceKind: "rss", feedUrl: "" } :
+    const config = requestedType === "instagram_publish" || isInstagramCard(type) ? defaultInstagramConfig(requestedType) : type === "youtube_analysis" ? {accountId:"",profileId:aiProfiles[0]?.id??"default",days:28,videoLimit:20,commentLimit:50,instructions:""} : type === "youtube_comments" ? {accountId:"",videoId:"",batchLimit:50,after:""} : type === "youtube_reply" ? {accountId:"",profileId:"default",requireApproval:true,dailyLimit:20,tone:"محترمانه و صمیمی",context:"",instructions:""} : type === "rss_source" ? { sourceKind: "rss", feedUrl: "" } :
       type === "publish" ? { accountId: "", publishIntervalSeconds: 30 } :
       type === "image_generate" ? {profileId:aiProfiles[0]?.id??"default",model:"",preset:"news",behavior:"missing",dailyLimit:10,estimatedCostMicros:100000} : type === "filter" ? { keywords: "", mode: "include" } : type === "ai" ?
       { profileId: aiProfiles[0]?.id ?? "default", aiMode: "rewrite" } : type === "api_source" ?
@@ -564,7 +568,7 @@ export function WorkflowBuilder() {
       type === "comment_decision" ? { profileId: aiProfiles[0]?.id ?? "default", rules: "" } :
       type === "api_action" ? { connectionId: apiConnections[0]?.id ?? "", path: "/comments/moderate", action: "approve",
         method: "POST", idField: "commentId", statusField: "status", replyField: "reply" } : {};
-    const step = { key, type, name: type === "rss_source" ? "منبع" :
+    const step = { key, type, name: requestedType === "instagram_publish" ? "انتشار اینستاگرام" : type === "rss_source" ? "منبع" :
       types.find((item) => item.type === type)?.label ?? "کارت", config,
       position: { x: Math.max(35, 560 - count % 3 * 250), y: 75 + Math.floor(count / 3) * 190 } };
     setSteps((current) => [...current, step]); setSelectedKey(key);
@@ -709,7 +713,7 @@ export function WorkflowBuilder() {
     if (steps.length && !window.confirm("کارت‌های فعلی با پیشنهاد جدید جایگزین شوند؟ تغییرات ذخیره‌نشده از دست می‌روند.")) return;
     const keys = new Map(generated.steps.map((step) => [step.key, freshKey()]));
     setSteps(generated.steps.map((step) => ({ ...step, key: keys.get(step.key)!,
-      config: ["ai", "comment_decision", "youtube_analysis", "youtube_reply"].includes(step.type) ? { ...step.config, profileId: generatorProfile } : step.config })));
+      config: [...instagramAITypes,"ai", "comment_decision", "youtube_analysis", "youtube_reply"].includes(step.type) ? { ...step.config, profileId: generatorProfile } : step.config })));
     setEdges(generated.connections.map((edge) => ({ ...edge,
       sourceKey: keys.get(edge.sourceKey)!, targetKey: keys.get(edge.targetKey)! })));
     setName(generated.name); setSelectedKey(""); setSelectedEdge(null); setAutoEnabled(false);
@@ -720,7 +724,7 @@ export function WorkflowBuilder() {
     setBusy(true); setMessage("در حال ذخیره...");
     try {
       if (!name.trim()) throw new Error("نام جریان را وارد کن.");
-      if (active && steps.some((step) => ["ai", "comment_decision", "youtube_analysis", "youtube_reply"].includes(step.type) && !aiProfiles.some((profile) =>
+      if (active && steps.some((step) => [...instagramAITypes,"ai", "comment_decision", "youtube_analysis", "youtube_reply"].includes(step.type) && !(step.type==="instagram_action"&&step.config.action!=="reply") && !aiProfiles.some((profile) =>
         profile.id === String(step.config.profileId ?? "default")))) throw new Error("برای هر کارت AI یک مدل معتبر انتخاب کن.");
       const body = { name: name.trim(), pollIntervalMinutes, description: `${steps.length} کارت · ${edges.length} اتصال`,
         status: active ? "active" : "draft", autonomyMode: manual ? "assisted" : "full_auto", prompt,
@@ -753,7 +757,7 @@ export function WorkflowBuilder() {
     finally { setBusy(false); }
   };
   const stroke = (from: Position, to: Position) => `M ${from.x} ${from.y} C ${from.x - 92} ${from.y}, ${to.x + 92} ${to.y}, ${to.x} ${to.y}`;
-  const cardDescription = (step: Step) => step.type === "youtube_analysis" ? "آمار، بازخورد مخاطبان و راهکار رشد" : step.type === "youtube_comments" ? "خواندن کامنت‌های کانال یوتیوب" : step.type === "youtube_reply" ? (step.config.requireApproval===false ? "تحلیل و پاسخ خودکار" : "تحلیل و پاسخ پس از تأیید") : step.type === "rss_source" ?
+  const cardDescription = (step: Step) => isInstagramCard(step.type) ? instagramCards.find(c=>c.type===step.type)!.description : step.type === "youtube_analysis" ? "آمار، بازخورد مخاطبان و راهکار رشد" : step.type === "youtube_comments" ? "خواندن کامنت‌های کانال یوتیوب" : step.type === "youtube_reply" ? (step.config.requireApproval===false ? "تحلیل و پاسخ خودکار" : "تحلیل و پاسخ پس از تأیید") : step.type === "rss_source" ?
             String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? String(step.config.feedUrl ?? step.config.channel) : "نیاز به تنظیم منبع" :
             step.type === "image_generate" ? `تصویر ${step.config.preset ?? "خبر"} · ${aiProfiles.find(profile => profile.id === String(step.config.profileId ?? "default"))?.model || "اتصال را انتخاب کن"}` :
             step.type === "filter" ? `${step.config.mode === "exclude" ? "به‌جز" : "شامل"} ${step.config.keywords || "واژه‌ها را تنظیم کن"}` :
@@ -910,12 +914,12 @@ export function WorkflowBuilder() {
                 <button className="danger-button" onClick={() => remove(step.key)}>حذف کارت</button>
               </div></details></div>
           {stepActivity(step) ? <span className="graph-role-label"><span className={stepActivity(step)!.state === "running" ? "graph-live-spinner" : "graph-live-dot"} />{stepActivity(step)!.label}</span> : null}
-          <strong title={step.name}>{step.type === "publish" && accounts.find((a) => a.id === step.config.accountId)?.channel === "youtube" ? <><YoutubeIcon /> یوتیوب</> : step.type === "publish" ? "انتشار شبکه‌ها" : step.name}</strong>
+          <strong title={step.name}>{step.type === "publish" && accounts.find((a) => a.id === step.config.accountId)?.channel === "youtube" ? <><YoutubeIcon /> یوتیوب</> : step.type === "publish" ? step.config.channelLock==="instagram"?"انتشار اینستاگرام":"انتشار شبکه‌ها" : step.name}</strong>
           {youtubeItems.find((i) => i.stepKey === step.key)?.status === "published" ? <a onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer" href={`https://www.youtube.com/watch?v=${youtubeItems.find((i) => i.stepKey === step.key)?.videoId}`}>مشاهده در یوتیوب</a> : null}
           {cardDescription(step) ? <small className="graph-node-description" title={cardDescription(step)}>{cardDescription(step)}</small> : null}
           {step.type === "rss_source" ? <div className="graph-source-footer graph-source-schedule"><span>{String(step.config.feedUrl ?? step.config.channel ?? "").trim() ? "● آماده" : "○ تنظیم‌نشده"} · {sourceNames[String(step.config.sourceKind ?? "rss")]}</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
-          {["youtube_analysis","youtube_comments"].includes(step.type) ? <div className="graph-source-footer graph-source-schedule"><span>{step.type === "youtube_analysis" ? "گزارش روزانه" : "کامنت یوتیوب"}</span><span>{live?.nextPollAt ? countdownLabel(live?.nextPollAt, clock, autoEnabled) : "پایش پس از فعال‌سازی"}</span></div> : null}
+          {[...instagramSources,"youtube_analysis","youtube_comments"].includes(step.type) ? <div className="graph-source-footer graph-source-schedule"><span>{step.type === "youtube_analysis" || step.type==="instagram_analysis" ? "گزارش روزانه" : step.type==="instagram_trends"?"رصد ساعتی":instagramSources.includes(step.type)?"پایش اینستاگرام":"کامنت یوتیوب"}</span><span>{live?.nextPollAt ? countdownLabel(live?.nextPollAt, clock, autoEnabled) : "پایش پس از فعال‌سازی"}</span></div> : null}
           {step.type === "api_source" ? <div className="graph-source-footer graph-source-schedule"><span>منبع API</span>
             <span title="زمان تقریبی پایش بعدی">{countdownLabel(live?.nextPollAt, clock, autoEnabled)}</span></div> : null}
 
@@ -923,7 +927,7 @@ export function WorkflowBuilder() {
             <div className={`graph-source-footer graph-filter-footer ${live.filters.find((item) => item.stepKey === step.key)?.passed ? "passed" : "rejected"}`}>
               {live.filters.find((item) => item.stepKey === step.key)?.passed ? "✓ عبور کرد" : "⊘ رد شد"} · آخرین خبر
             </div> : null}
-          {["ai", "comment_decision", "youtube_analysis", "youtube_reply"].includes(step.type) && usage?.byStep.find((item) => item.stepKey === step.key) ?
+          {[...instagramAITypes,"ai", "comment_decision", "youtube_analysis", "youtube_reply"].includes(step.type) && usage?.byStep.find((item) => item.stepKey === step.key) ?
             <div className="graph-source-footer graph-usage-footer">مصرف {usagePeriod === "7d" ? "۷ روز" : usagePeriod === "all" ? "کل" : "۳۰ روز"} ·
               {faNumber(usage.byStep.find((item) => item.stepKey === step.key)!.requests)} درخواست</div> : null}
           {!isTerminal(step) ? <button className={`graph-port output ${connecting === step.key ? "active" : ""}`}
@@ -932,7 +936,7 @@ export function WorkflowBuilder() {
             onClick={(event) => { event.stopPropagation(); setSelectedKey(""); setSelectedEdge(null); setConnecting(step.key); }}>●</button> : null}
         </article>)}
       </div></div></div>
-    </section>{selected || selectedEdge ? <aside className={`builder-settings builder-inspector ${selected && (["collection_source","image_generate","youtube_analysis","youtube_comments","youtube_reply"].includes(selected.type) || selected.type === "publish" && accounts.find(account=>account.id===selected.config.accountId)?.channel === "youtube") ? "builder-inspector-wide" : ""}`} aria-label={selected ? `تنظیمات ${selected.name}` : "تنظیمات اتصال"}>
+    </section>{selected || selectedEdge ? <aside className={`builder-settings builder-inspector ${selected && ((isInstagramCard(selected.type) || ["collection_source","image_generate","youtube_analysis","youtube_comments","youtube_reply"].includes(selected.type)) || selected.type === "publish" && accounts.find(account=>account.id===selected.config.accountId)?.channel === "youtube") ? "builder-inspector-wide" : ""}`} aria-label={selected ? `تنظیمات ${selected.name}` : "تنظیمات اتصال"}>
       <div className="builder-inspector-heading"><div><small>{selected ? "تنظیمات کارت" : "تنظیمات اتصال"}</small><h2>{selected?.name ?? "اتصال"}</h2></div>
         <button type="button" className="ghost-button" aria-label="بستن تنظیمات" title="بستن تنظیمات (Esc)" onClick={() => { setSelectedKey(""); setSelectedEdge(null); }}>×</button></div>
       {selectedEdge ? <div className="graph-edge-settings"><strong>اتصال انتخاب‌شده</strong>
@@ -964,11 +968,14 @@ export function WorkflowBuilder() {
             <span>هنوز برای این کارت مصرفی ثبت نشده است.</span>}
           <small>توکن، مقدار متن پردازش‌شده توسط مدل است؛ این عدد تعداد خبر نیست.</small>
         </section> : null}
-        {isSource(selected) && !["collection_source","youtube_analysis","youtube_comments"].includes(selected.type) ? <label><span>نوع منبع<FieldHelp>هر کارت یک منبع دارد. برای منبع بیشتر کارت دیگری اضافه کن.</FieldHelp></span><select value={selected.type === "api_source" ? "api" :
+        {isSource(selected) && ![...instagramSources,"collection_source","youtube_analysis","youtube_comments"].includes(selected.type) ? <label><span>نوع منبع<FieldHelp>هر کارت یک منبع دارد. برای منبع بیشتر کارت دیگری اضافه کن.</FieldHelp></span><select value={selected.type === "api_source" ? "api" :
           selected.type === "manual_input" ? "manual" : String(selected.config.sourceKind ?? "rss")}
           onChange={(event) => switchSource(selected.key, event.target.value)}>
           <option value="rss">RSS</option><option value="eitaa">کانال ایتا</option><option value="bale">کانال بله</option>
           <option value="api">کامنت API</option><option value="manual">ورودی دستی</option></select></label> : null}
+        {isInstagramCard(selected.type) ? <InstagramCardPanel key={selected.key} type={selected.type} config={selected.config} update={(key,value)=>update(selected.key,key,value)} accounts={accounts} profiles={aiProfiles} workflowId={workflowId} stepKey={selected.key} busy={busy} run={async()=>{
+          const id=await save(autoEnabled);if(!id)return;setBusy(true);try{const response=await apiFetch(`/workflows/${id}/runs`,{method:"POST",body:JSON.stringify({trigger:"manual",input:{sourceKey:selected.key}})});if(!response.ok)throw new Error("ثبت اجرا ناموفق بود؛ تنظیمات و اتصال کارت‌ها را بررسی کنید.");setMessage("بررسی وارد صف شد؛ نتیجه در تب نتایج همین کارت نمایش داده می‌شود.");}catch(e){setMessage(e instanceof Error?e.message:"ثبت اجرا ناموفق بود.");}finally{setBusy(false);}
+        }}/> : null}
         {selected.type === "youtube_analysis" ? <YoutubeAnalysisPanel key={selected.key} workflowId={workflowId} stepKey={selected.key} config={selected.config} update={(key,value)=>update(selected.key,key,value)} accounts={accounts} profiles={aiProfiles} busy={busy} run={async()=>{
           const id=await save(autoEnabled);if(!id)return;setBusy(true);
           try{const response=await apiFetch(`/workflows/${id}/runs`,{method:"POST",body:JSON.stringify({trigger:"manual",input:{sourceKey:selected.key}})});if(!response.ok)throw new Error("ثبت تحلیل ناموفق بود؛ اتصال کارت‌ها و صف را بررسی کنید.");setMessage("تحلیل وارد صف شد؛ نتیجه در گزارش همین کارت دیده می‌شود.");}catch(error){setMessage(error instanceof Error?error.message:"ثبت تحلیل ناموفق بود.");}finally{setBusy(false);}
@@ -1112,7 +1119,7 @@ export function WorkflowBuilder() {
         </> : null}
         {selected.type === "publish" ? <><label><span>مقصد انتشار<FieldHelp>مجوز انتشار حساب انتخاب‌شده را با «تست اتصال» در صفحه کانال‌ها بررسی کن.</FieldHelp></span><select value={String(selected.config.accountId ?? "")}
           onChange={(event) => update(selected.key, "accountId", event.target.value)}><option value="">انتخاب مقصد</option>
-          {publishAccounts.map((account) => <option key={account.id} value={account.id}>{publishNames[account.channel]} · {account.displayName ?? account.externalAccountId}</option>)}</select></label>
+          {publishAccounts.filter(account=>selected.config.channelLock!=="instagram" || account.channel==="instagram").map((account) => <option key={account.id} value={account.id}>{publishNames[account.channel]} · {account.displayName ?? account.externalAccountId}</option>)}</select></label>
           {["youtube", "telegram", "instagram"].includes(accounts.find((a) => a.id === selected.config.accountId)?.channel ?? "") ?
             <ConnectionSelector key={String(selected.config.accountId)} target={accounts.find((a) => a.id === selected.config.accountId)!.channel as "youtube" | "telegram" | "instagram"}
               value={selected.config.connection} onChange={(value) => update(selected.key, "connection", value)} /> : null}

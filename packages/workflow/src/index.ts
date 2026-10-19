@@ -1,3 +1,5 @@
+import { executeInstagram, type InstagramContext } from "./instagram";
+import { instagramSources, isInstagramCard } from "@socialyar/shared";
 import { generateContentImages } from "./image-generation";
 import { youtubeAnalysisConfig, imageConfigSchema, type YoutubeGrowthPlan, type AnalysisFollowUp } from "@socialyar/shared";
 import { ImageLimitError } from "@socialyar/db";
@@ -11,7 +13,7 @@ import {
 type ExecuteRunInput = { runId: string; workflowId: string; workflowVersionId: string };
 type Step = typeof workflowSteps.$inferSelect;
 type Edge = typeof workflowConnections.$inferSelect;
-type News = { growthPlan?: YoutubeGrowthPlan; followUps?:AnalysisFollowUp[]; youtubeAnalysis?: Awaited<ReturnType<typeof readYoutubeAnalysis>>; text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
+type News = { instagram?:InstagramContext;creative?:unknown;trends?:unknown;instagramType?:string;instagramImages?:string[];productionStatus?:string; growthPlan?: YoutubeGrowthPlan; followUps?:AnalysisFollowUp[]; youtubeAnalysis?: Awaited<ReturnType<typeof readYoutubeAnalysis>>; text?: string; title?: string | null; url?: string | null; imageUrl?: string | null;
   videoUrl?: string | null; queuedForPublication?: boolean; commentId?: string; context?: string;
   decision?: "approve" | "reject" | "reply" | "review"; reply?: string; reason?: string; approved?: boolean;
   youtube?: { accountId: string; videoId: string; threadId?: string }; replyStatus?: string; externalUrl?: string; sentiment?: string; comments?: Array<{ id: string; text: string }>; feedback?: { positive: number; negative: number; neutral: number; total: number; themes: string[] } };
@@ -83,7 +85,7 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
     delete outputs.retryAt;
     const states = new Map<string, string>();
     const selectedSource = typeof run.input.sourceKey === "string" ? run.input.sourceKey :
-      ordered.find((step) => ["manual_input", "rss_source", "api_source", "youtube_analysis", "youtube_comments", "source"].includes(step.type))?.key;
+      ordered.find((step) => [...instagramSources, "manual_input", "rss_source", "api_source", "youtube_analysis", "youtube_comments", "source"].includes(step.type))?.key;
     let waiting = false;
     let failed = false;
 
@@ -106,7 +108,7 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
         states.set(step.id, "waiting_approval"); waiting = true;
         continue;
       }
-      if (["rss_source", "api_source", "youtube_analysis", "youtube_comments", "manual_input", "source"].includes(step.type) && step.key !== selectedSource) {
+      if ([...instagramSources, "rss_source", "api_source", "youtube_analysis", "youtube_comments", "manual_input", "source"].includes(step.type) && step.key !== selectedSource) {
         states.set(step.id, "skipped");
         continue;
       }
@@ -125,7 +127,7 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
       if (parents.length && !activeParent) { states.set(step.id, "skipped"); continue; }
       const parentStep = activeParent && steps.find((item) => item.id === activeParent.sourceStepId);
       let upstream = parentStep ? outputs[parentStep.key] as News | undefined : undefined;
-      if (step.type === "youtube_reply" && prior?.output?.approved === true) upstream = prior.output as News;
+      if (["youtube_reply","instagram_action","instagram_inbox"].includes(step.type) && prior?.output?.approved === true) upstream = prior.output as News;
       // A grouped source emits both a report run and individual comment runs.
       // Each run only enters the compatible branch of the graph.
       if ((step.type === "ai" && step.config.aiMode === "feedback" && !upstream?.comments?.length) ||
@@ -166,7 +168,12 @@ export async function executeClaimedRun(input: ExecuteRunInput, assertOwned: () 
           continue;
         }
         let output: News;
-        if (step.type === "youtube_analysis") {
+        if (isInstagramCard(step.type)) {
+          const sourceItem={...run.input,instagram:run.input.instagram as InstagramContext,text:String(run.input.text??run.input.prompt??""),commentId:run.input.commentId as string|undefined};
+          const result=await executeInstagram({type:step.type,config:step.config,workspaceId:tenant.workspaceId,workflowId:run.workflowId,runId:run.id,stepKey:step.key,recordId:record.id,item:instagramSources.includes(step.type)?sourceItem:upstream??{},prior:prior?.output??undefined,usage:accountUsage,assertOwned},db);
+          output=result.output as News;
+          if(result.hold){await db.update(runSteps).set({status:"waiting_approval",output}).where(eq(runSteps.id,record.id));await db.insert(runEvents).values({runId:run.id,runStepId:record.id,type:"approval_requested",message:"خروجی اینستاگرام منتظر بررسی شماست."});states.set(step.id,"waiting_approval");waiting=true;continue;}
+        } else if (step.type === "youtube_analysis") {
           const config = youtubeAnalysisConfig.parse(step.config);
           const report = await readYoutubeAnalysis(tenant.workspaceId,config);
           const [settings] = config.profileId !== "default" ? await db.select().from(aiProfiles).where(and(eq(aiProfiles.id,config.profileId),eq(aiProfiles.workspaceId,tenant.workspaceId))).limit(1) : await db.select().from(aiSettings).where(eq(aiSettings.workspaceId,tenant.workspaceId)).limit(1);

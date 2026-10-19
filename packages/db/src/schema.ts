@@ -546,3 +546,29 @@ export const imageGenerationJobs = pgTable("image_generation_jobs", {
   inputTokens:integer("input_tokens"),outputTokens:integer("output_tokens"),images:jsonb("images").$type<Array<{mediaId:string;url:string;width:number;height:number}>>().default([]).notNull(),error:text("error"),
   createdAt:timestamp("created_at",{withTimezone:true}).defaultNow().notNull(),updatedAt:timestamp("updated_at",{withTimezone:true}).defaultNow().notNull(),
 },t=>({cache:uniqueIndex("image_jobs_cache_idx").on(t.workspaceId,t.cacheKey)}));
+
+export const instagramActions = pgTable(
+  "instagram_actions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    workspaceId: uuid("workspace_id").notNull().references(()=>workspaces.id,{onDelete:"cascade"}),
+    accountId: uuid("account_id").notNull().references(()=>socialAccounts.id,{onDelete:"cascade"}),
+    workflowId: uuid("workflow_id").notNull().references(()=>workflows.id,{onDelete:"cascade"}),
+    runId: uuid("run_id").references(()=>runs.id,{onDelete:"set null"}),
+    kind: text("kind").notNull(),
+    targetId: text("target_id").notNull(),
+    status: text("status").notNull(),
+    externalId: text("external_id"),
+    day: text("day").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => ({
+    daily:index("instagram_actions_daily").on(t.accountId,t.day),
+    once: uniqueIndex("instagram_actions_once").on(
+      t.accountId,
+      t.kind,
+      t.targetId,
+    ),
+  }),
+);

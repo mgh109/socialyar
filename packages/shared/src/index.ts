@@ -17,3 +17,5 @@ export * from "./image-generation";
 export const YOUTUBE_COVER_MAX_BYTES = 50_000_000;
 
 export * from "./youtube-analysis";
+
+export * from "./instagram-cards";

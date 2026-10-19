@@ -1,9 +1,10 @@
+import { instagramSources, instagramCards } from "@socialyar/shared";
 export type GraphNode = { key: string; type: string };
 export type GraphEdge = { sourceKey: string; targetKey: string };
 
-const sources = new Set(["rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments"]);
-const outputs = new Set(["publish", "draft", "api_action", "youtube_reply"]);
-export const supportedTypes = new Set(["rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments", "filter", "ai", "image_generate", "comment_decision", "human_approval", "draft", "publish", "api_action", "youtube_reply"]);
+const sources = new Set([...instagramSources, "rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments"]);
+const outputs = new Set(["instagram_action", "publish", "draft", "api_action", "youtube_reply"]);
+export const supportedTypes = new Set([...instagramCards.filter(c=>c.type!=="instagram_publish").map(c=>c.type),"rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments", "filter", "ai", "image_generate", "comment_decision", "human_approval", "draft", "publish", "api_action", "youtube_reply"]);
 
 /** A DAG with reachable inputs and explicit terminals; joins accept the first active input. */
 export function graphProblem(nodes: GraphNode[], edges: GraphEdge[], active: boolean): string | null {

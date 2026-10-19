@@ -1,3 +1,5 @@
+import { instagramCards, instagramSources, instagramAITypes, isInstagramCard, parseInstagramConfig, defaultInstagramConfig } from "@socialyar/shared";
+import { instagramWorkflowRoutes } from "./instagram";
 import { youtubeAnalysisRoutes } from "./youtube-analysis";
 import { imageGenerationJobs } from "@socialyar/db";
 import { youtubeAnalysisConfig, imageConfigSchema } from "@socialyar/shared";
@@ -81,6 +83,7 @@ const updateWorkflowSchema = z.object({
 const blueprintSchema = z.object({
   name: z.string().trim().min(1).max(80),
   nodes: z.array(z.object({ id: z.string().min(1).max(40), type: z.enum([
+    "instagram_comments", "instagram_action", "instagram_analysis", "instagram_inbox", "instagram_trends", "instagram_ideas", "instagram_script", "instagram_content",
     "rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments", "youtube_reply", "filter", "ai", "image_generate", "comment_decision", "human_approval", "draft", "publish", "api_action",
   ]), name: z.string().trim().min(1).max(70), config: z.record(z.unknown()).default({}) })).min(2).max(12),
   edges: z.array(z.object({ from: z.string(), to: z.string(), decision: z.enum(["approve", "reject", "reply", "review"]).optional() })).min(1).max(24),
@@ -164,12 +167,33 @@ async function insertGraph(
   }
 }
 
+export async function validateInstagramSteps(steps:Array<{key:string;type:string;config:Record<string,unknown>}>,connections:Array<{sourceKey:string;targetKey:string}>,workspaceId:string,db=getDb()):Promise<string|null>{
+ for(const step of steps.filter(s=>isInstagramCard(s.type))){
+  let config:Record<string,unknown>;try{config=parseInstagramConfig(step.type,step.config);}catch{return "instagram_config_invalid";}
+  if(config.accountId){const [account]=await db.select().from(socialAccounts).where(and(eq(socialAccounts.id,String(config.accountId)),eq(socialAccounts.workspaceId,workspaceId),eq(socialAccounts.channel,"instagram"),eq(socialAccounts.isActive,true)));if(!account)return "instagram_account_required";
+   if(step.type==="instagram_inbox"&&account.credentials.loginType==="facebook")return "instagram_inbox_login_required";
+   if(step.type==="instagram_trends"&&(config.usernames as string[]).length&&account.credentials.loginType!=="facebook")return "instagram_discovery_login_required";
+  }
+  if(step.type==="instagram_trends"&&(!(config.usernames as string[]).length&&!String(config.references).trim()||(config.usernames as string[]).length&&!config.accountId))return "instagram_trend_source_required";
+  if(step.type==="instagram_action"){
+   const ancestors=new Set<string>(),pending=[step.key];while(pending.length){const key=pending.pop()!;if(ancestors.has(key))continue;ancestors.add(key);pending.push(...connections.filter(e=>e.targetKey===key).map(e=>e.sourceKey));}
+   const roots=steps.filter(s=>ancestors.has(s.key)&&[...instagramSources,"manual_input","rss_source","api_source","youtube_comments","youtube_analysis","collection_source"].includes(s.type));
+   if(!roots.length||roots.some(s=>s.type!=="instagram_comments"||s.config.accountId!==config.accountId))return "instagram_action_source_invalid";
+  }
+  try{await validateConnectionPolicy(workspaceId,config.connection);}catch{return "invalid_publishing_connection";}
+  if(config.generateImage){const [profile]=config.imageProfileId==="default"?await db.select().from(aiSettings).where(eq(aiSettings.workspaceId,workspaceId)):await db.select().from(aiProfiles).where(and(eq(aiProfiles.id,String(config.imageProfileId)),eq(aiProfiles.workspaceId,workspaceId)));if(!profile)return "ai_profile_not_found";}
+  if(step.type==="instagram_content"&&config.format==="carousel"&&Number(config.count)<2)return "instagram_config_invalid";
+ }
+ return null;
+}
+
 async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connections: z.infer<typeof connectionSchema>[], workspaceId: string, db=getDb()): Promise<string | null> {
   const sorted = [...steps].sort((a, b) => a.order - b.order);
-  const source = sorted.find((step) => ["rss_source", "api_source", "youtube_analysis", "youtube_comments", "collection_source"].includes(step.type));
+  const source = sorted.find((step) => [...instagramSources,"rss_source", "api_source", "youtube_analysis", "youtube_comments", "collection_source"].includes(step.type));
   const graphError = graphProblem(steps, connections, true);
   if (graphError) return graphError;
   if (!source || steps.some((step) => step.type === "manual_input")) return "graph_missing_input";
+  const instagramProblem=await validateInstagramSteps(steps,connections,workspaceId,db);if(instagramProblem)return instagramProblem;
   for (const step of sorted.filter(item => item.type === "youtube_analysis")) {
     if (!youtubeAnalysisConfig.safeParse(step.config).success) return "youtube_analysis_settings_invalid";
     const [account] = await db.select().from(socialAccounts).where(and(eq(socialAccounts.id,String(step.config.accountId)),eq(socialAccounts.workspaceId,workspaceId),eq(socialAccounts.channel,"youtube"),eq(socialAccounts.isActive,true)));
@@ -278,6 +302,7 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     const [account] = await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, accountId), eq(socialAccounts.workspaceId, workspaceId),
         eq(socialAccounts.isActive, true))).limit(1);
+    if (publisher.config.channelLock==="instagram" && account?.channel!=="instagram") return "instagram_account_required";
     if (!account || !["eitaa", "telegram", "bale", "instagram", "website", "youtube"].includes(account.channel)) return "eitaa_account_not_found";
     if (["youtube", "telegram", "instagram"].includes(account.channel)) {
       try { await validateConnectionPolicy(workspaceId, publisher.config.connection); }
@@ -290,7 +315,7 @@ async function autoWorkflowProblem(steps: z.infer<typeof stepSchema>[], connecti
     if (!["has_image","no_image"].includes(String(filter.config.condition)) && (typeof filter.config.keywords !== "string" || !filter.config.keywords.trim() ||
       !["include", "exclude"].includes(String(filter.config.mode ?? "include")))) return "graph_invalid_filter";
   }
-  for (const step of sorted.filter((item) => ["ai", "youtube_analysis", "youtube_reply"].includes(item.type))) {
+  for (const step of sorted.filter((item) => [...instagramAITypes,"ai", "youtube_analysis", "youtube_reply"].includes(item.type) && !(item.type==="instagram_action"&&item.config.action!=="reply"))) {
     if (step.type === "ai" && !["rewrite", "feedback"].includes(String(step.config.aiMode ?? "rewrite"))) return "ai_output_invalid";
     const titleMode = String(step.config.titleMode ?? "keep");
     const imageMode = String(step.config.imageMode ?? "keep");
@@ -329,6 +354,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
   const db = options.database ?? getDb();
   app.addHook("onRequest", app.authenticate);
   await youtubeAnalysisRoutes(app,db);
+  await instagramWorkflowRoutes(app,db);
 
   app.post("/workflows/generate", async (request, reply) => {
     const input = generatorInputSchema.parse(request.body);
@@ -383,7 +409,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
     if (graphProblem(blueprint.nodes.map((node) => ({ key: node.id, type: node.type })), connections, true) ||
       blueprint.edges.some((edge) => edge.decision && blueprint.nodes.find((node) => node.id === edge.from)?.type !== "comment_decision"))
       return reply.code(502).send({ error: "ai_graph_invalid", usage: usageReport.value });
-    const depths = new Map(blueprint.nodes.filter((node) => ["rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments"].includes(node.type))
+    const depths = new Map(blueprint.nodes.filter((node) => [...instagramSources,"rss_source", "api_source", "manual_input", "collection_source", "youtube_analysis", "youtube_comments"].includes(node.type))
       .map((node) => [node.id, 0]));
     for (let i = 0; i < blueprint.nodes.length; i++) for (const edge of blueprint.edges) {
       const depth = depths.get(edge.from);
@@ -392,8 +418,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
     const maxDepth = Math.max(...depths.values());
     const rows = new Map<number, number>();
     const warnings: string[] = [];
-    if (/کاور|تصویر/.test(input.request) && /تولید|بساز|ساخت/.test(input.request))
-      warnings.push("تولید کاور با هوش مصنوعی هنوز فعال نیست؛ فعلاً لینک کاور را در مجموعه وارد کن.");
+
     if (useCommentTemplate) warnings.push("مسیر خواندن کامنت‌ها، فیلدهای پاسخ API و مسیر تأیید/ارسال پاسخ را با API سایت خودت تطبیق بده.");
     const steps = blueprint.nodes.map((node) => {
       const config = node.config;
@@ -404,7 +429,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
       const suppliedFeed = text("feedUrl", 500);
       const suppliedChannel = text("channel", 100);
       const suppliedSheet = text("sheetUrl", 500);
-      const mapped: Record<string, unknown> = node.type === "collection_source" ? {
+      const mapped: Record<string, unknown> = isInstagramCard(node.type) ? { ...defaultInstagramConfig(node.type), ...config, accountId, profileId:input.profileId??"default", imageProfileId:"default", generateImage:false, requireApproval:true, ...(node.type==="instagram_trends"?{usernames:Array.isArray(config.usernames)?config.usernames.filter((v)=>typeof v==="string"&&input.request.includes(v)).slice(0,5):[],references:text("references",12000)}:{}) } : node.type === "collection_source" ? {
         collectionSource: config.collectionSource === "google_sheet" ? "google_sheet" : "excel",
         sheetUrl: suppliedSheet && input.request.includes(suppliedSheet) ? suppliedSheet : "",
         sheetGid: text("sheetGid", 30) || "0", sheetAutoRefresh: config.sheetAutoRefresh === true,
@@ -420,7 +445,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
         node.type === "ai" ? { profileId: input.profileId ?? "default", aiMode: config.aiMode === "feedback" ? "feedback" : "rewrite",
           instructions: text("instructions", 3000) } :
         node.type === "comment_decision" ? { profileId: input.profileId ?? "default", rules: text("rules", 3000) } :
-        node.type === "publish" ? { accountId, instagramType: ["image","reel","carousel"].includes(String(config.instagramType)) ? config.instagramType : undefined, instagramCaption:text("instagramCaption",2200), instagramRequireApproval:config.instagramRequireApproval !== false, imageUrl:text("imageUrl",500) && input.request.includes(text("imageUrl",500)) ? text("imageUrl",500) : "", videoUrl:text("videoUrl",500) && input.request.includes(text("videoUrl",500)) ? text("videoUrl",500) : "", instagramImages: Array.isArray(config.instagramImages) ? config.instagramImages.filter((url) => typeof url === "string" && input.request.includes(url)).slice(0,10) : [], videoType: config.videoType === "shorts" ? "shorts" : "video", publishIntervalSeconds: Math.max(30, Math.min(604800,
+        node.type === "publish" ? { accountId, channelLock:config.channelLock==="instagram"?"instagram":undefined, instagramType: ["image","reel","carousel","story"].includes(String(config.instagramType)) ? config.instagramType : undefined, instagramCaption:text("instagramCaption",2200), instagramRequireApproval:config.instagramRequireApproval !== false, imageUrl:text("imageUrl",500) && input.request.includes(text("imageUrl",500)) ? text("imageUrl",500) : "", videoUrl:text("videoUrl",500) && input.request.includes(text("videoUrl",500)) ? text("videoUrl",500) : "", instagramImages: Array.isArray(config.instagramImages) ? config.instagramImages.filter((url) => typeof url === "string" && input.request.includes(url)).slice(0,10) : [], videoType: config.videoType === "shorts" ? "shorts" : "video", publishIntervalSeconds: Math.max(30, Math.min(604800,
           Number.isInteger(config.publishIntervalSeconds) ? Number(config.publishIntervalSeconds) : 30)) } :
         node.type === "api_source" ? { connectionId, path: text("path", 300) || "/comments", itemsPath: "data.comments",
           idField: "id", textField: "text", contextField: "context", readMode: ["single", "batch", "post"].includes(String(config.readMode)) ? config.readMode : "single",
@@ -457,7 +482,7 @@ export async function workflowRoutes(app: FastifyInstance, options:{database?:Re
       .where(and(eq(workflowVersions.workflowId, workflowId), eq(workflowVersions.version, workflow.currentVersion))).limit(1);
     if (!version) return { events: [], active: [], sources: [], publications: [], filters: [], nextPollAt: null };
     const sourceSteps = await db.select({ key: workflowSteps.key }).from(workflowSteps)
-      .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, ["rss_source", "api_source", "youtube_analysis", "youtube_comments"])));
+      .where(and(eq(workflowSteps.workflowVersionId, version.id), inArray(workflowSteps.type, [...instagramSources,"rss_source", "api_source", "youtube_analysis", "youtube_comments"])));
     const markerKeys = sourceSteps.map((step) => `source-live:${workflowId}:${version.id}:${step.key}`);
     const pollKey = `news-poll:${workflowId}:${version.id}`;
     const [markers, events, active, publicationRows, filterRows] = await Promise.all([

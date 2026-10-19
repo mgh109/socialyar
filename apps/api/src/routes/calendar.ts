@@ -8,7 +8,7 @@ import { getDb, contentVariants, contentItems, publications, schedules, socialAc
 import { publicationQueue } from "../queue";
 import { policySchema } from "./proxies";
 
-const settingsSchema = z.object({ instagramType: z.enum(["image", "reel", "carousel"]).optional(), instagramImages: z.array(z.string().url()).max(10).optional(), imageUrl: z.string().url().nullable().optional(), videoUrl: z.string().url().nullable().optional(),
+const settingsSchema = z.object({ instagramType: z.enum(["image", "reel", "carousel", "story"]).optional(), instagramImages: z.array(z.string().url()).max(10).optional(), imageUrl: z.string().url().nullable().optional(), videoUrl: z.string().url().nullable().optional(),
   coverUrl: z.string().url().nullable().optional(), privacy: z.enum(["public", "private", "unlisted"]).optional(),
   tags: z.array(z.string().max(100)).max(50).optional(), videoType: z.enum(["video", "shorts"]).optional(), playlist: z.string().max(150).optional(), madeForKids: z.boolean().optional(), connection: policySchema.optional() });
 const mutationSchema = z.object({ action: z.enum(["edit", "schedule", "unschedule", "stop", "approve", "reject", "retry"]),

@@ -29,7 +29,7 @@ async function enqueueClaimedAutoPublication(runId: string) {
   }));
   for (const publishStep of publishSteps) {
     const generated = row.run.output?.[publishStep.key] as { text?: string; title?: string; url?: string;
-      imageUrl?: string; videoUrl?: string; images?:unknown;imageGeneration?:unknown } | undefined;
+      imageUrl?: string; videoUrl?: string; images?:unknown;imageGeneration?:unknown;instagramImages?:string[];instagramType?:string } | undefined;
     const [youtubeAccount] = typeof publishStep.config.accountId === "string" ? await db.select().from(socialAccounts)
       .where(and(eq(socialAccounts.id, publishStep.config.accountId), eq(socialAccounts.workspaceId, row.workspaceId), eq(socialAccounts.channel, "youtube"), eq(socialAccounts.isActive, true))).limit(1) : [];
     try {
@@ -104,7 +104,7 @@ async function enqueueClaimedAutoPublication(runId: string) {
     if (!variant) {
       [variant] = await db.insert(contentVariants).values({ contentItemId: content.id, channel: account.channel,
         title: content.title, body: account.channel === "instagram" ? String(publishStep.config.instagramCaption || generated.text) : generated.text,
-        settings: { ...(account.channel === "instagram" ? {instagramType:publishStep.config.instagramType,instagramImages:publishStep.config.instagramImages} : {}), imageUrl: publishStep.config.imageUrl || generated.imageUrl || null, videoUrl: publishStep.config.videoUrl || generated.videoUrl || null, connection: publishStep.config.connection,
+        settings: { ...(account.channel === "instagram" ? {instagramType:generated.instagramType??publishStep.config.instagramType,instagramImages:Array.isArray(publishStep.config.instagramImages)&&publishStep.config.instagramImages.length?publishStep.config.instagramImages:generated.instagramImages} : {}), imageUrl: publishStep.config.imageUrl || generated.imageUrl || null, videoUrl: publishStep.config.videoUrl || generated.videoUrl || null, connection: publishStep.config.connection,
           images:generated.images,imageGeneration:generated.imageGeneration,publishIntervalSeconds, ...(account.channel === "instagram" ? {calendarHold:needsInstagramApproval,instagramImmediate:!instagramDate,accountId:account.id,accountName:account.displayName ?? account.externalAccountId} : {}) }, status: needsInstagramApproval ? "waiting_approval" : "approved", generatedBy: "ai" }).returning();
     } else if (variant.settings.publishIntervalSeconds !== publishIntervalSeconds) {
       [variant] = await db.update(contentVariants).set({ settings: { ...variant.settings, publishIntervalSeconds } })

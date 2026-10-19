@@ -226,7 +226,7 @@ export async function runRoutes(app: FastifyInstance, options: { database?: Retu
         .where(and(eq(runs.id, runId), eq(runs.status, "waiting_approval"))).returning();
       if (!claimed) return false;
       dispatchVersion = claimed.dispatchVersion;
-      const [step] = await tx.update(runSteps).set({ status: action === "approve" ? pending.type === "youtube_reply" ? "queued" : "completed" : "skipped",
+      const [step] = await tx.update(runSteps).set({ status: action === "approve" ? ["youtube_reply","instagram_action","instagram_inbox"].includes(pending.type) && pending.step.output?.actionStatus!=="referred" ? "queued" : "completed" : "skipped",
         output: { ...(pending.step.output ?? {}), ...(action === "approve" ? edit : {}),
           approved: action === "approve", resolvedBy: request.auth.userId }, finishedAt: new Date() })
         .where(and(eq(runSteps.id, pending.step.id), eq(runSteps.status, "waiting_approval"))).returning();

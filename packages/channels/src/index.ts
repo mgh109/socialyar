@@ -338,7 +338,7 @@ async function publishInstagram(request:PublishRequest):Promise<PublishResult> {
         if(child.status_code!=="FINISHED")throw new Error(child.status_code==="IN_PROGRESS" ? "اینستاگرام در حال آماده‌سازی ویدئو است؛ بعداً دوباره تلاش کنید." : "آماده‌سازی تصویر آلبوم ناموفق بود.");
       }
     }
-    const parameters=new URLSearchParams({caption,...(type === "carousel" ? {media_type:"CAROUSEL",children:children.join(",")} : type === "reel" ? {media_type:"REELS",video_url:request.videoUrl!,...(request.imageUrl?{cover_url:request.imageUrl}:{})} : {image_url:request.imageUrl!})});
+    const parameters=new URLSearchParams({... (type==="story"?{}:{caption}),...(type === "story" ? {media_type:"STORIES",...(request.videoUrl?{video_url:request.videoUrl}:{image_url:request.imageUrl!})} : type === "carousel" ? {media_type:"CAROUSEL",children:children.join(",")} : type === "reel" ? {media_type:"REELS",video_url:request.videoUrl!,...(request.imageUrl?{cover_url:request.imageUrl}:{})} : {image_url:request.imageUrl!})});
     const data=await json(await send(`${endpoint}/${account}/media`,{method:"POST",headers,body:parameters,signal:AbortSignal.timeout(30000)}));
     if(typeof data.id!=="string")throw new Error("شناسه آماده‌سازی اینستاگرام دریافت نشد.");container=data.id;
     if(!request.saveProviderState)throw new Error("ذخیره وضعیت آماده‌سازی اینستاگرام ضروری است.");
